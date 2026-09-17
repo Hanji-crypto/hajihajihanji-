@@ -1,0 +1,37 @@
+name: Daily Insider Data Update
+
+on:
+  schedule:
+    - cron: '0 18 * * *' # 日本時間 毎日午前3:00に自動実行
+  workflow_dispatch:      # 🚀 手動でいつでも即時実行できるボタンを設置
+
+jobs:
+  update-db:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Data Fetcher
+        run: |
+          # 💡 あなたのリポジトリにある「a5_backfill_v3.py」を実行します
+          python a5_backfill_v3.py 
+
+      - name: Commit and Push Changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add insider.db
+          # 変更がある場合のみコミットしてプッシュ
+          git diff --quiet && git diff --staged --quiet || git commit -m "Auto-update insider.db [skip ci]"
+          git push
