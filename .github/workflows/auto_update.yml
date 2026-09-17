@@ -24,8 +24,7 @@ jobs:
 
       - name: Run Data Fetcher
         run: |
-          # 💡 あなたのリポジトリにある「a5_backfill_v3.py」を実行します
-          python a5_backfill_v3.py 
+          python a5_backfill_v3.py --daily
 
       - name: Commit and Push Changes
         run: |
