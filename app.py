@@ -102,6 +102,348 @@ with col_sel2:
     st.markdown(f"<h3 style='margin-top: 10px; color: #888888;'>{company_name}</h3>", unsafe_allow_html=True)
 
 # ==============================================================================
+# 4. YAHOO FINANCE DATA (堅牢なエラーハンドリング付き)
+# ==============================================================================
+@st.cache_data(ttl=3600)
+def fetch_stock_data(ticker):
+    try:
+        stock = yf.Ticker(ticker)
+        df_stock = stock.history(period="6m")
+        if df_stock.empty:
+            return None
+        return df_stock
+    except Exception:
+        return None
+
+df_stock = fetch_stock_data(target_ticker)
+yf_ticker = yf.Ticker(target_ticker)
+
+# データ取得成功フラグ
+has_stock_data = df_stock is not None and not df_stock.empty
+
+# ==============================================================================
+# 5. AI COGNITIVE ENGINE (株価データがなくても動作するロジック)
+# ==============================================================================
+ticker_insider = df_insider[df_insider["ticker"] == target_ticker]
+three_months_ago = datetime.now() - timedelta(days=90)
+recent_insider = ticker_insider[ticker_insider["buy_date"] >= three_months_ago]
+total_insider_buy = recent_insider["total_value"].sum()
+
+# デフォルト値（株価データがない場合）
+current_price = ticker_insider["avg_price"].iloc[0] if not ticker_insider.empty else 0.0
+price_change_pct = 0.0
+ai_target_price = current_price * 1.15 # 簡易目標株価
+technical_score = 50.0 # 中立
+
+if has_stock_data:
+    # テクニカル指標計算 (ボリンジャーバンド 20日, 2σ)
+    df_stock['MA20'] = df_stock['Close'].rolling(window=20).mean()
+    df_stock['STD20'] = df_stock['Close'].rolling(window=20).std()
+    df_stock['Upper_Band'] = df_stock['MA20'] + (df_stock['STD20'] * 2)
+    df_stock['Lower_Band'] = df_stock['MA20'] - (df_stock['STD20'] * 2)
+
+    current_price = df_stock['Close'].iloc[-1]
+    prev_price = df_stock['Close'].iloc[-2]
+    price_change = current_price - prev_price
+    price_change_pct = (price_change / prev_price) * 100
+
+    bb_width = df_stock['Upper_Band'].iloc[-1] - df_stock['Lower_Band'].iloc[-1]
+    position_in_bb = (current_price - df_stock['Lower_Band'].iloc[-1]) / bb_width if bb_width > 0 else 0.5
+    technical_score = max(0, min(100, (1 - position_in_bb) * 100))
+
+    # 目標株価の取得
+    try:
+        info = yf_ticker.info
+        target_mean = info.get("targetMeanPrice", None)
+    except:
+        target_mean = None
+
+    if target_mean:
+        ai_target_price = target_mean
+    else:
+        ai_target_price = df_stock['Upper_Band'].iloc[-1] * 1.05
+
+# インサイダースコア (10万ドルで10点、100万ドル以上で上限50点加算)
+insider_score = min(50, (total_insider_buy / 100000) * 5)
+
+# 確実性(%)の統合算出
+base_certainty = 40.0
+certainty_score = base_certainty + (technical_score * 0.4) + insider_score
+certainty_score = min(98.5, max(15.0, certainty_score))
+
+# AI投資考察メッセージの動的生成
+if certainty_score >= 75:
+    ai_status = "強気 (Strong Buy)"
+    ai_color = "#00FFCC"
+    if has_stock_data:
+        ai_analysis = (
+            f"現在、株価はボリンジャーバンドの下限付近（${df_stock['Lower_Band'].iloc[-1]:,.2f}）に位置しており、テクニカル的に割安（売られすぎ）の水準です。 "
+            f"さらに、直近90日以内にインサイダーによる総額 ${total_insider_buy:,.0f} の大口買い戻しが観測されており、"
+            f"底値圏である確実性が極めて高いと判断されます。中長期的な反発を狙う絶好の仕込み時と言えます。"
+        )
+    else:
+        ai_analysis = (
+            f"直近90日以内にインサイダーによる総額 ${total_insider_buy:,.0f} の大口買い戻しが観測されています。 "
+            f"内部関係者による強力な買い支えがあるため、底値圏としての確実性が極めて高いと判断されます。"
+        )
+elif certainty_score >= 50:
+    ai_status = "中立・押し目買い推奨 (Hold / Buy on Dips)"
+    ai_color = "#FFCC00"
+    if has_stock_data:
+        ai_analysis = (
+            f"株価は移動平均線（${df_stock['MA20'].iloc[-1]:,.2f}）付近で安定推移しています。急激な割安感はありませんが、"
+            f"インサイダーの買い支えが下値を限定的にしています。急落時の押し目買い、またはバンドが収縮（スクイーズ）した後の"
+            f"上放れを確認してからのエントリーが推奨されます。"
+        )
+    else:
+        ai_analysis = (
+            f"直近でインサイダーによる一定の買い（${total_insider_buy:,.0f}）が確認されています。 "
+            f"価格の過熱感はないものの、急落時の押し目買い、または市場全体の地合いが落ち着くのを待ってからのエントリーが推奨されます。"
+        )
+else:
+    ai_status = "様子見 (Avoid / Wait)"
+    ai_color = "#FF3366"
+    if has_stock_data:
+        ai_analysis = (
+            f"現在、株価はボリンジャーバンドの上限（${df_stock['Upper_Band'].iloc[-1]:,.2f}）付近に達しており、短期的には過熱感があります。 "
+            f"直近で目立ったインサイダーの追加買いも見られず、ここからの新規エントリーは高値掴みのリスクを伴います。"
+            f"一度調整が入り、バンドの中央線または下限付近まで引きつけるのを待つのが賢明です。"
+        )
+    else:
+        ai_analysis = (
+            f"直近で目立ったインサイダーの追加買いが見られず、新規エントリーは慎重に行うべきです。 "
+            f"市場の調整を待ち、明確な買いシグナルや追加のインサイダー買いが観測されるまで様子見を推奨します。"
+        )
+
+# ==============================================================================
+# 6. DASHBOARD DISPLAY
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# A. AI INSIGHTS PANEL
+# ------------------------------------------------------------------------------
+st.markdown(f"### 🤖 AI Investment Analysis for {target_ticker}")
+
+ai_col1, ai_col2, ai_col3 = st.columns([1, 1, 2])
+
+with ai_col1:
+    st.metric(
+        label="Current Price",
+        value=f"${current_price:,.2f}" if current_price > 0 else "N/A",
+        delta=f"{price_change_pct:+.2f}% (Daily)" if has_stock_data else None
+    )
+with ai_col2:
+    st.metric(
+        label="AI Target Price (12M)",
+        value=f"${ai_target_price:,.2f}" if ai_target_price > 0 else "N/A",
+        delta=f"{(ai_target_price - current_price)/current_price*100:+.1f}% Upside" if (has_stock_data and current_price > 0) else None
+    )
+with ai_col3:
+    st.markdown(f"**Signal Certainty (確実性)**")
+    st.markdown(f"<h1 style='color: {ai_color}; margin-top: -10px;'>{certainty_score:.1f}%</h1>", unsafe_allow_html=True)
+    st.markdown(f"**AI Status:** <span style='color:{ai_color}; font-weight:bold;'>{ai_status}</span>", unsafe_allow_html=True)
+
+st.info(ai_analysis)
+st.markdown("---")
+
+# ------------------------------------------------------------------------------
+# B. BOLLINGER BAND & WHALE BUYING CHART
+# ------------------------------------------------------------------------------
+st.markdown("### 📈 Bollinger Bands (20, 2σ) & Insider Whale Purchases")
+
+if has_stock_data:
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=df_stock.index, y=df_stock['Upper_Band'],
+        line=dict(color='rgba(173, 216, 230, 0.2)', width=1),
+        name='Upper Band (+2σ)'
+    ))
+    fig.add_trace(go.Scatter(
+        x=df_stock.index, y=df_stock['Lower_Band'],
+        line=dict(color='rgba(173, 216, 230, 0.2)', width=1),
+        fill='tonexty', fillcolor='rgba(173, 216, 230, 0.03)',
+        name='Lower Band (-2σ)'
+    ))
+    fig.add_trace(go.Scatter(
+        x=df_stock.index, y=df_stock['MA20'],
+        line=dict(color='rgba(255, 255, 255, 0.3)', width=1.5, dash='dash'),
+        name='MA (20)'
+    ))
+    fig.add_trace(go.Scatter(
+        x=df_stock.index, y=df_stock['Close'],
+        line=dict(color='#00FFCC', width=2.5),
+        name='Close Price'
+    ))
+
+    ticker_insider_filtered = ticker_insider[
+        (ticker_insider["buy_date"] >= df_stock.index.min()) & 
+        (ticker_insider["buy_date"] <= df_stock.index.max())
+    ]
+
+    if not ticker_insider_filtered.empty:
+        grouped_insider = ticker_insider_filtered.groupby("buy_date").agg({
+            "total_value": "sum",
+            "insider": lambda x: ", ".join(x.unique()[:2]),
+            "avg_price": "mean"
+        }).reset_index()
+
+        grouped_insider = grouped_insider.set_index("buy_date").join(df_stock[['Close']], how='inner').reset_index()
+
+        fig.add_trace(go.Scatter(
+            x=grouped_insider["index"],
+            y=grouped_insider["Close"],
+            mode='markers+text',
+            marker=dict(
+                symbol='triangle-up',
+                size=16,
+                color='#E040FB',
+                line=dict(color='#FFFFFF', width=1.5)
+            ),
+            text="🐋",
+            textposition="top center",
+            textfont=dict(size=18),
+            hovertemplate=(
+                "<b>🐋 Insider Whale Buy</b><br>" +
+                "Date: %{x|%Y-%m-%d}<br>" +
+                "Total Value: $%{customdata:,.0f}<br>" +
+                "Insiders: %{text}<br>" +
+                "<extra></extra>"
+            ),
+            customdata=grouped_insider["total_value"],
+            name="Whale Purchase"
+        ))
+
+    fig.update_layout(
+        template="plotly_dark",
+        plot_bgcolor='#0E1117',
+        paper_bgcolor='#0E1117',
+        margin=dict(l=10, r=10, t=10, b=10),
+        height=500,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        xaxis=dict(gridcolor='rgba(255, 255, 255, 0.05)'),
+        yaxis=dict(gridcolor='rgba(255, 255, 255, 0.05)', side="right")
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.warning(f"⚠️ Yahoo Financeから {target_ticker} の株価データを一時的に取得できませんでした（API制限または非上場）。チャート表示をスキップし、インサイダー取引データのみを表示しています。")
+
+st.markdown("---")
+
+# ------------------------------------------------------------------------------
+# C. NEWS & ACTIVITY FEED
+# ------------------------------------------------------------------------------
+col_bottom1, col_bottom2 = st.columns([1, 1])
+
+with col_bottom1:
+    st.markdown("### 📰 Daily Market News (Yahoo Finance)")
+    try:
+        news_list = yf_ticker.news
+        if news_list:
+            for item in news_list[:5]:
+                title = item.get("title", "No Title")
+                link = item.get("link", "#")
+                publisher = item.get("publisher", "Unknown")
+                provider_publish_time = item.get("providerPublishTime", 0)
+                pub_date = datetime.fromtimestamp(provider_publish_time).strftime('%Y-%m-%d %H:%M')
+                
+                st.markdown(f"**[{title}]({link})**")
+                st.markdown(f"<small style='color: #888888;'>{publisher} | {pub_date}</small>", unsafe_allow_html=True)
+                st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+        else:
+            st.info("現在、この銘柄に関する新しいニュースはありません。")
+    except Exception:
+        st.info("ニュース情報の取得中に一時的なエラーが発生しました（API制限）。")
+
+with col_bottom2:
+    st.markdown("### 📋 Recent Insider Records")
+    if not ticker_insider.empty:
+        recent_records = ticker_insider.sort_values(by="filing_date", ascending=False).head(10).copy()
+        
+        recent_records["filing_date"] = recent_records["filing_date"].dt.strftime('%Y-%m-%d')
+        recent_records["buy_date"] = recent_records["buy_date"].dt.strftime('%Y-%m-%d')
+        recent_records["total_value"] = recent_records["total_value"].map(lambda x: f"${x:,.0f}")
+        recent_records["avg_price"] = recent_records["avg_price"].map(lambda x: f"${x:,.2f}")
+        recent_records["shares"] = recent_records["shares"].map(lambda x: f"{x:,.0f}")
+        
+        st.dataframe(
+            recent_records[["filing_date", "insider", "position", "avg_price", "total_value", "url"]],
+            column_config={
+                "url": st.column_config.LinkColumn("SEC Link", display_text="View Form 4")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("インサイダー取引の記録がありません。")    hr {
+        border-color: #262730 !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# ==============================================================================
+# 2. DATA LOADING (SQLite)
+# ==============================================================================
+@st.cache_data(ttl=3600)
+def load_insider_data():
+    conn = sqlite3.connect("insider.db")
+    query = """
+        SELECT 
+            filing_date as filing_date,
+            insider as insider,
+            position as position,
+            ticker as ticker,
+            company as company,
+            avg_price as avg_price,
+            buy_date as buy_date,
+            total_shares as shares,
+            total_value as total_value,
+            filing_url as url
+        FROM insider_trades
+        WHERE ticker IS NOT NULL 
+          AND ticker != '' 
+          AND UPPER(ticker) != 'NONE'
+          AND UPPER(ticker) != 'N/A'
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    df["filing_date"] = pd.to_datetime(df["filing_date"])
+    df["buy_date"] = pd.to_datetime(df["buy_date"])
+    df["total_value"] = pd.to_numeric(df["total_value"])
+    df["avg_price"] = pd.to_numeric(df["avg_price"])
+    df["shares"] = pd.to_numeric(df["shares"])
+    return df
+
+try:
+    df_insider = load_insider_data()
+except Exception as e:
+    st.error(f"SQLiteデータベースの読み込みに失敗しました。: {e}")
+    st.stop()
+
+# ==============================================================================
+# 3. HEADER & MINIMAL SELECTOR
+# ==============================================================================
+st.title("👁️ Whale-Eye Dashboard")
+st.markdown("大口インサイダー取引（Form 4）× ボリンジャーバンドテクニカル分析 × AI投資確実性シグナル")
+st.markdown("---")
+
+# データベースにデータが存在するティッカーのみを選択肢にする（デフォルトは取引総額が最大の銘柄）
+if not df_insider.empty:
+    top_tickers = df_insider.groupby("ticker")["total_value"].sum().sort_values(ascending=False).index.tolist()
+else:
+    top_tickers = ["AAPL"]
+
+# 唯一の選択肢（メイン画面上部にスマートに配置）
+col_sel1, col_sel2 = st.columns([1, 3])
+with col_sel1:
+    target_ticker = st.selectbox("🎯 分析対象銘柄を選択:", options=top_tickers, index=0)
+with col_sel2:
+    # 選択された銘柄の企業名を取得して表示
+    company_name = df_insider[df_insider["ticker"] == target_ticker]["company"].iloc[0] if target_ticker in df_insider["ticker"].values else ""
+    st.markdown(f"<h3 style='margin-top: 10px; color: #888888;'>{company_name}</h3>", unsafe_allow_html=True)
+
+# ==============================================================================
 # 4. YAHOO FINANCE DATA & BOLLINGER BANDS CALCULATION
 # ==============================================================================
 @st.cache_data(ttl=3600)
