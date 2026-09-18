@@ -176,10 +176,10 @@ with col3:
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# B. MAIN SCREENER TABLE (全銘柄リスト表示 - ホバー＆クリック選択対応)
+# B. MAIN SCREENER TABLE (全銘柄リスト表示 - ホバー対応)
 # ------------------------------------------------------------------------------
 st.subheader("📋 AI Insider Screener & Analysis List")
-st.markdown("<small style='color:#888888;'>※ リストの行をクリックすると、下部の「直近の取引履歴」がその銘柄にフィルターされます。AI投資判断にカーソルを合わせると詳細な考察が表示されます。</small>", unsafe_allow_html=True)
+st.markdown("<small style='color:#888888;'>※「Finviz」や「Yahoo Finance」のリンクをクリックすると、外部のプロ用チャート・詳細ページが新規タブで開きます。AI投資判断にカーソルを合わせると詳細な考察が表示されます。</small>", unsafe_allow_html=True)
 
 # 表示用にデータフレームを整形
 df_display = df_screener.copy()
@@ -209,7 +209,7 @@ df_display.columns = [
     "企業名", 
     "AI確実性", 
     "AI投資判断", 
-    "AI投資考察メッセージ", # ホバーヘルプとしてマッピング
+    "AI投資考察メッセージ", # テーブル上からは非表示にし、ホバーヘルプのソースとしてのみ使用
     "直近買い総額", 
     "平均取得単価", 
     "最終取引日",
@@ -218,9 +218,8 @@ df_display.columns = [
     "Yahoo Finance"
 ]
 
-# 行選択を有効にしたインタラクティブテーブル
-# st.dataframe の selection_mode="single_row" を使用してクリックされた行を取得
-event = st.dataframe(
+# Streamlitのインタラクティブデータテーブルで表示
+st.dataframe(
     df_display,
     column_config={
         "AI投資判断": st.column_config.TextColumn(
@@ -239,29 +238,28 @@ event = st.dataframe(
     },
     use_container_width=True,
     hide_index=True,
-    height=400,
-    on_select="rerun", # 選択時に即座に再実行して下部フィルターに反映
-    selection_mode="single_row"
+    height=400
 )
-
-# クリックされた銘柄（Ticker）の判定
-selected_ticker = None
-if event and "rows" in event.selection and event.selection["rows"]:
-    selected_row_idx = event.selection["rows"][0]
-    selected_ticker = df_display.iloc[selected_row_idx]["Ticker"]
 
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# C. RAW DATA FEED (クリック連動フィルター付き)
+# C. RAW DATA FEED (セレクトボックスによる銘柄絞り込み)
 # ------------------------------------------------------------------------------
-if selected_ticker:
-    st.subheader(f"⏱️ Recent Raw Insider Feed: {selected_ticker} (選択中の銘柄履歴)")
+st.subheader("⏱️ Recent Raw Insider Feed (直近の取引履歴)")
+
+# ユーザーが特定の銘柄を選択して詳細履歴を見るためのセレクトボックス
+ticker_options = ["--- すべて表示 ---"] + df_screener["ticker"].tolist()
+selected_ticker = st.selectbox(
+    "🔍 詳細履歴を表示する銘柄（Ticker）を絞り込む:", 
+    options=ticker_options, 
+    index=0
+)
+
+if selected_ticker != "--- すべて表示 ---":
     # 選択された銘柄のみにフィルター
     df_filtered = df_raw[df_raw["ticker"] == selected_ticker]
 else:
-    st.subheader("⏱️ Recent Raw Insider Feed (直近の全取引履歴 - 銘柄未選択)")
-    st.markdown("<small style='color:#888888;'>※ 上記リストの行をクリックすると、ここにその銘柄だけの詳細履歴が表示されます。</small>", unsafe_allow_html=True)
     df_filtered = df_raw
 
 df_raw_display = df_filtered.sort_values(by="filing_date", ascending=False).head(50).copy()
