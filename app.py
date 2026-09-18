@@ -48,7 +48,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. DATA LOADING & AGGREGATION (SQLite ONLY - NO YFINANCE)
+# 2. DATA LOADING & AGGREGATION (SQLite ONLY)
 # ==============================================================================
 @st.cache_data(ttl=600) # 10分キャッシュ
 def load_and_process_data():
@@ -63,7 +63,8 @@ def load_and_process_data():
             avg_price,
             buy_date,
             total_shares as shares,
-            total_value
+            total_value,
+            filing_url
         FROM insider_trades
         WHERE ticker IS NOT NULL 
           AND ticker != '' 
@@ -80,8 +81,8 @@ def load_and_process_data():
     df["avg_price"] = pd.to_numeric(df["avg_price"], errors='coerce')
     df["shares"] = pd.to_numeric(df["shares"], errors='coerce')
     
-    # 異常データのクリーニング (1億ドル以上の極端な単一取引はデータエラーの可能性が高いため除外、または実態に合わせる)
-    df = df[df["total_value"] < 500000000] # 5000万ドル以上の異常値を排除
+    # 異常データのクリーニング (5億ドル以上の極端な単一取引はデータエラーの可能性が高いため除外)
+    df = df[df["total_value"] < 500000000]
     
     return df
 
@@ -114,14 +115,12 @@ def generate_screener(df):
     
     # AI確実性とステータスの算出
     # インサイダーの買い総額に基づくスコア（最大98.5%、最小50%）
-    # 10万ドルで60%、100万ドルで80%、500万ドル以上で95%以上に漸近する対数風の数式
     summary["Certainty (%)"] = summary["total_value"].apply(
         lambda val: min(98.5, max(50.0, 50.0 + (np.log10(val + 1) * 7.5)))
     )
     
     def get_ai_status(row):
         score = row["Certainty (%)"]
-        val = row["total_value"]
         if score >= 85:
             return "🔥 強気 (Strong Buy)"
         elif score >= 70:
@@ -133,7 +132,6 @@ def generate_screener(df):
         score = row["Certainty (%)"]
         val = row["total_value"]
         insiders = row["insider"]
-        ticker = row["ticker"]
         avg_p = row["avg_price"]
         
         if score >= 85:
@@ -147,11 +145,10 @@ def generate_screener(df):
     summary["AI Analysis (投資考察)"] = summary.apply(get_ai_analysis, axis=1)
     
     # 外部投資ツールへのリンク作成
-    # target="_blank" で新規タブ（ブラウザ設定によっては同一グループタブ）で開く
     summary["Finviz Chart"] = summary["ticker"].apply(lambda t: f"https://finviz.com/quote.ashx?t={t}")
     summary["Yahoo Finance"] = summary["ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
     
-    # ソート（確実性の高い順 ＝ 買い総額の大きい順）
+    # ソート（確実性の高い順）
     summary = summary.sort_values(by="Certainty (%)", ascending=False)
     return summary
 
@@ -222,7 +219,7 @@ df_display.columns = [
     "AI投資考察メッセージ"
 ]
 
-# Streamlitのインタラクティブデータテーブルで表示（リンクを有効化）
+# Streamlitのインタラクティブデータテーブルで表示
 st.dataframe(
     df_display,
     column_config={
@@ -237,7 +234,7 @@ st.dataframe(
     },
     use_container_width=True,
     hide_index=True,
-    height=600 # 縦に長く表示してスクロール可能に
+    height=500
 )
 
 st.markdown("---")
@@ -255,9 +252,9 @@ df_raw_display["avg_price"] = df_raw_display["avg_price"].map(lambda x: f"${x:,.
 df_raw_display["shares"] = df_raw_display["shares"].map(lambda x: f"{x:,.0f}")
 
 st.dataframe(
-    df_raw_display[["filing_date", "ticker", "company", "insider", "position", "avg_price", "total_value", "url"]],
+    df_raw_display[["filing_date", "ticker", "company", "insider", "position", "avg_price", "total_value", "filing_url"]],
     column_config={
-        "url": st.column_config.LinkColumn("SEC Link", display_text="View Form 4 ↗")
+        "filing_url": st.column_config.LinkColumn("SEC Link", display_text="View Form 4 ↗")
     },
     use_container_width=True,
     hide_index=True
