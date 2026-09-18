@@ -114,7 +114,6 @@ def generate_screener(df):
     }).reset_index()
     
     # AI確実性とステータスの算出
-    # インサイダーの買い総額に基づくスコア（最大98.5%、最小50%）
     summary["Certainty (%)"] = summary["total_value"].apply(
         lambda val: min(98.5, max(50.0, 50.0 + (np.log10(val + 1) * 7.5)))
     )
@@ -177,10 +176,10 @@ with col3:
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# B. MAIN SCREENER TABLE (全銘柄リスト表示)
+# B. MAIN SCREENER TABLE (全銘柄リスト表示 - ホバー＆クリック選択対応)
 # ------------------------------------------------------------------------------
 st.subheader("📋 AI Insider Screener & Analysis List")
-st.markdown("<small style='color:#888888;'>※「Finviz」や「Yahoo Finance」のリンクをクリックすると、外部のプロ用チャート・詳細ページが新規タブで開きます。</small>", unsafe_allow_html=True)
+st.markdown("<small style='color:#888888;'>※ リストの行をクリックすると、下部の「直近の取引履歴」がその銘柄にフィルターされます。AI投資判断にカーソルを合わせると詳細な考察が表示されます。</small>", unsafe_allow_html=True)
 
 # 表示用にデータフレームを整形
 df_display = df_screener.copy()
@@ -195,13 +194,13 @@ df_display = df_display[[
     "company", 
     "Certainty (%)", 
     "AI Status", 
+    "AI Analysis (投資考察)", # ホバーヘルプ用
     "Total Buy Value", 
     "Avg Buy Price", 
     "Last Trade Date",
     "insider",
     "Finviz Chart",
-    "Yahoo Finance",
-    "AI Analysis (投資考察)"
+    "Yahoo Finance"
 ]]
 
 # 列名の日本語化
@@ -210,19 +209,25 @@ df_display.columns = [
     "企業名", 
     "AI確実性", 
     "AI投資判断", 
+    "AI投資考察メッセージ", # ホバーヘルプとしてマッピング
     "直近買い総額", 
     "平均取得単価", 
     "最終取引日",
     "主なインサイダー",
     "Finviz Chart",
-    "Yahoo Finance",
-    "AI投資考察メッセージ"
+    "Yahoo Finance"
 ]
 
-# Streamlitのインタラクティブデータテーブルで表示
-st.dataframe(
+# 行選択を有効にしたインタラクティブテーブル
+# st.dataframe の selection_mode="single_row" を使用してクリックされた行を取得
+event = st.dataframe(
     df_display,
     column_config={
+        "AI投資判断": st.column_config.TextColumn(
+            "AI投資判断",
+            help="ホバーするとAIによる詳細な投資考察テキストが表示されます。"
+        ),
+        "AI投資考察メッセージ": None, # テーブル上からは非表示にし、ホバーヘルプのソースとしてのみ使用
         "Finviz Chart": st.column_config.LinkColumn(
             "📊 Chart (Finviz)", 
             display_text="View Chart ↗"
@@ -234,17 +239,32 @@ st.dataframe(
     },
     use_container_width=True,
     hide_index=True,
-    height=500
+    height=400,
+    on_select="rerun", # 選択時に即座に再実行して下部フィルターに反映
+    selection_mode="single_row"
 )
+
+# クリックされた銘柄（Ticker）の判定
+selected_ticker = None
+if event and "rows" in event.selection and event.selection["rows"]:
+    selected_row_idx = event.selection["rows"][0]
+    selected_ticker = df_display.iloc[selected_row_idx]["Ticker"]
 
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# C. RAW DATA FEED (直近の全生取引データフィード)
+# C. RAW DATA FEED (クリック連動フィルター付き)
 # ------------------------------------------------------------------------------
-st.subheader("⏱️ Recent Raw Insider Feed (直近の全取引履歴)")
+if selected_ticker:
+    st.subheader(f"⏱️ Recent Raw Insider Feed: {selected_ticker} (選択中の銘柄履歴)")
+    # 選択された銘柄のみにフィルター
+    df_filtered = df_raw[df_raw["ticker"] == selected_ticker]
+else:
+    st.subheader("⏱️ Recent Raw Insider Feed (直近の全取引履歴 - 銘柄未選択)")
+    st.markdown("<small style='color:#888888;'>※ 上記リストの行をクリックすると、ここにその銘柄だけの詳細履歴が表示されます。</small>", unsafe_allow_html=True)
+    df_filtered = df_raw
 
-df_raw_display = df_raw.sort_values(by="filing_date", ascending=False).head(30).copy()
+df_raw_display = df_filtered.sort_values(by="filing_date", ascending=False).head(50).copy()
 df_raw_display["filing_date"] = df_raw_display["filing_date"].dt.strftime('%Y-%m-%d')
 df_raw_display["buy_date"] = df_raw_display["buy_date"].dt.strftime('%Y-%m-%d')
 df_raw_display["total_value"] = df_raw_display["total_value"].map(lambda x: f"${x:,.0f}")
@@ -257,5 +277,6 @@ st.dataframe(
         "filing_url": st.column_config.LinkColumn("SEC Link", display_text="View Form 4 ↗")
     },
     use_container_width=True,
-    hide_index=True
+    hide_index=True,
+    height=300
 )
