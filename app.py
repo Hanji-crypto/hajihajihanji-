@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="Whale-Eye: Insider & Technical AI Dashboard",
     page_icon="👁️",
     layout="wide",
-    initial_sidebar_state="collapsed" # サイドバーをデフォルトで閉じる（不要なため）
+    initial_sidebar_state="collapsed" # サイドバーをデフォルトで閉じる
 )
 
 # カスタムCSSで完全なダークテーマと洗練されたカードUIを適用
@@ -102,12 +102,13 @@ with col_sel2:
 # ==============================================================================
 @st.cache_data(ttl=3600)
 def fetch_stock_data(ticker):
-    # 過去6ヶ月のデータを取得
+    # 過去6ヶ月のデータを取得（シリアライズ可能なデータフレームのみを返す）
     stock = yf.Ticker(ticker)
     df_stock = stock.history(period="6m")
-    return df_stock, stock
+    return df_stock
 
-df_stock, yf_ticker = fetch_stock_data(target_ticker)
+df_stock = fetch_stock_data(target_ticker)
+yf_ticker = yf.Ticker(target_ticker) # キャッシュ外でオブジェクトを生成
 
 if df_stock.empty:
     st.warning(f"Yahoo Financeから {target_ticker} の株価データを取得できませんでした。")
@@ -259,21 +260,18 @@ fig.add_trace(go.Scatter(
 ))
 
 # 大口インサイダー買いのプロット（🐋マークでマッピング）
-# 株価データの期間に合致するインサイダー取引を抽出
 ticker_insider_filtered = ticker_insider[
     (ticker_insider["buy_date"] >= df_stock.index.min()) & 
     (ticker_insider["buy_date"] <= df_stock.index.max())
 ]
 
 if not ticker_insider_filtered.empty:
-    # 同一日の取引をグループ化して、ポップアップにまとめて表示できるようにする
     grouped_insider = ticker_insider_filtered.groupby("buy_date").agg({
         "total_value": "sum",
         "insider": lambda x: ", ".join(x.unique()[:2]), # 代表して2名表示
         "avg_price": "mean"
     }).reset_index()
 
-    # インサイダーが買った日の終値を取得して、プロット位置にする
     grouped_insider = grouped_insider.set_index("buy_date").join(df_stock[['Close']], how='inner').reset_index()
 
     fig.add_trace(go.Scatter(
@@ -342,10 +340,8 @@ with col_bottom1:
 with col_bottom2:
     st.markdown("### 📋 Recent Insider Records")
     if not ticker_insider.empty:
-        # 直近10件の生データを表示
         recent_records = ticker_insider.sort_values(by="filing_date", ascending=False).head(10)
         
-        # 表示用フォーマット
         recent_records["filing_date"] = recent_records["filing_date"].dt.strftime('%Y-%m-%d')
         recent_records["buy_date"] = recent_records["buy_date"].dt.strftime('%Y-%m-%d')
         recent_records["total_value"] = recent_records["total_value"].map(lambda x: f"${x:,.0f}")
