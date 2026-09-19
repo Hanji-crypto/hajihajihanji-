@@ -48,12 +48,24 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. DATA LOADING & AGGREGATION (SQLite ONLY)
+# 2. DATA LOADING & AGGREGATION
 # ==============================================================================
 @st.cache_data(ttl=600) # 10分キャッシュ
 def load_and_process_data():
     conn = sqlite3.connect("insider.db")
-    query = """
+    
+    # テーブルの列名を確認し、セクター情報(sector)があれば取得、なければ 'Other' で補完する
+    try:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(insider_trades)")
+        columns = [col[1] for col in cursor.fetchall()]
+        has_sector = "sector" in columns
+    except:
+        has_sector = False
+
+    sector_select = "sector" if has_sector else "'Other' as sector"
+
+    query = f"""
         SELECT 
             filing_date,
             insider,
@@ -64,7 +76,8 @@ def load_and_process_data():
             buy_date,
             total_shares as shares,
             total_value,
-            filing_url
+            filing_url,
+            {sector_select}
         FROM insider_trades
         WHERE ticker IS NOT NULL 
           AND ticker != '' 
@@ -80,6 +93,9 @@ def load_and_process_data():
     df["total_value"] = pd.to_numeric(df["total_value"], errors='coerce')
     df["avg_price"] = pd.to_numeric(df["avg_price"], errors='coerce')
     df["shares"] = pd.to_numeric(df["shares"], errors='coerce')
+    
+    # セクターの欠損値補完
+    df["sector"] = df["sector"].fillna("Other")
     
     # 異常データのクリーニング (5億ドル以上の極端な単一取引はデータエラーの可能性が高いため除外)
     df = df[df["total_value"] < 500000000]
@@ -97,7 +113,6 @@ except Exception as e:
 # ==============================================================================
 def generate_screener(df):
     # 銘柄（Ticker）ごとに集計
-    # 直近90日間の買い
     three_months_ago = datetime.now() - timedelta(days=90)
     df_recent = df[df["buy_date"] >= three_months_ago]
     
@@ -110,8 +125,10 @@ def generate_screener(df):
         "avg_price": "mean",
         "insider": lambda x: ", ".join(x.unique()[:2]), # 主な購入者2名
         "company": "first",
-        "buy_date": "max" # 直近の取引日
-    }).reset_index()
+        "buy_date": "max", # 直近の取引日
+        "sector": "first",
+        "ticker": "count" # 取引件数
+    }).rename(columns={"ticker": "trade_count"}).reset_index()
     
     # AI確実性とステータスの算出
     summary["Certainty (%)"] = summary["total_value"].apply(
@@ -161,28 +178,32 @@ st.markdown("大口インサイダー取引（Form 4）データからAIが「�
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# A. MARKET OVERVIEW (全体サマリー)
+# A. SECTOR SLICER (セクター・スライサー)
 # ------------------------------------------------------------------------------
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("分析対象の総インサイダー銘柄数", f"{len(df_screener)} 銘柄")
-with col2:
-    strong_buys = len(df_screener[df_screener["Certainty (%)"] >= 85])
-    st.metric("🔥 最強シグナル（Strong Buy）検出数", f"{strong_buys} 銘柄")
-with col3:
-    total_market_buy = df_raw["total_value"].sum()
-    st.metric("追跡中の総インサイダー買付額", f"${total_market_buy:,.0f}")
+st.subheader("🔍 セクター・スライサー")
+st.markdown("<small style='color:#888888;'>表示するセクターを選択してください（複数選択可能）</small>", unsafe_allow_html=True)
+
+all_sectors = sorted(df_screener["sector"].unique().tolist())
+selected_sectors = st.multiselect(
+    "セクター選択:",
+    options=all_sectors,
+    default=all_sectors,
+    label_visibility="collapsed"
+)
+
+# セクターフィルターの適用
+df_filtered_screener = df_screener[df_screener["sector"].isin(selected_sectors)]
 
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# B. MAIN SCREENER TABLE (全銘柄リスト表示 - ホバー対応)
+# B. MAIN SCREENER TABLE (スライサー連動・高密度銘柄マトリックス)
 # ------------------------------------------------------------------------------
-st.subheader("📋 AI Insider Screener & Analysis List")
-st.markdown("<small style='color:#888888;'>※「Finviz」や「Yahoo Finance」のリンクをクリックすると、外部のプロ用チャート・詳細ページが新規タブで開きます。AI投資判断にカーソルを合わせると詳細な考察が表示されます。</small>", unsafe_allow_html=True)
+st.subheader("📋 スライサー連動・高密度銘柄マトリックス")
+st.markdown("<small style='color:#888888;'>※ 行の左端にあるチェックボックスをオンにすると、下部にその銘柄だけの詳細履歴が表示されます。AI投資判断にカーソルを合わせると詳細な考察が表示されます。</small>", unsafe_allow_html=True)
 
 # 表示用にデータフレームを整形
-df_display = df_screener.copy()
+df_display = df_filtered_screener.copy()
 df_display["Certainty (%)"] = df_display["Certainty (%)"].map(lambda x: f"{x:.1f}%")
 df_display["Total Buy Value"] = df_display["total_value"].map(lambda x: f"${x:,.0f}")
 df_display["Avg Buy Price"] = df_display["avg_price"].map(lambda x: f"${x:,.2f}")
@@ -197,6 +218,8 @@ df_display = df_display[[
     "AI Analysis (投資考察)", # ホバーヘルプ用
     "Total Buy Value", 
     "Avg Buy Price", 
+    "trade_count",
+    "sector",
     "Last Trade Date",
     "insider",
     "Finviz Chart",
@@ -212,21 +235,24 @@ df_display.columns = [
     "AI投資考察メッセージ", # テーブル上からは非表示にし、ホバーヘルプのソースとしてのみ使用
     "直近買い総額", 
     "平均取得単価", 
+    "取引件数",
+    "セクター",
     "最終取引日",
     "主なインサイダー",
     "Finviz Chart",
     "Yahoo Finance"
 ]
 
-# Streamlitのインタラクティブデータテーブルで表示
-st.dataframe(
+# 行選択（チェックボックス）を有効にしたテーブル表示
+# 古いStreamlitバージョンに対応するため、標準の st.dataframe の行選択機能を使用
+event = st.dataframe(
     df_display,
     column_config={
         "AI投資判断": st.column_config.TextColumn(
             "AI投資判断",
             help="ホバーするとAIによる詳細な投資考察テキストが表示されます。"
         ),
-        "AI投資考察メッセージ": None, # テーブル上からは非表示にし、ホバーヘルプのソースとしてのみ使用
+        "AI投資考察メッセージ": None, # テーブル上からは非表示
         "Finviz Chart": st.column_config.LinkColumn(
             "📊 Chart (Finviz)", 
             display_text="View Chart ↗"
@@ -238,31 +264,32 @@ st.dataframe(
     },
     use_container_width=True,
     hide_index=True,
-    height=400
+    height=400,
+    on_select="rerun", # 選択時に即座に再実行して下部フィルターに反映
+    selection_mode="single_row"
 )
+
+# クリック（チェック）された銘柄（Ticker）の判定
+selected_ticker = None
+if event and "rows" in event.selection and event.selection["rows"]:
+    selected_row_idx = event.selection["rows"][0]
+    selected_ticker = df_display.iloc[selected_row_idx]["Ticker"]
 
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# C. RAW DATA FEED (セレクトボックスによる銘柄絞り込み)
+# C. RAW DATA FEED (クリック連動フィルター付き)
 # ------------------------------------------------------------------------------
-st.subheader("⏱️ Recent Raw Insider Feed (直近の取引履歴)")
-
-# ユーザーが特定の銘柄を選択して詳細履歴を見るためのセレクトボックス
-ticker_options = ["--- すべて表示 ---"] + df_screener["ticker"].tolist()
-selected_ticker = st.selectbox(
-    "🔍 詳細履歴を表示する銘柄（Ticker）を絞り込む:", 
-    options=ticker_options, 
-    index=0
-)
-
-if selected_ticker != "--- すべて表示 ---":
+if selected_ticker:
+    st.subheader(f"⏱️ Recent Raw Insider Feed: {selected_ticker} (選択中の銘柄履歴)")
     # 選択された銘柄のみにフィルター
-    df_filtered = df_raw[df_raw["ticker"] == selected_ticker]
+    df_filtered_raw = df_raw[df_raw["ticker"] == selected_ticker]
 else:
-    df_filtered = df_raw
+    st.subheader("⏱️ Recent Raw Insider Feed (直近の全取引履歴 - 銘柄未選択)")
+    st.markdown("<small style='color:#888888;'>※ 上記マトリックスの行を選択すると、ここにその銘柄だけの詳細履歴が表示されます。</small>", unsafe_allow_html=True)
+    df_filtered_raw = df_raw
 
-df_raw_display = df_filtered.sort_values(by="filing_date", ascending=False).head(50).copy()
+df_raw_display = df_filtered_raw.sort_values(by="filing_date", ascending=False).head(50).copy()
 df_raw_display["filing_date"] = df_raw_display["filing_date"].dt.strftime('%Y-%m-%d')
 df_raw_display["buy_date"] = df_raw_display["buy_date"].dt.strftime('%Y-%m-%d')
 df_raw_display["total_value"] = df_raw_display["total_value"].map(lambda x: f"${x:,.0f}")
