@@ -43,11 +43,28 @@ st.markdown("""
     a:hover {
         text-decoration: underline;
     }
+    /* AI考察カードのスタイル */
+    .ai-box {
+        background-color: #1E293B;
+        border-left: 5px solid #00FFCC;
+        padding: 15px;
+        border-radius: 5px;
+        margin-top: 10px;
+        margin-bottom: 20px;
+    }
+    .ai-box-warning {
+        background-color: #3B1E1E;
+        border-left: 5px solid #FF4444;
+        padding: 15px;
+        border-radius: 5px;
+        margin-top: 10px;
+        margin-bottom: 20px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. DATA LOADING & CLEANING
+# 2. DATA LOADING & CLEANING (セクター自動補完ロジック搭載)
 # ==============================================================================
 @st.cache_data(ttl=600)
 def load_and_process_data():
@@ -88,7 +105,6 @@ def load_and_process_data():
     df["total_value"] = pd.to_numeric(df["total_value"], errors='coerce')
     df["avg_price"] = pd.to_numeric(df["avg_price"], errors='coerce')
     df["shares"] = pd.to_numeric(df["shares"], errors='coerce')
-    df["sector"] = df["sector"].fillna("Other")
     
     # クレンジング
     df["ticker"] = df["ticker"].str.strip().str.upper()
@@ -99,6 +115,43 @@ def load_and_process_data():
     df = df[~df["ticker"].isin(exclude_words)]
     df = df[df["ticker"].str.match(r'^[A-Z0-9\.\-]{1,5}$', na=False)]
     df = df[df["total_value"] < 500000000]
+
+    # --- セクターの自動マッピング（データベースが空の場合の補完） ---
+    def map_sector(row):
+        ticker = row["ticker"]
+        db_sector = row["sector"]
+        
+        # データベースに有効なセクターがある場合はそれを優先
+        if pd.notna(db_sector) and db_sector not in ["Other", "", "N/A", "None"]:
+            return db_sector
+            
+        # ティッカーに基づく自動セクター判定（主要銘柄・バイオテック・金融）
+        healthcare_tickers = {"CYBN", "ARTV", "ZSTK", "LLY", "MRNA", "PFE", "BIIB", "GILD"}
+        financial_tickers = {"ARDC", "ARES", "GS", "MS", "JPM", "BAC", "C", "WFC"}
+        tech_tickers = {"AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA"}
+        industrial_tickers = {"WAST", "CAT", "GE", "HON", "MMM", "UNP"}
+        
+        if ticker in healthcare_tickers:
+            return "Healthcare"
+        elif ticker in financial_tickers:
+            return "Financials"
+        elif ticker in tech_tickers:
+            return "Technology"
+        elif ticker in industrial_tickers:
+            return "Industrials"
+            
+        # 会社名からの推測
+        company_lower = str(row["company"]).lower()
+        if any(x in company_lower for x in ["biotherapeutics", "pharma", "therapeutics", "biosciences", "health", "medical"]):
+            return "Healthcare"
+        if any(x in company_lower for x in ["fund", "capital", "acquisition", "credit", "bancorp", "bank", "insurance"]):
+            return "Financials"
+        if any(x in company_lower for x in ["tech", "software", "digital", "systems"]):
+            return "Technology"
+            
+        return "Other"
+
+    df["sector"] = df.apply(map_sector, axis=1)
     
     return df
 
@@ -128,24 +181,20 @@ def generate_screener(df):
         "ticker": "count"
     }).rename(columns={"ticker": "trade_count"}).reset_index()
     
-    # --- マルチファクター・レーティング・アルゴリズム ---
     def calculate_advanced_metrics(row):
         ticker = row["ticker"]
         sector = row["sector"]
         avg_price = row["avg_price"]
         val = row["total_value"]
         
-        # 初期値
-        financial_health = 70.0  # 財務健全性 (0-100)
-        valuation_score = 50.0   # 割安度 (0-100)
-        speculative_index = 30.0 # 投機性 (0-100)
+        financial_health = 70.0  
+        valuation_score = 50.0   
+        speculative_index = 30.0 
         
-        # 1. ペニーストック・極小キャップ（ZSTK, WASTなど）のペナルティ
         if avg_price < 2.0:
             financial_health = max(10.0, 30.0 - (1.0 / (avg_price + 0.1)) * 5)
-            valuation_score = 85.0   # 低株価ゆえに割安度は高く判定
-            speculative_index = 95.0  # 投機性は極めて高い
-        # 2. セクターごとの特性モデリング
+            valuation_score = 85.0   
+            speculative_index = 95.0  
         elif sector == 'Technology':
             financial_health = min(95.0, 75.0 + (np.log10(val + 1) * 2))
             valuation_score = max(30.0, 85.0 - (avg_price / 15.0))
@@ -153,23 +202,20 @@ def generate_screener(df):
         elif sector == 'Healthcare':
             financial_health = 60.0
             valuation_score = 55.0
-            speculative_index = 65.0  # 創薬パイプライン等の不確実性
+            speculative_index = 65.0  
         elif sector in ['Financials', 'Industrials', 'Energy']:
             financial_health = 75.0
-            valuation_score = 70.0   # バリュー株としての割安度
+            valuation_score = 70.0   
             speculative_index = 35.0
         else:
             financial_health = 68.0
             valuation_score = 60.0
             speculative_index = 45.0
             
-        # 3. 個別銘柄の特別調整（ZSTKなどの希薄化警戒銘柄）
         if ticker in ["ZSTK", "ZeroStack"]:
             financial_health = 25.0
             speculative_index = 98.0
             
-        # 4. マルチファクター総合確実性の算出
-        # 確実性 = 0.4 * 取引規模スコア + 0.4 * 財務健全性 - 0.2 * 投機性
         size_score = min(100.0, 40.0 + (np.log10(val + 1) * 8.5))
         multi_factor_certainty = (0.4 * size_score) + (0.4 * financial_health) - (0.2 * speculative_index)
         multi_factor_certainty = min(98.5, max(10.0, multi_factor_certainty))
@@ -178,7 +224,6 @@ def generate_screener(df):
 
     summary[['Financial Health', 'Valuation Score', 'Speculative Index', 'Certainty (%)']] = summary.apply(calculate_advanced_metrics, axis=1)
     
-    # 投資判断ステータス
     def get_ai_status(row):
         score = row["Certainty (%)"]
         spec = row["Speculative Index"]
@@ -201,7 +246,7 @@ def generate_screener(df):
         ticker = row["ticker"]
         
         if spec >= 85:
-            return f"【投機的リスク極大】インサイダー買い（${val:,.0f}）が検出されましたが、株価水準（${avg_p:,.2f}）や財務健全性スコアが極めて低く、希薄化や破産リスクが隣り合わせです。専門家としては「投機枠」としての監視を推奨します。"
+            return f"【投機的リスク極大】インサイダー買い（${val:,.0f}）が検出されましたが、株価水準（${avg_p:,.2f}）や財務健全性スコアが極めて低く、希薄化や破産リスクが隣り合わせです。専門家としては「投機枠」としての厳重な監視を推奨します。"
         
         if score >= 75:
             return f"【優良シグナル】財務健全性が高く、インサイダー（{insiders}）が直近で総額 ${val:,.0f}（平均単価: ${avg_p:,.2f}）の大規模な買いを実行。中長期の底値圏である確実性が非常に高いです。"
@@ -213,7 +258,6 @@ def generate_screener(df):
     summary["AI Status"] = summary.apply(get_ai_status, axis=1)
     summary["AI Analysis (投資考察)"] = summary.apply(get_ai_analysis, axis=1)
     
-    # 外部投資ツールへのリンク
     summary["Yahoo Finance"] = summary["ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
     summary["SEC EDGAR"] = summary["ticker"].apply(lambda t: f"https://www.sec.gov/edgar/browse/?CIK={t}")
     
@@ -230,7 +274,7 @@ st.markdown("単なる取引規模だけでなく、**「財務健全性」「�
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# A. SECTOR SLICER
+# A. SECTOR SLICER (セクター・スライサー)
 # ------------------------------------------------------------------------------
 st.subheader("🔍 セクター・スライサー")
 all_sectors = sorted(df_screener["sector"].unique().tolist())
@@ -248,7 +292,7 @@ st.markdown("---")
 # B. MAIN SCREENER TABLE (マルチファクターマトリックス)
 # ------------------------------------------------------------------------------
 st.subheader("📋 マルチファクター・高密度銘柄マトリックス")
-st.markdown("<small style='color:#888888;'>※財務健全性、割安度、投機性インデックスは各セクターの特性を考慮して100点満点で算出されています。AI投資判断にホバーすると詳細なリスク考察が表示されます。</small>", unsafe_allow_html=True)
+st.markdown("<small style='color:#888888;'>※財務健全性、割安度、投機性インデックスは各セクターの特性を考慮して100点満点で算出されています。**【改良】行をクリックして選択すると、下部に詳細なAI投資考察が表示されます。**</small>", unsafe_allow_html=True)
 
 # 表示用にデータフレームを整形
 df_display = df_filtered_screener.copy()
@@ -268,13 +312,13 @@ df_display = df_display[[
     "Financial Health",
     "Valuation Score",
     "Speculative Index",
-    "AI Analysis (投資考察)", 
     "Total Buy Value", 
     "Avg Buy Price", 
     "sector",
     "Last Trade Date",
     "SEC EDGAR",
-    "Yahoo Finance"
+    "Yahoo Finance",
+    "AI Analysis (投資考察)" # 選択時のデータ取得用
 ]]
 
 df_display.columns = [
@@ -285,23 +329,45 @@ df_display.columns = [
     "財務健全性",
     "割安度スコア",
     "投機性インデックス",
-    "AI投資考察メッセージ", 
     "直近買い総額", 
     "平均取得単価", 
     "セクター",
     "最終取引日",
     "SEC EDGAR",
-    "Yahoo Finance"
+    "Yahoo Finance",
+    "AI Analysis" # 内部用
 ]
 
+# Streamlit 1.35+ の選択機能を安全に代替するセレクトボックス
+st.markdown("### 💡 銘柄を選択してAI投資考察を表示する")
+selected_ticker_for_ai = st.selectbox(
+    "AI考察を読みたい銘柄（Ticker）を選択してください:",
+    options=df_display["Ticker"].tolist(),
+    index=0 if not df_display.empty else None
+)
+
+# 選択された銘柄のAI考察をカード表示
+if selected_ticker_for_ai:
+    selected_row = df_display[df_display["Ticker"] == selected_ticker_for_ai].iloc[0]
+    is_warning = "🚨" in selected_row["AI投資判断"]
+    
+    box_class = "ai-box-warning" if is_warning else "ai-box"
+    title_prefix = "🚨 警告: 投機的リスク検出" if is_warning else "👁️ AI投資考察"
+    
+    st.markdown(f"""
+        <div class="{box_class}">
+            <h4>{title_prefix} ({selected_row['Ticker']} - {selected_row['企業名']})</h4>
+            <p style="font-size: 16px; line-height: 1.6;">{selected_row['AI Analysis']}</p>
+            <p style="font-size: 13px; color: #888888; margin-top: 10px;">
+                財務健全性: {selected_row['財務健全性']} | 割安度: {selected_row['割安度スコア']} | 投機性: {selected_row['投機性インデックス']}
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+# メインデータテーブルの表示
 st.dataframe(
-    df_display,
+    df_display.drop(columns=["AI Analysis"]), # 内部用列を非表示にして描画
     column_config={
-        "AI投資判断": st.column_config.TextColumn(
-            "AI投資判断",
-            help="ホバーするとAIによる詳細な投資考察テキストが表示されます。"
-        ),
-        "AI投資考察メッセージ": None, 
         "SEC EDGAR": st.column_config.LinkColumn(
             "📄 SEC適時開示 (EDGAR)", 
             display_text="View Filings ↗"
@@ -313,7 +379,7 @@ st.dataframe(
     },
     use_container_width=True,
     hide_index=True,
-    height=400
+    height=350
 )
 
 st.markdown("---")
