@@ -455,7 +455,7 @@ if selected_ticker:
         # 3. 選択銘柄のインサイダー取引データをマージ
         df_ticker_raw = df_raw[df_raw["ticker"] == selected_ticker].copy()
         
-        # サブプロットの作成 (RSI表示の有無で高さを調整)
+        # サブプロットの作成 (RSI表示 of 有無で高さを調整)
         if show_rsi:
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                                 vertical_spacing=0.08, row_heights=[0.7, 0.3])
@@ -546,11 +546,10 @@ if selected_ticker:
             fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1, opacity=0.5)
             fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1, opacity=0.5)
 
-        # レイアウト調整
+        # レイアウト調整 (エラーの原因だった background_color を完全に削除)
         fig.update_layout(
             height=600,
             template="plotly_dark",
-            background_color="#0E1117",
             paper_bgcolor="#0E1117",
             plot_bgcolor="#0E1117",
             xaxis_rangeslider_visible=False,
