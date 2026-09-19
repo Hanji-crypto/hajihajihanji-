@@ -274,7 +274,10 @@ st.markdown("---")
 st.subheader("⏱️ Recent Raw Insider Feed (直近の取引履歴)")
 
 # ユーザーが特定の銘柄を選択して詳細履歴を見るためのセレクトボックス
-ticker_options = ["--- すべて表示 ---"] + df_filtered_screener["Ticker"].tolist()
+# キーエラーを防ぐため、元の df_filtered_screener から 'ticker' 列を確実に取得
+ticker_list = sorted(df_filtered_screener["ticker"].unique().tolist())
+ticker_options = ["--- すべて表示 ---"] + ticker_list
+
 selected_ticker = st.selectbox(
     "🔍 詳細履歴を表示する銘柄（Ticker）を絞り込む:", 
     options=ticker_options, 
