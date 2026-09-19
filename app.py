@@ -81,8 +81,6 @@ def load_and_process_data():
         FROM insider_trades
         WHERE ticker IS NOT NULL 
           AND ticker != '' 
-          AND UPPER(ticker) != 'NONE'
-          AND UPPER(ticker) != 'N/A'
     """
     df = pd.read_sql_query(query, conn)
     conn.close()
@@ -97,7 +95,23 @@ def load_and_process_data():
     # セクターの欠損値補完
     df["sector"] = df["sector"].fillna("Other")
     
-    # 異常データのクリーニング (5億ドル以上の極端な単一取引はデータエラーの可能性が高いため除外)
+    # --- 株式投資専門家基準によるデータクレンジング ---
+    # 1. ティッカーを大文字に統一し、前後の空白を削除
+    df["ticker"] = df["ticker"].str.strip().str.upper()
+    
+    # 2. 明らかなシステム誤判定（ノイズ）の除外リスト
+    exclude_words = {
+        "NONE", "N/A", "NA", "NULL", "DIRECTOR", "OFFICER", "PRESIDENT", 
+        "CEO", "CFO", "TRUST", "COMMON", "STOCK", "SHARES", "BENEFICIAL"
+    }
+    df = df[~df["ticker"].isin(exclude_words)]
+    
+    # 3. ティッカーのフォーマットバリデーション
+    # 米国市場（主要・OTC含む）の実在するティッカーは、1〜5文字の英数字（クラス株を表すドットやハイフンを含む）
+    # 例: BRK.B, LLY, WAST など。数字のみや6文字以上の明らかなノイズを除外。
+    df = df[df["ticker"].str.match(r'^[A-Z0-9\.\-]{1,5}$', na=False)]
+    
+    # 4. 異常データのクリーニング (5億ドル以上の極端な単一取引はデータエラーの可能性が高いため除外)
     df = df[df["total_value"] < 500000000]
     
     return df
@@ -274,7 +288,6 @@ st.markdown("---")
 st.subheader("⏱️ Recent Raw Insider Feed (直近の取引履歴)")
 
 # ユーザーが特定の銘柄を選択して詳細履歴を見るためのセレクトボックス
-# キーエラーを防ぐため、元の df_filtered_screener から 'ticker' 列を確実に取得
 ticker_list = sorted(df_filtered_screener["ticker"].unique().tolist())
 ticker_options = ["--- すべて表示 ---"] + ticker_list
 
