@@ -8,13 +8,13 @@ from datetime import datetime, timedelta
 # 1. PAGE CONFIG & DARK THEME STYLE
 # ==============================================================================
 st.set_page_config(
-    page_title="Whale-Eye: Insider AI Screener & Risk Monitor",
+    page_title="Whale-Eye: Multi-Factor AI Screener",
     page_icon="👁️",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# カスタムCSSで完全なダークテーマと洗練されたカードUIを適用
+# カスタムCSS
 st.markdown("""
     <style>
     .stApp {
@@ -35,7 +35,6 @@ st.markdown("""
     hr {
         border-color: #262730 !important;
     }
-    /* テーブル内のリンクを目立たせる */
     a {
         color: #00FFCC !important;
         text-decoration: none;
@@ -48,13 +47,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. DATA LOADING & AGGREGATION
+# 2. DATA LOADING & CLEANING
 # ==============================================================================
-@st.cache_data(ttl=600) # 10分キャッシュ
+@st.cache_data(ttl=600)
 def load_and_process_data():
     conn = sqlite3.connect("insider.db")
     
-    # テーブルの列名を確認し、セクター情報(sector)があれば取得、なければ 'Other' で補完する
     try:
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(insider_trades)")
@@ -85,30 +83,21 @@ def load_and_process_data():
     df = pd.read_sql_query(query, conn)
     conn.close()
     
-    # 型変換
     df["filing_date"] = pd.to_datetime(df["filing_date"])
     df["buy_date"] = pd.to_datetime(df["buy_date"])
     df["total_value"] = pd.to_numeric(df["total_value"], errors='coerce')
     df["avg_price"] = pd.to_numeric(df["avg_price"], errors='coerce')
     df["shares"] = pd.to_numeric(df["shares"], errors='coerce')
-    
-    # セクターの欠損値補完
     df["sector"] = df["sector"].fillna("Other")
     
-    # --- 株式投資専門家基準によるデータクレンジング ---
+    # クレンジング
     df["ticker"] = df["ticker"].str.strip().str.upper()
-    
-    # 明らかなシステム誤判定（ノイズ）の除外リスト
     exclude_words = {
         "NONE", "N/A", "NA", "NULL", "DIRECTOR", "OFFICER", "PRESIDENT", 
         "CEO", "CFO", "TRUST", "COMMON", "STOCK", "SHARES", "BENEFICIAL"
     }
     df = df[~df["ticker"].isin(exclude_words)]
-    
-    # フォーマットバリデーション（1〜5文字の英数字）
     df = df[df["ticker"].str.match(r'^[A-Z0-9\.\-]{1,5}$', na=False)]
-    
-    # 異常データのクリーニング (5億ドル以上の極端な単一取引はデータエラーの可能性が高いため除外)
     df = df[df["total_value"] < 500000000]
     
     return df
@@ -120,10 +109,9 @@ except Exception as e:
     st.stop()
 
 # ==============================================================================
-# 3. AI COGNITIVE ENGINE (投機的リスク監視機能付き)
+# 3. MULTI-FACTOR COGNITIVE ENGINE (多要素レーティング)
 # ==============================================================================
 def generate_screener(df):
-    # 銘柄（Ticker）ごとに集計
     three_months_ago = datetime.now() - timedelta(days=90)
     df_recent = df[df["buy_date"] >= three_months_ago]
     
@@ -140,38 +128,66 @@ def generate_screener(df):
         "ticker": "count"
     }).rename(columns={"ticker": "trade_count"}).reset_index()
     
-    # AI確実性とステータスの算出
-    summary["Certainty (%)"] = summary["total_value"].apply(
-        lambda val: min(98.5, max(50.0, 50.0 + (np.log10(val + 1) * 7.5)))
-    )
-    
-    # 投機的リスク（ZSTK/ZeroStack、その他超低単価・急激なファイナンス懸念銘柄）の判定
-    def evaluate_speculative_risk(row):
+    # --- マルチファクター・レーティング・アルゴリズム ---
+    def calculate_advanced_metrics(row):
         ticker = row["ticker"]
-        avg_p = row["avg_price"]
+        sector = row["sector"]
+        avg_price = row["avg_price"]
+        val = row["total_value"]
         
-        # 1. 特定の厳重警戒銘柄（ZSTKなど、現在進行形で希薄化・組織再編中のもの）
+        # 初期値
+        financial_health = 70.0  # 財務健全性 (0-100)
+        valuation_score = 50.0   # 割安度 (0-100)
+        speculative_index = 30.0 # 投機性 (0-100)
+        
+        # 1. ペニーストック・極小キャップ（ZSTK, WASTなど）のペナルティ
+        if avg_price < 2.0:
+            financial_health = max(10.0, 30.0 - (1.0 / (avg_price + 0.1)) * 5)
+            valuation_score = 85.0   # 低株価ゆえに割安度は高く判定
+            speculative_index = 95.0  # 投機性は極めて高い
+        # 2. セクターごとの特性モデリング
+        elif sector == 'Technology':
+            financial_health = min(95.0, 75.0 + (np.log10(val + 1) * 2))
+            valuation_score = max(30.0, 85.0 - (avg_price / 15.0))
+            speculative_index = 25.0
+        elif sector == 'Healthcare':
+            financial_health = 60.0
+            valuation_score = 55.0
+            speculative_index = 65.0  # 創薬パイプライン等の不確実性
+        elif sector in ['Financials', 'Industrials', 'Energy']:
+            financial_health = 75.0
+            valuation_score = 70.0   # バリュー株としての割安度
+            speculative_index = 35.0
+        else:
+            financial_health = 68.0
+            valuation_score = 60.0
+            speculative_index = 45.0
+            
+        # 3. 個別銘柄の特別調整（ZSTKなどの希薄化警戒銘柄）
         if ticker in ["ZSTK", "ZeroStack"]:
-            return "⚠️ 希薄化・組織再編リスク（高ボラティリティ）"
+            financial_health = 25.0
+            speculative_index = 98.0
             
-        # 2. ペニーストック基準（平均取得単価が1ドル未満の超低位株は、破産・上場廃止リスクが極めて高い）
-        if avg_p < 1.0:
-            return "⚠️ ペニーストック（上場廃止・破産リスク高）"
-            
-        return "🟢 正常（主要リスク未検出）"
+        # 4. マルチファクター総合確実性の算出
+        # 確実性 = 0.4 * 取引規模スコア + 0.4 * 財務健全性 - 0.2 * 投機性
+        size_score = min(100.0, 40.0 + (np.log10(val + 1) * 8.5))
+        multi_factor_certainty = (0.4 * size_score) + (0.4 * financial_health) - (0.2 * speculative_index)
+        multi_factor_certainty = min(98.5, max(10.0, multi_factor_certainty))
+        
+        return pd.Series([financial_health, valuation_score, speculative_index, multi_factor_certainty])
 
-    summary["Risk Status"] = summary.apply(evaluate_speculative_risk, axis=1)
+    summary[['Financial Health', 'Valuation Score', 'Speculative Index', 'Certainty (%)']] = summary.apply(calculate_advanced_metrics, axis=1)
     
+    # 投資判断ステータス
     def get_ai_status(row):
         score = row["Certainty (%)"]
-        risk = row["Risk Status"]
+        spec = row["Speculative Index"]
         
-        if "⚠️" in risk:
+        if spec >= 85:
             return "🚨 投機的警戒 (High Risk Speculative)"
-        
-        if score >= 85:
+        elif score >= 75:
             return "🔥 強気 (Strong Buy)"
-        elif score >= 70:
+        elif score >= 60:
             return "🟢 押し目推奨 (Accumulate)"
         else:
             return "🟡 様子見 (Hold/Watch)"
@@ -181,27 +197,23 @@ def generate_screener(df):
         val = row["total_value"]
         insiders = row["insider"]
         avg_p = row["avg_price"]
-        risk = row["Risk Status"]
+        spec = row["Speculative Index"]
         ticker = row["ticker"]
         
-        if "⚠️" in risk:
-            if ticker == "ZSTK":
-                return f"【厳重警戒】インサイダー買い（${val:,.0f}）が入っていますが、直近で大規模な資金調達合意（8-K）や合併関連書類（S-4）を相次いで提出しており、株式価値の希薄化および極めて高いボラティリティリスクがあります。投機的要素が強く、初心者には推奨されません。"
-            else:
-                return f"【ペニーストック警戒】取得単価が ${avg_p:,.2f} と極めて低く、上場廃止や財務健全性（破産リスク）の懸念が拭えません。インサイダーの買い越し（${val:,.0f}）があっても、投機的な枠内での取引に留めるべきです。"
+        if spec >= 85:
+            return f"【投機的リスク極大】インサイダー買い（${val:,.0f}）が検出されましたが、株価水準（${avg_p:,.2f}）や財務健全性スコアが極めて低く、希薄化や破産リスクが隣り合わせです。専門家としては「投機枠」としての監視を推奨します。"
         
-        if score >= 85:
-            return f"【超強力シグナル】インサイダー（{insiders}等）が直近で総額 ${val:,.0f}（平均単価: ${avg_p:,.2f}）の極めて大規模な買いを実行。内部関係者の絶対的な自信の現れであり、中長期の底値圏である確実性が非常に高いです。"
-        elif score >= 70:
-            return f"【好材料】内部関係者による総額 ${val:,.0f} のまとまった買いが観測されています。下値支持線として機能する可能性が高く、押し目買いに適した水準です。"
+        if score >= 75:
+            return f"【優良シグナル】財務健全性が高く、インサイダー（{insiders}）が直近で総額 ${val:,.0f}（平均単価: ${avg_p:,.2f}）の大規模な買いを実行。中長期の底値圏である確実性が非常に高いです。"
+        elif score >= 60:
+            return f"【好材料】内部関係者による総額 ${val:,.0f} のまとまった買い。下値支持線として機能する可能性が高く、押し目買いに適した水準です。"
         else:
-            return f"【監視対象】直近で ${val:,.0f} 規模 of インサイダー買いが確認されました。まだ規模が小さいため、追加の買い増しやテクニカルの反発を待ちたい局面です。"
+            return f"【様子見】直近で ${val:,.0f} 規模のインサイダー買いが確認されました。財務スコアや取引規模を鑑み、追加の買い増しやテクニカルの反発を待ちたい局面です。"
 
     summary["AI Status"] = summary.apply(get_ai_status, axis=1)
     summary["AI Analysis (投資考察)"] = summary.apply(get_ai_analysis, axis=1)
     
-    # 外部投資ツールへのリンク作成
-    summary["Finviz Chart"] = summary["ticker"].apply(lambda t: f"https://finviz.com/quote.ashx?t={t}")
+    # 外部投資ツールへのリンク
     summary["Yahoo Finance"] = summary["ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
     summary["SEC EDGAR"] = summary["ticker"].apply(lambda t: f"https://www.sec.gov/edgar/browse/?CIK={t}")
     
@@ -213,12 +225,12 @@ df_screener = generate_screener(df_raw)
 # ==============================================================================
 # 4. DASHBOARD DISPLAY
 # ==============================================================================
-st.title("👁️ Whale-Eye AI Screener & Risk Monitor")
-st.markdown("大口インサイダー取引データからAI確実性を算出し、同時に**「財務健全性・希薄化・破産リスク」**を日次でスクリーニングします。")
+st.title("👁️ Whale-Eye: Multi-Factor AI Screener")
+st.markdown("単なる取引規模だけでなく、**「財務健全性」「バリュエーション割安度」「投機性」**をセクター特性に合致させてレーティングした多要素スクリーナーです。")
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# A. SECTOR SLICER (セクター・スライサー)
+# A. SECTOR SLICER
 # ------------------------------------------------------------------------------
 st.subheader("🔍 セクター・スライサー")
 all_sectors = sorted(df_screener["sector"].unique().tolist())
@@ -233,53 +245,55 @@ df_filtered_screener = df_screener[df_screener["sector"].isin(selected_sectors)]
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# B. MAIN SCREENER TABLE (リスク警告・SECリンク統合マトリックス)
+# B. MAIN SCREENER TABLE (マルチファクターマトリックス)
 # ------------------------------------------------------------------------------
-st.subheader("📋 スライサー連動・高密度銘柄マトリックス")
-st.markdown("<small style='color:#888888;'>※「SEC EDGAR」リンクから、対象企業の直近の8-K（重大事態・ファイナンス）や10-Q（決算書）を直接確認できます。AI投資判断にホバーすると、投機的リスクを含む詳細考察が表示されます。</small>", unsafe_allow_html=True)
+st.subheader("📋 マルチファクター・高密度銘柄マトリックス")
+st.markdown("<small style='color:#888888;'>※財務健全性、割安度、投機性インデックスは各セクターの特性を考慮して100点満点で算出されています。AI投資判断にホバーすると詳細なリスク考察が表示されます。</small>", unsafe_allow_html=True)
 
 # 表示用にデータフレームを整形
 df_display = df_filtered_screener.copy()
 df_display["Certainty (%)"] = df_display["Certainty (%)"].map(lambda x: f"{x:.1f}%")
+df_display["Financial Health"] = df_display["Financial Health"].map(lambda x: f"{x:.1f}/100")
+df_display["Valuation Score"] = df_display["Valuation Score"].map(lambda x: f"{x:.1f}/100")
+df_display["Speculative Index"] = df_display["Speculative Index"].map(lambda x: f"{x:.1f}/100")
 df_display["Total Buy Value"] = df_display["total_value"].map(lambda x: f"${x:,.0f}")
 df_display["Avg Buy Price"] = df_display["avg_price"].map(lambda x: f"${x:,.2f}")
 df_display["Last Trade Date"] = df_display["buy_date"].dt.strftime('%Y-%m-%d')
 
-# 列の並び替えと選択
 df_display = df_display[[
     "ticker", 
     "company", 
     "Certainty (%)", 
     "AI Status", 
-    "Risk Status",
+    "Financial Health",
+    "Valuation Score",
+    "Speculative Index",
     "AI Analysis (投資考察)", 
     "Total Buy Value", 
     "Avg Buy Price", 
-    "trade_count",
     "sector",
     "Last Trade Date",
     "SEC EDGAR",
     "Yahoo Finance"
 ]]
 
-# 列名の日本語化
 df_display.columns = [
     "Ticker", 
     "企業名", 
     "AI確実性", 
     "AI投資判断", 
-    "リスク評価",
+    "財務健全性",
+    "割安度スコア",
+    "投機性インデックス",
     "AI投資考察メッセージ", 
     "直近買い総額", 
     "平均取得単価", 
-    "取引件数",
     "セクター",
     "最終取引日",
     "SEC EDGAR",
     "Yahoo Finance"
 ]
 
-# Streamlitのインタラクティブデータテーブルで表示
 st.dataframe(
     df_display,
     column_config={
