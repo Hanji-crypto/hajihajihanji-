@@ -428,6 +428,8 @@ if selected_ticker:
             hist = stock.history(period="1y")
             if hist.empty:
                 return None
+            # 【重要】タイムゾーン不一致エラーを防ぐため、インデックスのタイムゾーンを完全に剥ぎ取る
+            hist.index = hist.index.tz_localize(None)
             return hist
         except Exception as e:
             return None
