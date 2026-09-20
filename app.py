@@ -65,11 +65,12 @@ st.html("""
     .kb-guide {
         background-color: #1A1F2C;
         border: 1px solid #2D3748;
-        padding: 8px 12px;
-        border-radius: 6px;
-        font-size: 12px;
+        padding: 12px 15px;
+        border-radius: 8px;
+        font-size: 13px;
         color: #A0AEC0;
-        margin-bottom: 10px;
+        margin-bottom: 15px;
+        line-height: 1.6;
     }
     .kb-key {
         background-color: #2D3748;
@@ -114,7 +115,7 @@ st.html("""
         min-width: 110px;
         text-align: center;
     }
-    /* ⚡ 【新設】AIテクニカル分析カードのスタイル */
+    /* AIテクニカル分析カードのスタイル */
     .tech-analysis-card {
         background-color: #161D2F;
         border: 1px solid #24324F;
@@ -318,7 +319,7 @@ def generate_screener(df):
         elif score >= 60:
             return f"【好材料】内部関係者による総額 ${val:,.0f} のまとまった買い。下値支持線として機能する可能性が高く、押し目買いに適した水準です。"
         else:
-            return f"【様子見】直近で ${val:,.0f} 規模 of インサイダー買いが確認されました。財務スコアや取引規模を鑑み、追加の買い増しやテクニカルの反発を待ちたい局面です。"
+            return f"【様子見】直近で ${val:,.0f} 規模のインサイダー買いが確認されました。財務スコアや取引規模を鑑み、追加 of 買い増しやテクニカルの反発を待ちたい局面です。"
 
     summary["AI Status"] = summary.apply(get_ai_status, axis=1)
     summary["AI Analysis (投資考察)"] = summary.apply(get_ai_analysis, axis=1)
@@ -360,12 +361,13 @@ st.markdown("---")
 # ------------------------------------------------------------------------------
 st.subheader("📋 マルチファクター・高密度銘柄マトリックス")
 
+# ⚡ キーボード操作ガイドを「矢印キー移動だけ」の超シンプル手順に書き換え
 st.markdown("""
     <div class="kb-guide">
-        ⌨️ <b>プロフェッショナル・キーボード操作ガイド:</b><br>
+        ⌨️ <b>プロフェッショナル・マウスレス操作ガイド:</b><br>
         1. 右上の 🔍 検索窓に <code>smmt</code> 等を入力して <span class="kb-key">Enter</span>。<br>
-        2. <span class="kb-key">Shift + Tab</span> キーを数回押してテーブル内にフォーカスを移動。<br>
-        3. 矢印キー <span class="kb-key">↑</span> <span class="kb-key">↓</span> で銘柄を選択し、<b><span class="kb-key">X</span> キー</b> または <b><span class="kb-key">Enter</span> キー</b> を押すことでチェックボックスをON/OFFできます。
+        2. <span class="kb-key">Shift + Tab</span> キーを数回押し、テーブル内にフォーカス（青い選択枠）を移動させる。<br>
+        3. <b>あとは矢印キー <span class="kb-key">↑</span> <span class="kb-key">↓</span> で上下に移動するだけ！</b> 選択した行の銘柄が自動的にアクティブになり、チャートやAI分析がリアルタイムに連動して切り替わります。
     </div>
 """, unsafe_allow_html=True)
 
@@ -398,6 +400,7 @@ df_display_table["Yahoo Finance"] = df_display["Yahoo Finance"]
 # Ticker列で重複を完全に排除し、1銘柄1行のみにする
 df_display_table = df_display_table.drop_duplicates(subset=["Ticker"])
 
+# ⚡ selection_mode="single-row" に変更（チェックボックスを廃止し、行フォーカス選択に最適化）
 event = st.dataframe(
     df_display_table,
     column_config={
@@ -409,10 +412,10 @@ event = st.dataframe(
     hide_index=True,
     height=300,
     on_select="rerun", 
-    selection_mode="multi-row"
+    selection_mode="single-row"
 )
 
-# 選択されたすべての行のインデックスを取得
+# 選択された行のインデックスを取得
 selected_tickers = []
 if event and "rows" in event.get("selection", {}):
     selected_rows = event["selection"]["rows"]
@@ -778,7 +781,7 @@ if selected_tickers:
                 if closest_date not in raw_events_by_date:
                     raw_events_by_date[closest_date] = {}
                 
-                # ⚡ 人物単位で取引をマージ（重複を完全に排除）
+                # 人物単位で取引をマージ
                 if insider_name not in raw_events_by_date[closest_date]:
                     raw_events_by_date[closest_date][insider_name] = {
                         "type": "I",
@@ -814,8 +817,6 @@ if selected_tickers:
                         if c_date not in raw_events_by_date:
                             raw_events_by_date[c_date] = {}
                         
-                        # ニュースフォールバック（大口インサイダーニュースなど）が、
-                        # 既にインサイダー取引として登録されている人物と同一の場合はマージしてスキップする
                         matched_insider = None
                         for insider_name in raw_events_by_date[c_date].keys():
                             if insider_name.lower() in row["title"].lower():
@@ -823,10 +824,8 @@ if selected_tickers:
                                 break
                         
                         if matched_insider:
-                            # 既にインサイダー取引があるため、ニュース側の重複はマージ（スキップ）
                             continue
                         
-                        # 新規ニュースイベントとして登録
                         raw_events_by_date[c_date][row["title"]] = {
                             "type": "E" if is_earnings else "R",
                             "category": row["category"],
@@ -835,22 +834,19 @@ if selected_tickers:
                         }
 
             # --------------------------------------------------
-            # 🧠 【新機能】自律型AIテクニカル分析・解説エンジン
+            # 🧠 自律型AIテクニカル分析・解説エンジン
             # --------------------------------------------------
             st.markdown(f"#### 🧠 【{t}】 自律型AIテクニカル分析 ＆ 投資判断")
             
-            # 直近指標の抽出
             latest_close = df_prices["Close"].iloc[-1]
             latest_rsi = df_prices["RSI"].iloc[-1]
             latest_ma20 = df_prices["MA20"].iloc[-1]
             latest_upper = df_prices["BB_Upper"].iloc[-1]
             latest_lower = df_prices["BB_Lower"].iloc[-1]
             
-            # トレンド判定
             ma_slope = "上昇" if df_prices["MA20"].iloc[-1] > df_prices["MA20"].iloc[-5] else "下降"
             price_vs_ma = "上回る" if latest_close > latest_ma20 else "下回る"
             
-            # RSI判定
             if latest_rsi <= 30:
                 rsi_status = "🔥 極めて強い売られすぎ（反発の好機）"
                 rsi_action = "逆張りでの打診買いを検討できる水準です。"
@@ -861,7 +857,6 @@ if selected_tickers:
                 rsi_status = "🟡 ニュートラル（方向感模索）"
                 rsi_action = "他のトレンド指標と併せて判断する必要があります。"
                 
-            # ボリンジャーバンド判定
             bb_width = (latest_upper - latest_lower) / latest_ma20 * 100
             if latest_close <= latest_lower * 1.02:
                 bb_status = "📉 バンド下限（Lower Band）に到達"
@@ -873,13 +868,11 @@ if selected_tickers:
                 bb_status = "↕️ バンド内部で推移"
                 bb_action = "レンジ内での推移、または次のトレンド形成を待つ局面です。"
 
-            # 出来高判定
             recent_vol_avg = df_prices["Volume"].iloc[-5:].mean()
             past_vol_avg = df_prices["Volume"].iloc[-20:].mean()
             vol_spike = "あり" if recent_vol_avg > past_vol_avg * 1.5 else "なし"
             vol_text = "出来高が急増しており、大口投資家の動意（資金流入）が強く疑われます。" if vol_spike == "あり" else "出来高は平時並みであり、静かなレンジ推移です。"
 
-            # 総合投資判断の決定
             if (latest_rsi <= 35 or latest_close <= latest_lower * 1.03) and len(df_insider_grouped) > 0:
                 judgment_title = "🟢 【買い推奨 / 押し目買い好機】"
                 judgment_color = "#00FFCC"
@@ -889,11 +882,10 @@ if selected_tickers:
                 judgment_color = "#FFD700"
                 judgment_desc = "株価はバンド上限付近にあり、RSIも過熱感を示しています。インサイダー買いの履歴はあるものの、短期的には押し目を待つか、時間分散でのエントリーが推奨されます。"
             else:
-                judgment_title = "🟡 {ニュートラル / レンジ推移】"
+                judgment_title = "🟡 【ニュートラル / レンジ推移】"
                 judgment_color = "#888888"
                 judgment_desc = "株価・テクニカル指標ともに明確な一方向のシグナルは出ていません。インサイダーの取得単価付近での底固めを確認しつつ、打診買いのタイミングを測る局面です。"
 
-            # 解析カードの描画
             st.html(f"""
                 <div class="tech-analysis-card" style="border-left: 5px solid {judgment_color};">
                     <h4 style="color:{judgment_color}; margin-top:0;">{judgment_title}</h4>
@@ -922,15 +914,12 @@ if selected_tickers:
                 for event_date in sorted(raw_events_by_date.keys(), reverse=True):
                     date_str = event_date.strftime('%Y-%m-%d')
                     
-                    # 日付内の各イベント（マージ済み）をループ
                     for key, item in raw_events_by_date[event_date].items():
                         if not item["is_news_fallback"]:
-                            # インサイダー取引の場合
                             color = insider_colors.get(key, "#00FFCC")
                             badge = f"<span class='console-badge' style='background-color: rgba(170, 0, 255, 0.15); color: #E0B0FF; border: 1px solid #AA00FF;'>インサイダー [ I ]</span>"
                             text = f"👤 <span style='color:{color}; font-weight:bold;'>{key}</span> ({item['position']}) が 合計 <b style='color:#00FFCC;'>${item['total_value']:,.0f}</b> を市場から購入"
                         else:
-                            # ニュース・決算の場合
                             if "決算" in item["category"]:
                                 badge = "<span class='console-badge' style='background-color: rgba(255, 68, 68, 0.15); color: #FF8888; border: 1px solid #FF4444;'>決算発表 [ E ]</span>"
                                 text_color = "#FF8888"
@@ -1018,7 +1007,7 @@ if selected_tickers:
                     column_config={
                         "date": st.column_config.TextColumn("日付", width="small"),
                         "type": st.column_config.TextColumn("分類", width="small"),
-                        "event": st.column_config.TextColumn("イベント", width="large"),
+                        "event": st.column_config.TextColumn("event", width="large"),
                         "sec_url": st.column_config.LinkColumn("SEC開示", display_text="Form 4 ↗", width="small"),
                         "yahoo_url": st.column_config.LinkColumn("Yahooニュース", display_text="News ↗", width="small"),
                         "finviz_url": st.column_config.LinkColumn("Finviz", display_text="Chart ↗", width="small")
