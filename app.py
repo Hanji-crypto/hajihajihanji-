@@ -80,6 +80,39 @@ st.markdown("""
         font-weight: bold;
         border-bottom: 2px solid #1A202C;
     }
+    /* ⚡ 【新設】リアルタイム・イベント・コンソールのスタイル */
+    .event-console {
+        background-color: #111622;
+        border: 1px solid #1F2937;
+        border-radius: 8px;
+        padding: 15px;
+        max-height: 220px;
+        overflow-y: auto;
+        font-family: 'Consolas', 'Courier New', monospace;
+        font-size: 13px;
+        line-height: 1.6;
+        margin-bottom: 15px;
+    }
+    .console-row {
+        border-bottom: 1px solid #1E293B;
+        padding: 6px 0;
+        display: flex;
+        align-items: flex-start;
+    }
+    .console-date {
+        color: #888888;
+        min-width: 95px;
+        font-weight: bold;
+    }
+    .console-badge {
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: bold;
+        margin-right: 10px;
+        min-width: 110px;
+        text-align: center;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -464,7 +497,7 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (半透明・個別オフセットホバー版)
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (完全分離・専用コンソール版)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
@@ -637,7 +670,7 @@ if selected_tickers:
                     x=df_prices.index, y=df_prices["RSI"],
                     line=dict(color="rgba(255, 165, 0, 0.45)", width=1.5), 
                     name="RSI (14)",
-                    hoverinfo="y"
+                    hoverinfo="y"  # 👈 最小限の数値情報のみ
                 ), row=1, col=1, secondary_y=False)
                 fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 0, 0, 0.25)", row=1, col=1, secondary_y=False)
                 fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.25)", row=1, col=1, secondary_y=False)
@@ -647,7 +680,7 @@ if selected_tickers:
                 fig.add_trace(gr.Candlestick(
                     x=df_prices.index, open=df_prices["Open"], high=df_prices["High"], low=df_prices["Low"], close=df_prices["Close"], 
                     name="株価 (OHLC)",
-                    hoverinfo="x+y"
+                    hoverinfo="x+y"  # 👈 最小限の数値情報のみ
                 ), row=1, col=1, secondary_y=True)
             else:
                 fig.add_trace(gr.Scatter(
@@ -657,9 +690,9 @@ if selected_tickers:
                 ), row=1, col=1, secondary_y=True)
             
             if show_bb:
-                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", showlegend=False), row=1, col=1, secondary_y=True)
-                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", showlegend=False), row=1, col=1, secondary_y=True)
-                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["MA20"], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均"), row=1, col=1, secondary_y=True)
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", hoverinfo="skip", showlegend=False), row=1, col=1, secondary_y=True)
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", hoverinfo="skip", showlegend=False), row=1, col=1, secondary_y=True)
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["MA20"], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均", hoverinfo="skip"), row=1, col=1, secondary_y=True)
             
             fig.update_yaxes(title_text="株価 ($)", row=1, col=1, secondary_y=True)
 
@@ -690,7 +723,7 @@ if selected_tickers:
             fig.update_yaxes(title_text="インサイダー量 ($)", row=2, col=1, secondary_y=True, showgrid=False)
 
             # --------------------------------------------------
-            # ⚡ 同日イベント統合マージシステム
+            # ⚡ 【完全分離設計】データ収集 ＆ 専用コンソールHTML生成
             # --------------------------------------------------
             min_price = df_prices["Low"].min()
             event_y_line = min_price * 0.93
@@ -738,7 +771,8 @@ if selected_tickers:
                 color = insider_colors.get(insider_name, "#00FFCC")
                 raw_events_by_date[closest_date].append({
                     "type": "I",
-                    "text": f"👤 <span style='color:{color};'>【インサイダー】 {insider_name} ({pos}) が 合計 ${val:,.0f} を購入</span>"
+                    "badge_html": f"<span class='console-badge' style='background-color: rgba(170, 0, 255, 0.15); color: #E0B0FF; border: 1px solid #AA00FF;'>インサイダー [ I ]</span>",
+                    "text_html": f"👤 <span style='color:{color}; font-weight:bold;'>{insider_name}</span> ({pos}) が 合計 <b style='color:#00FFCC;'>${val:,.0f}</b> を市場から購入"
                 })
 
             # ② カタリスト（ニュース・決算）の収集
@@ -767,12 +801,45 @@ if selected_tickers:
                         if c_date not in raw_events_by_date:
                             raw_events_by_date[c_date] = []
                         
+                        if is_earnings:
+                            badge = "<span class='console-badge' style='background-color: rgba(255, 68, 68, 0.15); color: #FF8888; border: 1px solid #FF4444;'>決算発表 [ E ]</span>"
+                            text_color = "#FF8888"
+                        else:
+                            badge = "<span class='console-badge' style='background-color: rgba(255, 215, 0, 0.15); color: #FFD700; border: 1px solid #FFD700;'>ニュース [ R ]</span>"
+                            text_color = "#FFD700"
+
                         raw_events_by_date[c_date].append({
                             "type": "E" if is_earnings else "R",
-                            "text": f"📢 <span style='color:#FFD700;'>【{row['category']}】 {row['title']}</span>"
+                            "badge_html": badge,
+                            "text_html": f"📢 <span style='color:{text_color};'>{row['category']}</span>: {row['title']}"
                         })
 
-            # ③ 統合プロットの実行
+            # --------------------------------------------------
+            # 🖥️ 【新設】リアルタイム・イベント・コンソール（専用表示スペース）の描画
+            # --------------------------------------------------
+            st.markdown(f"#### 👁️ 【{t}】 リアルタイム・イベント・コンソール")
+            
+            if raw_events_by_date:
+                console_html = "<div class='event-console'>"
+                # 日付の新しい順にソートしてタイムラインを生成
+                for event_date in sorted(raw_events_by_date.keys(), reverse=True):
+                    date_str = event_date.strftime('%Y-%m-%d')
+                    for item in raw_events_by_date[event_date]:
+                        console_html += f"""
+                            <div class='console-row'>
+                                <div class='console-date'>[{date_str}]</div>
+                                {item['badge_html']}
+                                <div class='console-text'>{item['text_html']}</div>
+                            </div>
+                        """
+                console_html += "</div>"
+                st.markdown(console_html, unsafe_allow_html=True)
+            else:
+                st.info("💡 直近1年間で検出された重大イベントはありません。")
+
+            # --------------------------------------------------
+            # ③ チャート上へのイベントマーカープロット（ホバーは100%無効化）
+            # --------------------------------------------------
             for event_date, items in raw_events_by_date.items():
                 unique_types = list(set([item["type"] for item in items]))
                 
@@ -780,30 +847,22 @@ if selected_tickers:
                     marker_char = "★"
                     marker_color = "#00FFCC"
                     border_color = "#FFFFFF"
-                    hover_title = "⚡ <b style='color:#00FFCC;'>【同日複数イベント発生！】</b>"
                 else:
                     single_type = unique_types[0]
                     if single_type == "I":
                         marker_char = "I"
                         marker_color = "#AA00FF"
                         border_color = "#E0B0FF"
-                        hover_title = "👤 <b style='color:#AA00FF;'>【インサイダー取引】</b>"
                     elif single_type == "E":
                         marker_char = "E"
                         marker_color = "#FF4444"
                         border_color = "#FFFFFF"
-                        hover_title = "📊 <b style='color:#FF4444;'>【決算発表】</b>"
                     else:
                         marker_char = "R"
                         marker_color = "#FFD700"
                         border_color = "#FFFFFF"
-                        hover_title = "📢 <b style='color:#FFD700;'>【ニュース・カタリスト】</b>"
 
-                hover_text_lines = [hover_title, f"📅 日付: {event_date.strftime('%Y-%m-%d')}", "----------------------------------------"]
-                for item in items:
-                    hover_text_lines.append(item["text"])
-                hover_text = "<br>".join(hover_text_lines)
-
+                # ⚡ hoverinfo="skip" に設定し、チャート上での重複ホバーを完全に防止！
                 fig.add_trace(gr.Scatter(
                     x=[event_date], y=[event_y_line],
                     mode="markers+text",
@@ -811,18 +870,14 @@ if selected_tickers:
                     text=[marker_char],
                     textposition="middle center",
                     textfont=dict(color="white" if marker_char != "R" else "black", size=10, family="Arial Black"),
-                    hovertext=hover_text,
-                    hoverinfo="text",
+                    hoverinfo="skip",  # 👈 巨大なホバーの発生を100%防止
                     showlegend=False
                 ), row=1, col=1, secondary_y=True)
 
                 if marker_char in ["★", "E"]:
                     fig.add_vline(x=event_date, line_dash="dot", line_color="rgba(0, 255, 204, 0.2)" if marker_char == "★" else "rgba(255, 68, 68, 0.2)", row=1, col=1, secondary_y=True)
 
-            # ⚡ 【視認性の劇的改善：半透明・個別オフセットホバー】
-            # - hovermode="x" に変更することで、縦一括の巨大ボックスを廃止。
-            # - 各プロットから吹き出し（バルーン）が自動的に外側にオフセットして表示されます。
-            # - hoverlabel の背景色を半透明（不透明度0.85）に設定し、裏側のチャートが透けて見えるようにしました。
+            # チャートのホバー設定（数値のみの極小ホバー）
             fig.update_layout(
                 height=700,
                 template="plotly_dark",
@@ -830,12 +885,12 @@ if selected_tickers:
                 plot_bgcolor="#0E1117",
                 xaxis_rangeslider_visible=False,
                 margin=dict(l=20, r=20, t=20, b=20),
-                hovermode="x",  # 👈 unifiedを廃止し、個別オフセットホバーに変更！
+                hovermode="x",  # 👈 個別ホバー
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 hoverlabel=dict(
-                    bgcolor="rgba(26, 31, 44, 0.85)",  # 👈 半透明化
+                    bgcolor="rgba(26, 31, 44, 0.85)",
                     bordercolor="rgba(255, 255, 255, 0.1)",
-                    font_size=11,  # 👈 フォントサイズをコンパクトに
+                    font_size=11,
                     font_family="Arial"
                 )
             )
