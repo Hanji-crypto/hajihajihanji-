@@ -394,12 +394,13 @@ if hist_data is not None:
     with col_left:
         st.markdown("### 📊 統合テクニカル ＆ 予測バンドチャート")
         
+        # 正しい2次元のspecsリストに修正
         fig = make_subplots(
             rows=2, cols=1, 
             shared_xaxes=True, 
             vertical_spacing=0.06, 
             row_heights=[0.7, 0.3],
-            specs=[[[{"secondary_y": True}]], [[{"secondary_y": True}]]]
+            specs=[[{"secondary_y": True}], [{"secondary_y": True}]]
         )
         
         # 1σ予測バンドの描画 (統計的確率約68%の推移予測)
@@ -439,7 +440,7 @@ if hist_data is not None:
         fig.add_trace(gr.Scatter(
             x=future_dates, y=upper_band_curve,
             mode="lines", line=dict(color="rgba(0, 255, 204, 0.3)", width=1, dash="dash"),
-            name="1σ 上昇上限 (確率68%)", showlegend=True
+            name="1σ 上盤上限 (確率68%)", showlegend=True
         ), row=1, col=1, secondary_y=True)
         
         fig.add_trace(gr.Scatter(
