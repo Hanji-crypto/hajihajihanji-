@@ -184,7 +184,9 @@ def generate_screener(df):
     return summary
 
 df_screener = generate_screener(df_raw)
-top_5_tickers = df_screener["ticker"].head(5).tolist()
+
+# 統計的最上位10銘柄を通常表示のセレクター用に抽出
+top_10_tickers = df_screener["ticker"].head(10).tolist()
 
 # ==============================================================================
 # 4. MAIN TERMINAL HEADER & NAVIGATION
@@ -193,22 +195,37 @@ st.title("👁️ Whale-Eye: Institutional Option & Insider Intelligence")
 st.markdown("インサイダー現物買いの足跡と、オプション市場のボラティリティ・歪み（Skew）を統計学的に解析し、レバレッジ利益を最大化する戦略を自律提案するプロ仕様端末です。")
 st.markdown("---")
 
-# ⚡ 100%動作保証のネイティブ・ラジオナビゲーション（期待値上位5銘柄のみに凝縮）
-st.subheader("🎯 統計的期待値・最上位5銘柄セレクター")
+# ⚡ 統計的最上位10銘柄の通常表示（クイック・セレクター）
+st.subheader("🎯 統計的期待値・最上位10銘柄セレクター")
 
 # セッション状態の同期
 if "selected_ticker" not in st.session_state:
-    st.session_state.selected_ticker = top_5_tickers[0] if top_5_tickers else ""
+    st.session_state.selected_ticker = top_10_tickers[0] if top_10_tickers else ""
+
+# セレクターに存在しない銘柄が選ばれた場合（全銘柄マトリックスからの手動入力など）に対応
+all_available_tickers = df_screener["ticker"].tolist()
+
+# ラジオボタンの選択肢を動的に構築（上位10銘柄に、現在選択中の銘柄がそれ以外なら追加）
+radio_options = list(top_10_tickers)
+if st.session_state.selected_ticker not in radio_options and st.session_state.selected_ticker in all_available_tickers:
+    radio_options.append(st.session_state.selected_ticker)
 
 selected_by_radio = st.radio(
-    "銘柄選択 (キーボードの ← → 矢印キーを押すだけで、1ミリ秒でチャート・オプション分析が完全連動します):",
-    options=top_5_tickers,
-    index=top_5_tickers.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in top_5_tickers else 0,
+    "銘柄選択 (キーボードの ← → 矢印キーを押すだけで、詳細なチャート・オプション分析が完全連動します):",
+    options=radio_options,
+    index=radio_options.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in radio_options else 0,
     horizontal=True,
     key="ticker_radio"
 )
 st.session_state.selected_ticker = selected_by_radio
 current_ticker = st.session_state.selected_ticker
+
+# 手動検索入力ボックスも配置して全銘柄へのアクセスを強化
+with st.expander("🔍 上位10銘柄以外のティッカーを直接手動入力して解析する"):
+    manual_ticker = st.text_input("ティッカーシンボルを入力 (例: LLY, NVDA, SMMT):", value=current_ticker).strip().upper()
+    if manual_ticker in all_available_tickers and manual_ticker != current_ticker:
+        st.session_state.selected_ticker = manual_ticker
+        st.rerun()
 
 st.markdown("---")
 
@@ -394,7 +411,7 @@ if hist_data is not None:
     with col_left:
         st.markdown("### 📊 統合テクニカル ＆ 予測バンドチャート")
         
-        # 正しい2次元のspecsリストに修正
+        # 正しい2次元のspecsリスト
         fig = make_subplots(
             rows=2, cols=1, 
             shared_xaxes=True, 
@@ -440,7 +457,7 @@ if hist_data is not None:
         fig.add_trace(gr.Scatter(
             x=future_dates, y=upper_band_curve,
             mode="lines", line=dict(color="rgba(0, 255, 204, 0.3)", width=1, dash="dash"),
-            name="1σ 上盤上限 (確率68%)", showlegend=True
+            name="1σ 上昇上限 (確率68%)", showlegend=True
         ), row=1, col=1, secondary_y=True)
         
         fig.add_trace(gr.Scatter(
@@ -678,3 +695,36 @@ if hist_data is not None:
             
 else:
     st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
+
+# ==============================================================================
+# 7. BOTTOM SECTION: 全銘柄多次元スクリーニング・マトリックス (完全復活)
+# ==============================================================================
+st.markdown("---")
+st.subheader("📊 全銘柄多次元スクリーニング・マトリックス")
+st.markdown("データベースに登録されている全銘柄のインサイダー取引実績と統計的確実性スコアの一覧です。任意の列でソートや検索が可能です。")
+
+# 表示用データの整形
+df_screener_display = df_screener.copy()
+df_screener_display = df_screener_display.rename(columns={
+    "ticker": "ティッカー",
+    "company": "企業名",
+    "total_value": "取引総額 ($)",
+    "avg_price": "平均取得単価 ($)",
+    "insider": "主なインサイダー",
+    "buy_date": "直近取引日",
+    "trade_count": "取引回数",
+    "Certainty (%)": "統計的確実性スコア (%)"
+})
+
+# フォーマット適用
+df_screener_display["取引総額 ($)"] = df_screener_display["取引総額 ($)"].map(lambda x: f"${x:,.0f}")
+df_screener_display["平均取得単価 ($)"] = df_screener_display["平均取得単価 ($)"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
+df_screener_display["直近取引日"] = df_screener_display["直近取引日"].dt.strftime('%Y-%m-%d')
+df_screener_display["統計的確実性スコア (%)"] = df_screener_display["統計的確実性スコア (%)"].map(lambda x: f"{x:.1f}%")
+
+st.dataframe(
+    df_screener_display[["ティッカー", "企業名", "取引総額 ($)", "平均取得単価 ($)", "主なインサイダー", "直近取引日", "取引回数", "統計的確実性スコア (%)"]],
+    use_container_width=True,
+    hide_index=True,
+    height=400
+)
