@@ -61,15 +61,6 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 15px;
     }
-    /* イベントソースステーションのスタイル */
-    .source-station {
-        background-color: #1E293B;
-        padding: 15px;
-        border-radius: 6px;
-        border: 1px solid #2D3748;
-        margin-top: 15px;
-        margin-bottom: 20px;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -436,7 +427,7 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (出来高＆インサイダー量完全統合)
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (右株価・左RSI ＆ 複数ソース並列化)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
@@ -576,7 +567,7 @@ if selected_tickers:
             
         else:
             # ==========================================
-            # 単一銘柄特化：Finviz風 2段構成チャート（株価 ＋ 出来高・インサイダー量）
+            # 単一銘柄特化：2段構成 ＆ 【右株価・左RSI】
             # ==========================================
             t = selected_tickers[0]
             df_prices = df_prices_map[t]
@@ -593,9 +584,8 @@ if selected_tickers:
             rs = gain / (loss + 1e-9)
             df_prices["RSI"] = 100 - (100 / (1 + rs))
             
-            # ⚡ 【Finviz風 2段構成サブプロット】
-            # Row 1: 株価 + BB (左軸) & RSI (右軸) [高さ75%]
-            # Row 2: 出来高 (Volume) & インサイダー取引金額 (Insider Volume) [高さ25%]
+            # Row 1: 株価 + BB (右軸) & RSI (左軸)
+            # Row 2: 出来高 (左軸) & インサイダー量 (右軸)
             fig = make_subplots(
                 rows=2, cols=1, 
                 shared_xaxes=True, 
@@ -605,41 +595,45 @@ if selected_tickers:
             )
             
             # --------------------------------------------------
-            # ROW 1: 株価 ＆ テクニカル指標
+            # ROW 1: 【右株価・左RSI】
             # --------------------------------------------------
-            if chart_type == "ローソク足":
-                fig.add_trace(gr.Candlestick(
-                    x=df_prices.index, open=df_prices["Open"], high=df_prices["High"], low=df_prices["Low"], close=df_prices["Close"], 
-                    name="株価 (OHLC)",
-                    hoverinfo="x+y"
-                ), row=1, col=1, secondary_y=False)
-            else:
-                fig.add_trace(gr.Scatter(
-                    x=df_prices.index, y=df_prices["Close"], mode="lines", 
-                    line=dict(color="#00FFCC", width=2), name="終値",
-                    hoverinfo="x+y"
-                ), row=1, col=1, secondary_y=False)
-            
-            if show_bb:
-                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.15)", width=1, dash="dash"), name="BB Upper", showlegend=False), row=1, col=1, secondary_y=False)
-                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.15)", width=1, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.02)", name="BB Lower", showlegend=False), row=1, col=1, secondary_y=False)
-                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["MA20"], line=dict(color="orange", width=1.5, dash="dash"), name="20日移動平均"), row=1, col=1, secondary_y=False)
-            
+            # 1. RSIを左軸（secondary_y=False）に配置
             if show_rsi:
                 fig.add_trace(gr.Scatter(
                     x=df_prices.index, y=df_prices["RSI"],
                     line=dict(color="rgba(255, 165, 0, 0.45)", width=1.5), 
                     name="RSI (14)",
                     hoverinfo="y"
+                ), row=1, col=1, secondary_y=False)
+                fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 0, 0, 0.25)", row=1, col=1, secondary_y=False)
+                fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.25)", row=1, col=1, secondary_y=False)
+                fig.update_yaxes(title_text="RSI", range=[0, 100], row=1, col=1, secondary_y=False)
+
+            # 2. 株価を右軸（secondary_y=True）に配置
+            if chart_type == "ローソク足":
+                fig.add_trace(gr.Candlestick(
+                    x=df_prices.index, open=df_prices["Open"], high=df_prices["High"], low=df_prices["Low"], close=df_prices["Close"], 
+                    name="株価 (OHLC)",
+                    hoverinfo="x+y"
                 ), row=1, col=1, secondary_y=True)
-                fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 0, 0, 0.25)", row=1, col=1, secondary_y=True)
-                fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.25)", row=1, col=1, secondary_y=True)
-                fig.update_yaxes(title_text="RSI", range=[0, 100], row=1, col=1, secondary_y=True, showgrid=False)
+            else:
+                fig.add_trace(gr.Scatter(
+                    x=df_prices.index, y=df_prices["Close"], mode="lines", 
+                    line=dict(color="#00FFCC", width=2), name="終値",
+                    hoverinfo="x+y"
+                ), row=1, col=1, secondary_y=True)
+            
+            if show_bb:
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.15)", width=1, dash="dash"), name="BB Upper", showlegend=False), row=1, col=1, secondary_y=True)
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.15)", width=1, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.02)", name="BB Lower", showlegend=False), row=1, col=1, secondary_y=True)
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["MA20"], line=dict(color="orange", width=1.5, dash="dash"), name="20日移動平均"), row=1, col=1, secondary_y=True)
+            
+            fig.update_yaxes(title_text="株価 ($)", row=1, col=1, secondary_y=True)
 
             # --------------------------------------------------
-            # ROW 2: 出来高 ＆ インサイダー取引量（USD Volume）
+            # ROW 2: 出来高 ＆ インサイダー量
             # --------------------------------------------------
-            # 1. 通常の市場出来高（Volume）を薄いグレーのバーでプロット（左軸）
+            # 1. 出来高（左軸）
             fig.add_trace(gr.Bar(
                 x=df_prices.index, y=df_prices["Volume"],
                 name="市場出来高 (Volume)",
@@ -647,10 +641,8 @@ if selected_tickers:
                 hoverinfo="y"
             ), row=2, col=1, secondary_y=False)
             
-            # 2. インサイダー取引金額（USD Trades Volume）を極太の紫色バーで重ね書き（右軸）
+            # 2. インサイダー取引量（右軸）
             df_ticker_raw = df_raw[df_raw["ticker"] == t].copy()
-            
-            # 日付ごとのインサイダー取引金額を集計
             df_insider_daily = df_ticker_raw.groupby("buy_date")["total_value"].sum().reset_index()
             df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(df_prices.index)]
             
@@ -659,7 +651,7 @@ if selected_tickers:
                     x=df_insider_daily["buy_date"], y=df_insider_daily["total_value"],
                     name="インサイダー取引量 (USD)",
                     marker_color="#AA00FF",
-                    width=1000 * 60 * 60 * 24 * 3, # バーの幅を太く（3日分相当）
+                    width=1000 * 60 * 60 * 24 * 3,
                     hoverinfo="y"
                 ), row=2, col=1, secondary_y=True)
                 
@@ -667,16 +659,15 @@ if selected_tickers:
             fig.update_yaxes(title_text="インサイダー量 ($)", row=2, col=1, secondary_y=True, showgrid=False)
 
             # --------------------------------------------------
-            # ⚡ 【Finviz完全再現】横軸上のイベントアイコン（E, R, I）
+            # ⚡ 横軸イベントアイコン [ E ], [ R ], [ I ]
             # --------------------------------------------------
-            # 横軸（X軸）のすぐ上の固定ラインにアイコンをプロット
-            # ここでは、Row 1 の株価チャートの最下部（またはRow 2の最上部）に横一列でプロットします。
+            # イベントアイコンは株価（右軸、secondary_y=True）にマッピング
             min_price = df_prices["Low"].min()
             event_y_line = min_price * 0.94
             
             linked_sources_list = []
             
-            # ① インサイダー取引イベント [ I ]
+            # ① インサイダー取引 [ I ]
             insider_ranking = df_ticker_raw.groupby("insider")["total_value"].sum().sort_values(ascending=False).index.tolist()
             for rank_idx, insider_name in enumerate(insider_ranking):
                 df_insider_trades = df_ticker_raw[df_ticker_raw["insider"] == insider_name]
@@ -693,12 +684,14 @@ if selected_tickers:
                     insider_dates.append(closest_date)
                     insider_texts.append(f"👤 【購入者】 {insider_name} ({trade['position']})<br>💰 【取引額】 ${val:,.0f}")
                     
+                    # ⚡ 複数ソースの並列格納
                     linked_sources_list.append({
                         "date": closest_date.strftime('%Y-%m-%d'),
-                        "type": "🟣 インサイダー取引 [ I ]",
+                        "type": "🟣 インサイダー [ I ]",
                         "event": f"{insider_name} ({trade['position']}) が ${val:,.0f} を購入",
-                        "url": f_url,
-                        "url_label": "📄 SEC Form 4 (公式開示) ↗"
+                        "sec_url": f_url,
+                        "yahoo_url": f"https://finance.yahoo.com/quote/{t}/news",
+                        "finviz_url": f"https://finviz.com/quote.ashx?t={t}"
                     })
                 
                 if insider_dates:
@@ -713,19 +706,18 @@ if selected_tickers:
                         hoverinfo="text",
                         name="I: インサイダー買い",
                         showlegend=False
-                    ), row=1, col=1, secondary_y=False)
+                    ), row=1, col=1, secondary_y=True)
 
-            # ② 重大ニュース・リリースカタリスト [ R ] ＆ 決算発表 [ E ]
+            # ② 重大ニュース・リリース [ R ] ＆ 決算発表 [ E ]
             df_catalysts = fetch_catalyst_events(t, df_prices, df_raw)
             if not df_catalysts.empty:
                 for _, row in df_catalysts.iterrows():
                     c_date = pd.to_datetime(row["date"])
                     if c_date in df_prices.index:
-                        # 決算なら [ E ]、その他ニュースなら [ R ]
                         is_earnings = "決算" in row["category"]
                         marker_color = "#FF4444" if is_earnings else "#FFD700"
                         text_char = "E" if is_earnings else "R"
-                        type_label = "🔴 決算発表 [ E ]" if is_earnings else "🟡 カタリスト [ R ]"
+                        type_label = "🔴 決算 [ E ]" if is_earnings else "🟡 カタリスト [ R ]"
                         
                         fig.add_trace(gr.Scatter(
                             x=[c_date], y=[event_y_line],
@@ -738,21 +730,21 @@ if selected_tickers:
                             hoverinfo="text",
                             name=f"{text_char}: {row['category']}",
                             showlegend=False
-                        ), row=1, col=1, secondary_y=False)
+                        ), row=1, col=1, secondary_y=True)
                         
-                        # チャート上に垂直破線を引く
-                        fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.25)", row=1, col=1, secondary_y=False)
+                        fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.25)", row=1, col=1, secondary_y=True)
                         
+                        # ⚡ 複数ソースの並列格納
                         linked_sources_list.append({
                             "date": c_date.strftime('%Y-%m-%d'),
                             "type": type_label,
                             "event": f"【{row['category']}】 {row['title']}",
-                            "url": row["source_url"],
-                            "url_label": "📰 Yahoo Finance / ニュース記事 ↗"
+                            "sec_url": f"https://www.sec.gov/edgar/browse/?CIK={t}",
+                            "yahoo_url": row["source_url"],
+                            "finviz_url": f"https://finviz.com/quote.ashx?t={t}"
                         })
 
             # レイアウトと「X軸統合ホバー (x unified)」の設定
-            fig.update_yaxes(title_text="株価 ($)", row=1, col=1, secondary_y=False)
             fig.update_layout(
                 height=700,
                 template="plotly_dark",
@@ -767,20 +759,23 @@ if selected_tickers:
             st.plotly_chart(fig, use_container_width=True)
 
             # ==========================================
-            # ⚡ 日付連動型・重大イベント＆ニュースソース・ターミナル
+            # ⚡ 【新開発】マルチソース並列 ＆ 極限コンパクトテーブル
             # ==========================================
-            st.markdown(f"### 🔗 【{t}】 日付連動型・重大イベント＆ニュースソース・ターミナル")
-            st.markdown("チャート上の **[ E ] (決算)**、**[ R ] (リリース)**、**[ I ] (インサイダー取引)** が発生した**特定の日付**における、公式ニュース記事やSEC開示資料の直接リンク一覧です。")
+            st.markdown(f"### 🔗 【{t}】 イベント＆マルチソース・ターミナル")
             
             if linked_sources_list:
                 df_sources = pd.DataFrame(linked_sources_list).sort_values(by="date", ascending=False)
+                
+                # テーブルをコンパクトに表示
                 st.dataframe(
                     df_sources,
                     column_config={
-                        "date": st.column_config.TextColumn("📅 発生日付", width="medium"),
-                        "type": st.column_config.TextColumn("🏷️ 分類", width="medium"),
-                        "event": st.column_config.TextColumn("📝 イベント概要", width="max"),
-                        "url": st.column_config.LinkColumn("🔗 直接ソースリンク (新規タブで開く)", display_text="ソースを開く ↗")
+                        "date": st.column_config.TextColumn("日付", width="small"),
+                        "type": st.column_config.TextColumn("分類", width="small"),
+                        "event": st.column_config.TextColumn("イベント", width="large"),
+                        "sec_url": st.column_config.LinkColumn("SEC開示", display_text="Form 4 ↗", width="small"),
+                        "yahoo_url": st.column_config.LinkColumn("Yahooニュース", display_text="News ↗", width="small"),
+                        "finviz_url": st.column_config.LinkColumn("Finviz", display_text="Chart ↗", width="small")
                     },
                     use_container_width=True,
                     hide_index=True,
