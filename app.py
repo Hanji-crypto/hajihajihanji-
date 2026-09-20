@@ -318,6 +318,9 @@ df_display_table["セクター"] = df_display["sector"]
 df_display_table["SEC EDGAR"] = "https://www.sec.gov/edgar/browse/?CIK=" + df_display["ticker"]
 df_display_table["Yahoo Finance"] = "https://finance.yahoo.com/quote/" + df_display["ticker"]
 
+# ⚡ 【重要修正】Ticker列で重複を完全に排除し、1銘柄1行のみにする
+df_display_table = df_display_table.drop_duplicates(subset=["Ticker"])
+
 event = st.dataframe(
     df_display_table,
     column_config={
@@ -427,7 +430,7 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (日付指定ニュース検索リンク)
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (右株価・左RSI ＆ 複数ソース並列化)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
@@ -488,7 +491,7 @@ if selected_tickers:
                     if any(x in title_lower for x in ["fda", "approval", "approve", "clearance"]):
                         category = "💊 FDA承認/申請"
                     elif any(x in title_lower for x in ["phase", "clinical", "trial", "results", "cohort", "efficacy"]):
-                        category = "🔬 治験結果(Phase)"
+                        category = "🔬 治健全結果(Phase)"
                     elif any(x in title_lower for x in ["earnings", "q1", "q2", "q3", "q4", "revenue", "eps", "financial"]):
                         category = "📊 決算発表"
                     elif any(x in title_lower for x in ["merger", "acquisition", "buyout", "takeover", "partnership", "agreement"]):
@@ -679,8 +682,7 @@ if selected_tickers:
                     insider_dates.append(closest_date)
                     insider_texts.append(f"👤 【購入者】 {insider_name} ({trade['position']})<br>💰 【取引額】 ${val:,.0f}")
                     
-                    # ⚡ 【日付指定ニュース検索リンクの動的生成】
-                    # イベント日の前日と翌日を計算し、Google News上でその日付にピンポイントで配信されたニュースを検索するURLを生成
+                    # 日付指定ニュース検索リンクの動的生成
                     date_str = closest_date.strftime('%Y-%m-%d')
                     prev_day = (closest_date - timedelta(days=1)).strftime('%Y-%m-%d')
                     next_day = (closest_date + timedelta(days=1)).strftime('%Y-%m-%d')
@@ -691,7 +693,7 @@ if selected_tickers:
                         "type": "🟣 インサイダー [ I ]",
                         "event": f"{insider_name} ({trade['position']}) が ${val:,.0f} を購入",
                         "sec_url": f_url,
-                        "yahoo_url": date_specific_news_url, # 👈 日付指定ニュース検索に修正！
+                        "yahoo_url": date_specific_news_url,
                         "finviz_url": f"https://finviz.com/quote.ashx?t={t}"
                     })
                 
@@ -735,7 +737,7 @@ if selected_tickers:
                         
                         fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.25)", row=1, col=1, secondary_y=True)
                         
-                        # ⚡ 【日付指定ニュース検索リンクの動的生成】
+                        # 日付指定ニュース検索リンクの動的生成
                         date_str = c_date.strftime('%Y-%m-%d')
                         prev_day = (c_date - timedelta(days=1)).strftime('%Y-%m-%d')
                         next_day = (c_date + timedelta(days=1)).strftime('%Y-%m-%d')
@@ -746,7 +748,7 @@ if selected_tickers:
                             "type": type_label,
                             "event": f"【{row['category']}】 {row['title']}",
                             "sec_url": f"https://www.sec.gov/edgar/browse/?CIK={t}",
-                            "yahoo_url": date_specific_news_url, # 👈 日付指定ニュース検索に修正！
+                            "yahoo_url": date_specific_news_url,
                             "finviz_url": f"https://finviz.com/quote.ashx?t={t}"
                         })
 
