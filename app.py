@@ -291,8 +291,6 @@ st.markdown("---")
 # B. MAIN SCREENER TABLE (複数選択対応)
 # ------------------------------------------------------------------------------
 st.subheader("📋 マルチファクター・高密度銘柄マトリックス")
-
-# 💡 複数選択のガイドをポップオーバー（ヘルプ）として配置
 st.info("💡 **【複数選択ガイド】** Windowsは `Ctrl` キー、Macは `Cmd` キーを押しながら行をクリックすると、**複数銘柄を選択して下部チャートで相対パフォーマンスを重ね合わせ比較**できます。")
 
 # 表示用にデータフレームを整形
@@ -339,7 +337,6 @@ df_display.columns = [
     "Yahoo Finance"
 ]
 
-# selection_mode="multi-row" に変更
 event = st.dataframe(
     df_display,
     column_config={
@@ -351,7 +348,7 @@ event = st.dataframe(
     hide_index=True,
     height=300,
     on_select="rerun", 
-    selection_mode="multi-row"  # 複数選択モード
+    selection_mode="multi-row"
 )
 
 # 選択されたすべての行のインデックスを取得
@@ -378,7 +375,6 @@ if selected_tickers:
     with col_ai:
         st.markdown("#### 👁️ AI投資考察 ＆ スタッツ")
         
-        # 複数選択されている場合はタブで切り替えられるようにする
         if len(selected_tickers) > 1:
             tabs = st.tabs([f"👁️ {t}" for t in selected_tickers])
             for i, t in enumerate(selected_tickers):
@@ -404,7 +400,6 @@ if selected_tickers:
                         st.metric("累計取引件数", f"{data['trade_count']} 件")
                         st.metric("平均取得単価", f"${data['avg_price']:,.2f}")
         else:
-            # 1銘柄のみ選択の場合
             t = selected_tickers[0]
             data = df_filtered_screener[df_filtered_screener["ticker"] == t].iloc[0]
             is_warning = "🚨" in data["AI Status"]
@@ -451,27 +446,42 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. MULTI-LAYOUT & MULTI-ASSET CHART SYSTEM
+    # 6. MULTI-LAYOUT & MULTI-ASSET CHART SYSTEM (動的コントロール切り替え)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
-    # チャート設定用チェックボックス
-    ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([1.5, 1.5, 1.5, 2.5])
-    
-    # 複数選択されているかどうかでチャートの描画モードを自動分岐
     is_comparison_mode = len(selected_tickers) > 1
     
-    with ctrl_col1:
-        if is_comparison_mode:
-            chart_layout_mode = st.selectbox("📊 チャート配置モード", options=["相対パフォーマンス比較 (%)", "個別絶対価格重ね書き ($)"], index=0)
-        else:
-            chart_layout_mode = st.selectbox("📊 チャート配置モード", options=["縦分割 (Vertical)", "横分割 (Horizontal)", "重複 (Overlay)"], index=0)
-    with ctrl_col2:
-        show_bb = st.checkbox("ボリンジャーバンドを表示", value=True, disabled=is_comparison_mode)
-    with ctrl_col3:
-        show_rsi = st.checkbox("RSI (14) を表示", value=True, disabled=is_comparison_mode)
-    with ctrl_col4:
-        chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True, disabled=is_comparison_mode)
+    # ⚡ 【動的コントロールパネル】
+    # 複数選択時と単一選択時で、上部の設定項目自体を完全に切り替える
+    if is_comparison_mode:
+        # 複数選択時のコントロール
+        ctrl_col1, ctrl_col2 = st.columns([2, 5])
+        with ctrl_col1:
+            chart_layout_mode = st.selectbox(
+                "📊 比較モード", 
+                options=["相対パフォーマンス比較 (%)", "個別絶対価格重ね書き ($)"], 
+                index=0
+            )
+        # 複数選択時はBBやRSI、ローソク足オプションは非表示（画面をすっきりさせる）
+        show_bb = False
+        show_rsi = False
+        chart_type = "折れ線"
+    else:
+        # 単一選択時のコントロール（すべてのオプションが有効）
+        ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([2, 2, 2, 2])
+        with ctrl_col1:
+            chart_layout_mode = st.selectbox(
+                "📊 チャート配置モード", 
+                options=["縦分割 (Vertical)", "横分割 (Horizontal)", "重複 (Overlay)"], 
+                index=0
+            )
+        with ctrl_col2:
+            show_bb = st.checkbox("ボリンジャーバンドを表示", value=True)
+        with ctrl_col3:
+            show_rsi = st.checkbox("RSI (14) を表示", value=True)
+        with ctrl_col4:
+            chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
 
     # yfinanceから安全に複数株価を取得
     @st.cache_data(ttl=3600)
@@ -495,7 +505,7 @@ if selected_tickers:
     if df_prices_map:
         if is_comparison_mode:
             # ==========================================
-            # 複数銘柄比較チャート
+            # 複数銘柄比較チャート（ボリンジャーバンド等は非表示）
             # ==========================================
             fig = gr.Figure()
             
@@ -504,7 +514,6 @@ if selected_tickers:
                     continue
                 
                 if "相対パフォーマンス比較 (%)" in chart_layout_mode:
-                    # 最初の有効な終値を基準（100%）とする相対パフォーマンス
                     base_price = df_prices["Close"].iloc[0]
                     relative_perf = ((df_prices["Close"] - base_price) / base_price) * 100
                     
@@ -517,7 +526,6 @@ if selected_tickers:
                     ))
                     y_axis_title = "相対パフォーマンス (%)"
                 else:
-                    # 絶対価格での重ね書き
                     fig.add_trace(gr.Scatter(
                         x=df_prices.index,
                         y=df_prices["Close"],
@@ -541,7 +549,7 @@ if selected_tickers:
             
         else:
             # ==========================================
-            # 単一銘柄テクニカルチャート（従来通り）
+            # 単一銘柄テクニカルチャート（ボリンジャーバンド、RSI、ローソク足が完全に機能）
             # ==========================================
             t = selected_tickers[0]
             df_prices = df_prices_map[t]
