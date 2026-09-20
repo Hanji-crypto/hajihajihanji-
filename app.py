@@ -280,7 +280,6 @@ def generate_screener(df):
     summary["AI Status"] = summary.apply(get_ai_status, axis=1)
     summary["AI Analysis (投資考察)"] = summary.apply(get_ai_analysis, axis=1)
     
-    # URL内のTicker文字列を％エンコード（例：SMMT ➔ %53%4D%4D%54）に変換
     summary["encoded_ticker"] = summary["ticker"].apply(encode_ticker_for_search_avoidance)
     summary["Finviz Chart"] = "https://finviz.com/quote.ashx?t=" + summary["encoded_ticker"]
     summary["Yahoo Finance"] = "https://finance.yahoo.com/quote/" + summary["encoded_ticker"]
@@ -318,13 +317,13 @@ st.markdown("---")
 # ------------------------------------------------------------------------------
 st.subheader("📋 マルチファクター・高密度銘柄マトリックス")
 
-# ⚡ キーボード操作ガイドの表示
+# ⚡ キーボード操作ガイドの修正 (Xキー / Enterキーへの案内)
 st.markdown("""
     <div class="kb-guide">
         ⌨️ <b>プロフェッショナル・キーボード操作ガイド:</b><br>
         1. 右上の 🔍 検索窓に <code>smmt</code> 等を入力して <span class="kb-key">Enter</span>。<br>
-        2. <span class="kb-key">Tab</span> キーを数回押してテーブル内にフォーカスを移動。<br>
-        3. 矢印キー <span class="kb-key">↑</span> <span class="kb-key">↓</span> で銘柄を選択し、<span class="kb-key">Space</span> キーでチェックボックスをON/OFF。
+        2. <span class="kb-key">Shift + Tab</span> キーを数回押してテーブル内にフォーカスを移動。<br>
+        3. 矢印キー <span class="kb-key">↑</span> <span class="kb-key">↓</span> で銘柄を選択し、<b><span class="kb-key">X</span> キー</b> または <b><span class="kb-key">Enter</span> キー</b> を押すことでチェックボックスをON/OFFできます。
     </div>
 """, unsafe_allow_html=True)
 
@@ -466,7 +465,7 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (自律的視認性改善版)
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (同日イベント統合マージ版)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
@@ -661,7 +660,6 @@ if selected_tickers:
                 ), row=1, col=1, secondary_y=True)
             
             if show_bb:
-                # ⚡ 視認性改善：ボリンジャーバンドの不透明度をさらに下げ、境界線を極細に
                 fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", showlegend=False), row=1, col=1, secondary_y=True)
                 fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", showlegend=False), row=1, col=1, secondary_y=True)
                 fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["MA20"], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均"), row=1, col=1, secondary_y=True)
@@ -669,7 +667,7 @@ if selected_tickers:
             fig.update_yaxes(title_text="株価 ($)", row=1, col=1, secondary_y=True)
 
             # --------------------------------------------------
-            # ROW 2: 出来高 ＆ インサイダー量 (⚡ 軸分離で視認性極大化)
+            # ROW 2: 出来高 ＆ インサイダー量 (軸分離)
             # --------------------------------------------------
             fig.add_trace(gr.Bar(
                 x=df_prices.index, y=df_prices["Volume"],
@@ -692,27 +690,21 @@ if selected_tickers:
                 ), row=2, col=1, secondary_y=True)
                 
             fig.update_yaxes(title_text="出来高 (Vol)", row=2, col=1, secondary_y=False)
-            # ⚡ インサイダー取引量のY軸を出来高から完全に独立させ、出来高の潰れを防止
             fig.update_yaxes(title_text="インサイダー量 ($)", row=2, col=1, secondary_y=True, showgrid=False)
 
             # --------------------------------------------------
-            # ⚡ 横軸イベントアイコン [ E ], [ R ], [ I ] (重なり防止オフセット)
+            # ⚡ 【新開発】同日イベント統合マージシステム（重なりを物理的に100%解消）
             # --------------------------------------------------
             min_price = df_prices["Low"].min()
-            
-            # イベントごとにY軸のプロット高さをわずかにずらして重なりを防止
-            y_insider = min_price * 0.94
-            y_catalyst = min_price * 0.91
+            event_y_line = min_price * 0.93  # マーカーをプロットするY位置
             
             linked_sources_list = []
-            
-            # ① インサイダー取引 [ I ]
+            raw_events_by_date = {}  # 日付ごとのイベント格納庫
+
+            # ① インサイダー取引の収集
             insider_ranking = df_ticker_raw.groupby("insider")["total_value"].sum().sort_values(ascending=False).index.tolist()
-            for rank_idx, insider_name in enumerate(insider_ranking):
+            for insider_name in insider_ranking:
                 df_insider_trades = df_ticker_raw[df_ticker_raw["insider"] == insider_name]
-                
-                insider_dates = []
-                insider_texts = []
                 for _, trade in df_insider_trades.iterrows():
                     trade_date = trade["buy_date"]
                     closest_date_idx = df_prices.index.get_indexer([trade_date], method="nearest")[0]
@@ -720,15 +712,12 @@ if selected_tickers:
                     val = trade["total_value"]
                     f_url = trade["filing_url"] if pd.notna(trade["filing_url"]) else f"https://www.sec.gov/edgar/browse/?CIK={t}"
                     
-                    insider_dates.append(closest_date)
-                    insider_texts.append(f"👤 【購入者】 {insider_name} ({trade['position']})<br>💰 【取引額】 ${val:,.0f}")
-                    
-                    # 日付指定ニュース検索リンクの動的生成
                     date_str = closest_date.strftime('%Y-%m-%d')
                     prev_day = (closest_date - timedelta(days=1)).strftime('%Y-%m-%d')
                     next_day = (closest_date + timedelta(days=1)).strftime('%Y-%m-%d')
                     date_specific_news_url = f"https://www.google.com/search?q={t}+stock+news+after:{prev_day}+before:{next_day}&tbm=nws"
                     
+                    # リスト用のデータ
                     linked_sources_list.append({
                         "date": date_str,
                         "type": "🟣 インサイダー [ I ]",
@@ -737,53 +726,31 @@ if selected_tickers:
                         "yahoo_url": date_specific_news_url,
                         "finviz_url": f"https://finviz.com/quote.ashx?t={t}"
                     })
-                
-                if insider_dates:
-                    fig.add_trace(gr.Scatter(
-                        x=insider_dates, y=[y_insider] * len(insider_dates),
-                        mode="markers+text",
-                        marker=dict(symbol="square", size=18, color="#AA00FF", line=dict(color="#E0B0FF", width=1)),
-                        text=["I"] * len(insider_dates),
-                        textposition="middle center",
-                        textfont=dict(color="white", size=10, family="Arial Black"),
-                        hovertext=insider_texts,
-                        hoverinfo="text",
-                        name="I: インサイダー買い",
-                        showlegend=False
-                    ), row=1, col=1, secondary_y=True)
 
-            # ② 重大ニュース・リリース [ R ] ＆ 決算発表 [ E ]
+                    # マージ用辞書の初期化
+                    if closest_date not in raw_events_by_date:
+                        raw_events_by_date[closest_date] = []
+                    
+                    raw_events_by_date[closest_date].append({
+                        "type": "I",
+                        "text": f"👤 【インサイダー】 {insider_name} ({trade['position']}) が ${val:,.0f} を購入"
+                    })
+
+            # ② カタリスト（ニュース・決算）の収集
             df_catalysts = fetch_catalyst_events(t, df_prices, df_raw)
             if not df_catalysts.empty:
                 for _, row in df_catalysts.iterrows():
                     c_date = pd.to_datetime(row["date"])
                     if c_date in df_prices.index:
                         is_earnings = "決算" in row["category"]
-                        marker_color = "#FF4444" if is_earnings else "#FFD700"
-                        text_char = "E" if is_earnings else "R"
                         type_label = "🔴 決算 [ E ]" if is_earnings else "🟡 カタリスト [ R ]"
                         
-                        fig.add_trace(gr.Scatter(
-                            x=[c_date], y=[y_catalyst],  # ⚡ 重なり防止のため少し下にプロット
-                            mode="markers+text",
-                            marker=dict(symbol="square", size=18, color=marker_color, line=dict(color="white", width=1)),
-                            text=[text_char],
-                            textposition="middle center",
-                            textfont=dict(color="black" if not is_earnings else "white", size=10, family="Arial Black"),
-                            hovertext=f"📢 【カテゴリ】 {row['category']}<br>📰 【ニュース】 {row['title']}",
-                            hoverinfo="text",
-                            name=f"{text_char}: {row['category']}",
-                            showlegend=False
-                        ), row=1, col=1, secondary_y=True)
-                        
-                        fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.2)", row=1, col=1, secondary_y=True)
-                        
-                        # 日付指定ニュース検索リンクの動的生成
                         date_str = c_date.strftime('%Y-%m-%d')
                         prev_day = (c_date - timedelta(days=1)).strftime('%Y-%m-%d')
                         next_day = (c_date + timedelta(days=1)).strftime('%Y-%m-%d')
                         date_specific_news_url = f"https://www.google.com/search?q={t}+stock+news+after:{prev_day}+before:{next_day}&tbm=nws"
                         
+                        # リスト用のデータ
                         linked_sources_list.append({
                             "date": date_str,
                             "type": type_label,
@@ -792,6 +759,68 @@ if selected_tickers:
                             "yahoo_url": date_specific_news_url,
                             "finviz_url": f"https://finviz.com/quote.ashx?t={t}"
                         })
+
+                        # マージ用辞書の初期化
+                        if c_date not in raw_events_by_date:
+                            raw_events_by_date[c_date] = []
+                        
+                        raw_events_by_date[c_date].append({
+                            "type": "E" if is_earnings else "R",
+                            "text": f"📢 【{row['category']}】 {row['title']}"
+                        })
+
+            # ③ 収集したイベントを日付単位で完全に統合（マージ）してプロット
+            for event_date, items in raw_events_by_date.items():
+                # 重複のないイベントタイプを抽出
+                unique_types = list(set([item["type"] for item in items]))
+                
+                # 1つの日付に複数種類のイベントがある場合は統合スター「★」にする
+                if len(unique_types) > 1:
+                    marker_char = "★"
+                    marker_color = "#00FFCC"  # 目立つシアン
+                    border_color = "#FFFFFF"
+                    hover_title = "⚡ 【同日複数イベント発生！】"
+                else:
+                    # 単一イベントの場合はそれぞれのアイコン
+                    single_type = unique_types[0]
+                    if single_type == "I":
+                        marker_char = "I"
+                        marker_color = "#AA00FF"
+                        border_color = "#E0B0FF"
+                        hover_title = "👤 【インサイダー取引】"
+                    elif single_type == "E":
+                        marker_char = "E"
+                        marker_color = "#FF4444"
+                        border_color = "#FFFFFF"
+                        hover_title = "📊 【決算発表】"
+                    else:
+                        marker_char = "R"
+                        marker_color = "#FFD700"
+                        border_color = "#FFFFFF"
+                        hover_title = "📢 【ニュース・カタリスト】"
+
+                # ホバーテキストの構築
+                hover_lines = [hover_title, f"📅 日付: {event_date.strftime('%Y-%m-%d')}"]
+                for item in items:
+                    hover_lines.append(item["text"])
+                hover_text = "<br>".join(hover_lines)
+
+                # 統合された1つのマーカーをプロット（重なりは完全にゼロになります）
+                fig.add_trace(gr.Scatter(
+                    x=[event_date], y=[event_y_line],
+                    mode="markers+text",
+                    marker=dict(symbol="square", size=18, color=marker_color, line=dict(color=border_color, width=1)),
+                    text=[marker_char],
+                    textposition="middle center",
+                    textfont=dict(color="white" if marker_char != "R" else "black", size=10, family="Arial Black"),
+                    hovertext=hover_text,
+                    hoverinfo="text",
+                    showlegend=False
+                ), row=1, col=1, secondary_y=True)
+
+                # 決算や統合イベントの場合は垂直の点線を引く
+                if marker_char in ["★", "E"]:
+                    fig.add_vline(x=event_date, line_dash="dot", line_color="rgba(0, 255, 204, 0.2)" if marker_char == "★" else "rgba(255, 68, 68, 0.2)", row=1, col=1, secondary_y=True)
 
             # レイアウトと「X軸統合ホバー (x unified)」の設定
             fig.update_layout(
