@@ -6,7 +6,7 @@ import plotly.graph_objects as gr
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import yfinance as yf
-from scipy.stats import norm
+import math
 
 # ==============================================================================
 # 1. PAGE CONFIG & DARK THEME STYLE
@@ -93,6 +93,10 @@ st.html("""
     }
     </style>
 """)
+
+# 統計学累積標準正規分布関数 (scipyに依存しない純粋数学実装)
+def std_normal_cdf(x):
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 # Tickerエンコード
 def encode_ticker_for_search_avoidance(ticker):
@@ -207,7 +211,7 @@ def fetch_market_and_option_data(ticker):
     hist = stock.history(period="1y")
     
     if hist.empty:
-        return None, None, None, 0.0, 0.0
+        return None, None, None, 0.0, 0.0, 1.0
         
     hist.index = hist.index.tz_localize(None)
     current_price = hist["Close"].iloc[-1]
@@ -221,6 +225,7 @@ def fetch_market_and_option_data(ticker):
     expirations = stock.options
     implied_vol = 0.0
     pcr_volume = 1.0  # デフォルト
+    target_exp = None
     
     if expirations:
         try:
@@ -249,7 +254,7 @@ def fetch_market_and_option_data(ticker):
                 sigma = row["impliedVolatility"] if row["impliedVolatility"] > 0 else 0.3
                 if sigma > 0:
                     d1 = (np.log(current_price / strike) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-                    delta = norm.cdf(d1)
+                    delta = std_normal_cdf(d1)
                 else:
                     delta = 0.5
                     
@@ -266,7 +271,7 @@ def fetch_market_and_option_data(ticker):
             pass
             
     df_opt = pd.DataFrame(options_data) if options_data else pd.DataFrame()
-    return hist, df_opt, target_exp if expirations else None, implied_vol, hv, pcr_volume
+    return hist, df_opt, target_exp, implied_vol, hv, pcr_volume
 
 with st.spinner(f"【{current_ticker}】の市場データおよびオプションチェーンを解析中..."):
     hist_data, df_options, expiry_date, iv, hv, pcr = fetch_market_and_option_data(current_ticker)
@@ -291,7 +296,7 @@ if hist_data is not None:
     with col_left:
         st.markdown("### 📊 統計的市場データ ＆ BI可視化")
         
-        # 2段構成チャート (上段: 株価 & 1σバンド, 下段: インサイダー出来高 & IV推移)
+        # 2段構成チャート (上段: 株価 & 1σバンド, 下段: インサイダー出来高)
         fig = make_subplots(
             rows=2, cols=1, 
             shared_xaxes=True, 
@@ -373,7 +378,7 @@ if hist_data is not None:
         with m_col2:
             st.metric("歴史的ボラティリティ (HV)", f"{hv*100:.1f}%")
         with m_col3:
-            st.metric("IV / HV 比率", f"{iv/hv:.2f}", help="1.0未満はオプションが統計的に割安、1.5以上は割高")
+            st.metric("IV / HV 比率", f"{iv/hv:.2f}" if hv > 0 else "N/A", help="1.0未満はオプションが統計的に割安、1.5以上は割高")
             
         m_col4, m_col5, m_col6 = st.columns(3)
         with m_col4:
@@ -388,7 +393,7 @@ if hist_data is not None:
         st.markdown("#### ⚡ AI推奨オプション戦略 ＆ 統計的根拠")
         
         # 戦略選定ロジック
-        is_iv_cheap = (iv / hv) < 1.1
+        is_iv_cheap = (iv / hv) < 1.1 if hv > 0 else True
         is_pcr_bullish = pcr < 0.6
         
         if is_iv_cheap and is_pcr_bullish:
@@ -396,7 +401,7 @@ if hist_data is not None:
             strategy_class = "strategy-card"
             strategy_desc = f"""
             **【統計的選定根拠】**
-            *   **ボラティリティの歪み**: IV/HV比率が **{(iv/hv):.2f}** と極めて低く、オプション価格が歴史的な実績変動率に対して**統計的に過小評価（割安）**されています。オプションの「買い」に圧倒的な優位性があります。
+            *   **ボラティリティの歪み**: IV/HV比率が **{(iv/hv if hv > 0 else 0):.2f}** と極めて低く、オプション価格が歴史的な実績変動率に対して**統計的に過小評価（割安）**されています。オプションの「買い」に圧倒的な優位性があります。
             *   **異常なコール偏重**: Put-Call Ratio (PCR) が **{pcr:.2f}** と極端に低く、インサイダーの現物買いと同時に、オプション市場でもコールの大量買い（クジラの足跡）が確認されています。
             
             **【具体的取引価格の統計的提案】**
@@ -414,7 +419,7 @@ if hist_data is not None:
             strategy_class = "strategy-card"
             strategy_desc = f"""
             **【統計的選定根拠】**
-            *   **ボラティリティの過熱**: IV/HV比率が **{(iv/hv):.2f}** と高く、オプション価格が統計的に割高（プレミアムが膨張）しています。オプションの「売り（ショート）」を絡める戦略が有利です。
+            *   **ボラティリティの過熱**: IV/HV比率が **{(iv/hv if hv > 0 else 0):.2f}** と高く、オプション価格が統計的に割高（プレミアムが膨張）しています。オプションの「売り（ショート）」を絡める戦略が有利です。
             *   **インサイダーの下値支持**: 大口インサイダー取引により下値が強固に支持されているため、プット売りによるプレミアム回収の安全性が高い状態です。
             
             **【具体的取引価格の統計的提案】**
@@ -429,7 +434,7 @@ if hist_data is not None:
             strategy_class = "strategy-card-warning"
             strategy_desc = f"""
             **【統計的選定根拠】**
-            *   IV/HV比率が **{(iv/hv):.2f}** とニュートラルですが、インサイダーの買い総額が大きく、突発的なカタリストによる急騰（ボラティリティ・スパイク）の期待値が高い状態です。
+            *   IV/HV比率が **{(iv/hv if hv > 0 else 0):.2f}** とニュートラルですが、インサイダーの買い総額が大きく、突発的なカタリストによる急騰（ボラティリティ・スパイク）の期待値が高い状態です。
             
             **【具体的取引価格の統計的提案】**
             *   **Buy {current_ticker} 30日満期 ${current_price*1.05:.1f} Call (ややOTM)**
