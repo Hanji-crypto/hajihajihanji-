@@ -17,8 +17,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# カスタムCSS
-st.markdown("""
+# カスタムCSS（st.htmlを使用して確実にブラウザへ適用）
+st.html("""
     <style>
     .stApp {
         background-color: #0E1117;
@@ -80,7 +80,7 @@ st.markdown("""
         font-weight: bold;
         border-bottom: 2px solid #1A202C;
     }
-    /* ⚡ 【新設】リアルタイム・イベント・コンソールのスタイル */
+    /* ⚡ リアルタイム・イベント・コンソールのスタイル */
     .event-console {
         background-color: #111622;
         border: 1px solid #1F2937;
@@ -105,6 +105,7 @@ st.markdown("""
         font-weight: bold;
     }
     .console-badge {
+        display: inline-block;
         padding: 2px 6px;
         border-radius: 4px;
         font-size: 11px;
@@ -114,7 +115,7 @@ st.markdown("""
         text-align: center;
     }
     </style>
-""", unsafe_allow_html=True)
+""")
 
 # TickerをURL検索に引っかからないように％エンコードする関数
 def encode_ticker_for_search_avoidance(ticker):
@@ -497,7 +498,7 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (完全分離・専用コンソール版)
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (完全分離・専用コンソールHTML修正版)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
@@ -670,7 +671,7 @@ if selected_tickers:
                     x=df_prices.index, y=df_prices["RSI"],
                     line=dict(color="rgba(255, 165, 0, 0.45)", width=1.5), 
                     name="RSI (14)",
-                    hoverinfo="y"  # 👈 最小限の数値情報のみ
+                    hoverinfo="y"  
                 ), row=1, col=1, secondary_y=False)
                 fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 0, 0, 0.25)", row=1, col=1, secondary_y=False)
                 fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.25)", row=1, col=1, secondary_y=False)
@@ -680,7 +681,7 @@ if selected_tickers:
                 fig.add_trace(gr.Candlestick(
                     x=df_prices.index, open=df_prices["Open"], high=df_prices["High"], low=df_prices["Low"], close=df_prices["Close"], 
                     name="株価 (OHLC)",
-                    hoverinfo="x+y"  # 👈 最小限の数値情報のみ
+                    hoverinfo="x+y"  
                 ), row=1, col=1, secondary_y=True)
             else:
                 fig.add_trace(gr.Scatter(
@@ -723,7 +724,7 @@ if selected_tickers:
             fig.update_yaxes(title_text="インサイダー量 ($)", row=2, col=1, secondary_y=True, showgrid=False)
 
             # --------------------------------------------------
-            # ⚡ 【完全分離設計】データ収集 ＆ 専用コンソールHTML生成
+            # ⚡ データ収集 ＆ 専用コンソールデータ生成
             # --------------------------------------------------
             min_price = df_prices["Low"].min()
             event_y_line = min_price * 0.93
@@ -815,25 +816,21 @@ if selected_tickers:
                         })
 
             # --------------------------------------------------
-            # 🖥️ 【新設】リアルタイム・イベント・コンソール（専用表示スペース）の描画
+            # 🖥️ 【修正】リアルタイム・イベント・コンソール（st.htmlによる完全描画）
             # --------------------------------------------------
             st.markdown(f"#### 👁️ 【{t}】 リアルタイム・イベント・コンソール")
             
             if raw_events_by_date:
+                # ⚡ 改行やインデントを排除し、1行のフラットなHTML文字列として構築（エスケープバグを100%防止）
                 console_html = "<div class='event-console'>"
-                # 日付の新しい順にソートしてタイムラインを生成
                 for event_date in sorted(raw_events_by_date.keys(), reverse=True):
                     date_str = event_date.strftime('%Y-%m-%d')
                     for item in raw_events_by_date[event_date]:
-                        console_html += f"""
-                            <div class='console-row'>
-                                <div class='console-date'>[{date_str}]</div>
-                                {item['badge_html']}
-                                <div class='console-text'>{item['text_html']}</div>
-                            </div>
-                        """
+                        console_html += f"<div class='console-row'><div class='console-date'>[{date_str}]</div>{item['badge_html']}<div class='console-text'>{item['text_html']}</div></div>"
                 console_html += "</div>"
-                st.markdown(console_html, unsafe_allow_html=True)
+                
+                # ⚡ st.html() を使用して、HTMLをエスケープせず確実にブラウザへレンダリング
+                st.html(console_html)
             else:
                 st.info("💡 直近1年間で検出された重大イベントはありません。")
 
@@ -862,7 +859,6 @@ if selected_tickers:
                         marker_color = "#FFD700"
                         border_color = "#FFFFFF"
 
-                # ⚡ hoverinfo="skip" に設定し、チャート上での重複ホバーを完全に防止！
                 fig.add_trace(gr.Scatter(
                     x=[event_date], y=[event_y_line],
                     mode="markers+text",
@@ -870,7 +866,7 @@ if selected_tickers:
                     text=[marker_char],
                     textposition="middle center",
                     textfont=dict(color="white" if marker_char != "R" else "black", size=10, family="Arial Black"),
-                    hoverinfo="skip",  # 👈 巨大なホバーの発生を100%防止
+                    hoverinfo="skip",  # 👈 チャート上での重複ホバーを完全に無効化
                     showlegend=False
                 ), row=1, col=1, secondary_y=True)
 
@@ -885,7 +881,7 @@ if selected_tickers:
                 plot_bgcolor="#0E1117",
                 xaxis_rangeslider_visible=False,
                 margin=dict(l=20, r=20, t=20, b=20),
-                hovermode="x",  # 👈 個別ホバー
+                hovermode="x",  
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 hoverlabel=dict(
                     bgcolor="rgba(26, 31, 44, 0.85)",
