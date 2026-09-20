@@ -61,6 +61,33 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 15px;
     }
+    /* リンクステーションのスタイル */
+    .link-station {
+        background-color: #1E293B;
+        padding: 12px;
+        border-radius: 6px;
+        border: 1px solid #2D3748;
+        text-align: center;
+        margin-top: 10px;
+        margin-bottom: 20px;
+    }
+    .link-btn {
+        display: inline-block;
+        background-color: #2D3748;
+        color: #00FFCC !important;
+        padding: 8px 16px;
+        margin: 0 10px;
+        border-radius: 4px;
+        font-weight: bold;
+        text-decoration: none;
+        border: 1px solid #00FFCC;
+        transition: background-color 0.3s;
+    }
+    .link-btn:hover {
+        background-color: #00FFCC;
+        color: #0E1117 !important;
+        text-decoration: none;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -126,14 +153,14 @@ def load_and_process_data():
             
         healthcare_tickers = {"CYBN", "ARTV", "ZSTK", "LLY", "MRNA", "PFE", "BIIB", "GILD", "SMMT"}
         financial_tickers = {"ARDC", "ARES", "GS", "MS", "JPM", "BAC", "C", "WFC"}
-        tech_tickers = {"AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA"}
+        text_tickers = {"AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA"}
         industrial_tickers = {"WAST", "CAT", "GE", "HON", "MMM", "UNP", "RS", "GWAV"}
         
         if ticker in healthcare_tickers:
             return "Healthcare"
         elif ticker in financial_tickers:
             return "Financials"
-        elif ticker in tech_tickers:
+        elif ticker in text_tickers:
             return "Technology"
         elif ticker in industrial_tickers:
             return "Industrials"
@@ -250,7 +277,7 @@ def generate_screener(df):
         elif score >= 60:
             return f"【好材料】内部関係者による総額 ${val:,.0f} のまとまった買い。下値支持線として機能する可能性が高く、押し目買いに適した水準です。"
         else:
-            return f"【様子見】直近で ${val:,.0f} 規模のインサイダー買いが確認されました。財務スコアや取引規模を鑑み、追加の買い増しやテクニカルの反発を待ちたい局面です。"
+            return f"【様子見】直近で ${val:,.0f} 規模 of インサイダー買いが確認されました。財務スコアや取引規模を鑑み、追加の買い増しやテクニカルの反発を待ちたい局面です。"
 
     summary["AI Status"] = summary.apply(get_ai_status, axis=1)
     summary["AI Analysis (投資考察)"] = summary.apply(get_ai_analysis, axis=1)
@@ -427,7 +454,7 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (マルチトラック＆動的サイズ)
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (スリムホバー＆固定リンクステーション)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
@@ -465,7 +492,7 @@ if selected_tickers:
                 pass
         return data_dict
 
-    # カタリスト取得ロジック（ソースリンクURLを保持）
+    # カタリスト取得ロジック（URLリンクは保持するが、ホバー内には表示しない）
     @st.cache_data(ttl=7200)
     def fetch_catalyst_events(ticker, df_prices, df_raw_trades):
         events = []
@@ -584,7 +611,6 @@ if selected_tickers:
             rs = gain / (loss + 1e-9)
             df_prices["RSI"] = 100 - (100 / (1 + rs))
             
-            # 2軸 (Secondary Y) を持つOverlayチャートの作成
             fig = make_subplots(specs=[[{"secondary_y": True}]])
             
             # 1. メイン株価（左Y軸）
@@ -620,29 +646,21 @@ if selected_tickers:
                 fig.update_yaxes(title_text="RSI", range=[0, 100], secondary_y=True, showgrid=False)
 
             # ==========================================
-            # ⚡ 【新開発】購入者別マルチ・トラック（階層型タイムライン）システム
+            # ⚡ 【マルチトラック＆ホバー極限スリム化】
             # ==========================================
             min_price = df_prices["Low"].min()
-            
-            # インサイダー取引データの抽出
             df_ticker_raw = df_raw[df_raw["ticker"] == t].copy()
             
-            # 1. 購入者（insider）ごとの「累計取引金額」を算出し、信頼度・寄与度順にソート
+            # 購入者ごとの累計取引金額でソート
             insider_ranking = df_ticker_raw.groupby("insider")["total_value"].sum().sort_values(ascending=False).index.tolist()
             
-            # 2. 購入者別にY軸の階層（トラック）を生成
-            # 最安値の下に、購入者数 + カタリスト用のトラックを等間隔で配置
-            num_tracks = len(insider_ranking) + 1  # 購入者トラック + カタリストトラック
-            track_spacing = min_price * 0.04       # 各トラックの間隔（株価の4%分）
-            
-            # タイムラインのベースライン（一番上）
+            num_tracks = len(insider_ranking) + 1
+            track_spacing = min_price * 0.04
             timeline_top = min_price * 0.88
             
-            # インサイダー買い/売りマーカーのプロット
+            # インサイダー取引プロット
             for rank_idx, insider_name in enumerate(insider_ranking):
-                # 信頼度（取引額）が高い購入者ほど、上のトラック（timeline_topに近い位置）に配置
                 track_y = timeline_top - (rank_idx * track_spacing)
-                
                 df_insider_trades = df_ticker_raw[df_ticker_raw["insider"] == insider_name]
                 
                 insider_markers = []
@@ -651,27 +669,23 @@ if selected_tickers:
                     trade_date = trade["buy_date"]
                     closest_date_idx = df_prices.index.get_indexer([trade_date], method="nearest")[0]
                     closest_date = df_prices.index[closest_date_idx]
-                    
                     val = trade["total_value"]
-                    f_url = trade["filing_url"] if pd.notna(trade["filing_url"]) else f"https://www.sec.gov/edgar/browse/?CIK={t}"
                     
-                    # ⚡ 【金額連動サイズ】対数スケールを用いて、取引額に応じた動的サイズを算出 (最小10〜最大28)
+                    # 金額連動サイズ
                     dynamic_size = int(max(10, min(28, 10 + np.log10(val + 1) * 2.5)))
                     
+                    # 【ホバー極限スリム化】長大なURLリンクを完全に排除し、純粋なデータのみを縦並びで表示
                     insider_markers.append(dict(
                         date=closest_date,
                         price=track_y,
                         insider=insider_name,
                         position=trade["position"],
-                        value=val,
-                        sec_url=f_url,
-                        finviz_url=f"https://finviz.com/quote.ashx?t={t}"
+                        value=val
                     ))
                     marker_sizes.append(dynamic_size)
                 
                 if insider_markers:
                     df_m = pd.DataFrame(insider_markers)
-                    # 買いは紫の上三角（▲）、売りは赤の下三角（▼）
                     fig.add_trace(gr.Scatter(
                         x=df_m["date"], y=df_m["price"], mode="markers", 
                         marker=dict(
@@ -680,29 +694,26 @@ if selected_tickers:
                             color="#E0B0FF", 
                             line=dict(color="#AA00FF", width=1.5)
                         ), 
-                        text=df_m.apply(lambda r: f"👤 【購入者】 {r['insider']} ({r['position']})<br>💰 【取引額】 ${r['value']:,.0f}<br>📄 SEC Form 4: {r['sec_url']}<br>📊 Finviz: {r['finviz_url']}", axis=1), 
+                        text=df_m.apply(lambda r: f"👤 【購入者】 {r['insider']} ({r['position']})<br>💰 【取引額】 ${r['value']:,.0f}", axis=1), 
                         hoverinfo="text", 
-                        name=f"👤 {insider_name[:12]}..." # 凡例に購入者名を表示
+                        name=f"👤 {insider_name[:12]}..."
                     ), secondary_y=False)
 
-            # 3. 重大カタリスト（★）を最下部の独立トラックに配置
+            # 重大カタリスト（★）プロット
             catalyst_track_y = timeline_top - (len(insider_ranking) * track_spacing)
-            
             df_catalysts = fetch_catalyst_events(t, df_prices, df_raw)
             if not df_catalysts.empty:
                 catalyst_markers = []
                 for _, row in df_catalysts.iterrows():
                     c_date = pd.to_datetime(row["date"])
                     if c_date in df_prices.index:
+                        # 【ホバー極限スリム化】長大なURLリンクを完全に排除
                         catalyst_markers.append({
                             "date": c_date,
                             "price": catalyst_track_y,
                             "title": row["title"],
-                            "category": row["category"],
-                            "url": row["source_url"]
+                            "category": row["category"]
                         })
-                        
-                        # チャート上に垂直破線（カタリストライン）を引く
                         fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.35)", secondary_y=False)
                 
                 if catalyst_markers:
@@ -710,12 +721,11 @@ if selected_tickers:
                     fig.add_trace(gr.Scatter(
                         x=df_cat_plot["date"], y=df_cat_plot["price"], mode="markers",
                         marker=dict(symbol="star", size=14, color="#FFD700", line=dict(color="#FF8C00", width=1.5)),
-                        text=df_cat_plot.apply(lambda r: f"📢 【カテゴリ】 {r['category']}<br>📰 【ニュース】 {r['title']}<br>🔗 ソース: {r['url']}", axis=1),
+                        text=df_cat_plot.apply(lambda r: f"📢 【カテゴリ】 {r['category']}<br>📰 【ニュース】 {r['title']}", axis=1),
                         hoverinfo="text",
                         name="📢 重大カタリスト (★)"
                     ), secondary_y=False)
 
-            # レイアウトと「X軸統合ホバー (x unified)」の設定
             fig.update_yaxes(title_text="株価 ($)", secondary_y=False)
             fig.update_layout(
                 height=650,
@@ -729,5 +739,28 @@ if selected_tickers:
             )
             
             st.plotly_chart(fig, use_container_width=True)
+
+            # ==========================================
+            # ⚡ 【新開発】横軸下部 固定データソース・リンクステーション
+            # ==========================================
+            # 選択されている銘柄のリンクを動的に生成
+            finviz_url = f"https://finviz.com/quote.ashx?t={t}"
+            edgar_url = f"https://www.sec.gov/edgar/browse/?CIK={t}"
+            yahoo_url = f"https://finance.yahoo.com/quote/{t}"
+            
+            # SEC Form 4の最新の開示リンクをデータベースから取得
+            latest_filing = df_ticker_raw.sort_values(by="filing_date", ascending=False)
+            latest_sec_url = latest_filing.iloc[0]["filing_url"] if not latest_filing.empty and pd.notna(latest_filing.iloc[0]["filing_url"]) else edgar_url
+
+            st.markdown(f"""
+                <div class="link-station">
+                    <span style="font-weight: bold; color: #888888; margin-right: 15px;">🔗 【{t}】 外部データソース直結ステーション:</span>
+                    <a href="{finviz_url}" target="_blank" class="link-btn">📊 Finviz Interactive Chart ↗</a>
+                    <a href="{latest_sec_url}" target="_blank" class="link-btn">📄 SEC Form 4 (最新適時開示) ↗</a>
+                    <a href="{edgar_url}" target="_blank" class="link-btn">🏛️ SEC EDGAR (全開示履歴) ↗</a>
+                    <a href="{yahoo_url}" target="_blank" class="link-btn">📰 Yahoo Finance (詳細・ニュース) ↗</a>
+                </div>
+            """, unsafe_allow_html=True)
+            
     else:
         st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
