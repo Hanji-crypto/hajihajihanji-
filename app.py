@@ -288,7 +288,7 @@ df_filtered_screener = df_screener[df_screener["sector"].isin(selected_sectors)]
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# B. MAIN SCREENER TABLE (複数選択対応)
+# B. MAIN SCREENER TABLE
 # ------------------------------------------------------------------------------
 st.subheader("📋 マルチファクター・高密度銘柄マトリックス")
 st.info("💡 **【複数選択ガイド】** Windowsは `Ctrl` キー、Macは `Cmd` キーを押しながら行をクリックすると、**複数銘柄を選択して下部チャートで相対パフォーマンスを重ね合わせ比較**できます。")
@@ -365,7 +365,7 @@ if not selected_tickers and not df_display.empty:
 st.markdown("---")
 
 # ==============================================================================
-# 5. DYNAMIC ANALYTICS TERMINAL (複数銘柄のAI考察タブ化 ＆ 取引履歴)
+# 5. DYNAMIC ANALYTICS TERMINAL (AI考察 ＆ 取引履歴)
 # ==============================================================================
 if selected_tickers:
     st.subheader(f"📊 選択銘柄分析ターミナル ({', '.join(selected_tickers)})")
@@ -446,44 +446,31 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. MULTI-LAYOUT & MULTI-ASSET CHART SYSTEM (動的コントロール切り替え)
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
     is_comparison_mode = len(selected_tickers) > 1
     
-    # ⚡ 【動的コントロールパネル】
-    # 複数選択時と単一選択時で、上部の設定項目自体を完全に切り替える
+    # 動的コントロールパネル
     if is_comparison_mode:
-        # 複数選択時のコントロール
         ctrl_col1, ctrl_col2 = st.columns([2, 5])
         with ctrl_col1:
-            chart_layout_mode = st.selectbox(
-                "📊 比較モード", 
-                options=["相対パフォーマンス比較 (%)", "個別絶対価格重ね書き ($)"], 
-                index=0
-            )
-        # 複数選択時はBBやRSI、ローソク足オプションは非表示（画面をすっきりさせる）
+            chart_layout_mode = st.selectbox("📊 比較モード", options=["相対パフォーマンス比較 (%)", "個別絶対価格重ね書き ($)"], index=0)
         show_bb = False
         show_rsi = False
         chart_type = "折れ線"
     else:
-        # 単一選択時のコントロール（すべてのオプションが有効）
-        ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([2, 2, 2, 2])
+        # 単一選択時は「重複 (Overlay)」固定。コントロールパネルをシンプル化
+        ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 2, 3])
         with ctrl_col1:
-            chart_layout_mode = st.selectbox(
-                "📊 チャート配置モード", 
-                options=["縦分割 (Vertical)", "横分割 (Horizontal)", "重複 (Overlay)"], 
-                index=0
-            )
-        with ctrl_col2:
             show_bb = st.checkbox("ボリンジャーバンドを表示", value=True)
-        with ctrl_col3:
+        with ctrl_col2:
             show_rsi = st.checkbox("RSI (14) を表示", value=True)
-        with ctrl_col4:
+        with ctrl_col3:
             chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
 
-    # yfinanceから安全に複数株価を取得
+    # yfinanceから安全に株価を取得
     @st.cache_data(ttl=3600)
     def fetch_multiple_stock_prices(tickers):
         data_dict = {}
@@ -498,6 +485,45 @@ if selected_tickers:
                 pass
         return data_dict
 
+    # カタリスト（重大マイルストーンニュース）をyfinanceから取得する関数
+    @st.cache_data(ttl=7200)
+    def fetch_catalyst_events(ticker):
+        events = []
+        try:
+            stock = yf.Ticker(ticker)
+            news = stock.news
+            if news:
+                for item in news:
+                    title = item.get("title", "")
+                    pub_time = item.get("providerPublishTime", 0)
+                    if pub_time == 0:
+                        continue
+                    event_date = datetime.fromtimestamp(pub_time).strftime('%Y-%m-%d')
+                    
+                    # 重大キーワードのフィルタリング
+                    title_lower = title.lower()
+                    category = None
+                    if any(x in title_lower for x in ["fda", "approval", "approve", "clearance"]):
+                        category = "💊 FDA承認/申請"
+                    elif any(x in title_lower for x in ["phase 1", "phase 2", "phase 3", "clinical trial", "trial results"]):
+                        category = "🔬 治験結果(Phase)"
+                    elif any(x in title_lower for x in ["earnings", "q1", "q2", "q3", "q4", "revenue", "eps"]):
+                        category = "📊 決算発表"
+                    elif any(x in title_lower for x in ["merger", "acquisition", "buyout", "takeover"]):
+                        category = "🤝 M&A/買収"
+                    elif any(x in title_lower for x in ["offering", "dilution", "fundraising", "debt"]):
+                        category = "💸 資金調達/希薄化"
+                        
+                    if category:
+                        events.append({
+                            "date": event_date,
+                            "title": title,
+                            "category": category
+                        })
+        except Exception as e:
+            pass
+        return pd.DataFrame(events).drop_duplicates(subset=["date", "category"]) if events else pd.DataFrame()
+
     with st.spinner("株価データを取得中..."):
         df_prices_map = fetch_multiple_stock_prices(selected_tickers)
 
@@ -505,43 +531,24 @@ if selected_tickers:
     if df_prices_map:
         if is_comparison_mode:
             # ==========================================
-            # 複数銘柄比較チャート（ボリンジャーバンド等は非表示）
+            # 複数銘柄比較チャート
             # ==========================================
             fig = gr.Figure()
-            
             for t, df_prices in df_prices_map.items():
                 if df_prices.empty:
                     continue
-                
                 if "相対パフォーマンス比較 (%)" in chart_layout_mode:
                     base_price = df_prices["Close"].iloc[0]
                     relative_perf = ((df_prices["Close"] - base_price) / base_price) * 100
-                    
-                    fig.add_trace(gr.Scatter(
-                        x=df_prices.index,
-                        y=relative_perf,
-                        mode="lines",
-                        name=f"{t} 相対推移 (%)",
-                        line=dict(width=2)
-                    ))
+                    fig.add_trace(gr.Scatter(x=df_prices.index, y=relative_perf, mode="lines", name=f"{t} 相対推移 (%)", line=dict(width=2)))
                     y_axis_title = "相対パフォーマンス (%)"
                 else:
-                    fig.add_trace(gr.Scatter(
-                        x=df_prices.index,
-                        y=df_prices["Close"],
-                        mode="lines",
-                        name=f"{t} 株価 ($)",
-                        line=dict(width=2)
-                    ))
+                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["Close"], mode="lines", name=f"{t} 株価 ($)", line=dict(width=2)))
                     y_axis_title = "株価 ($)"
 
             fig.update_layout(
-                height=500,
-                template="plotly_dark",
-                paper_bgcolor="#0E1117",
-                plot_bgcolor="#0E1117",
-                yaxis_title=y_axis_title,
-                xaxis_title="日付",
+                height=500, template="plotly_dark", paper_bgcolor="#0E1117", plot_bgcolor="#0E1117",
+                yaxis_title=y_axis_title, xaxis_title="日付",
                 margin=dict(l=20, r=20, t=20, b=20),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
@@ -549,12 +556,12 @@ if selected_tickers:
             
         else:
             # ==========================================
-            # 単一銘柄テクニカルチャート（ボリンジャーバンド、RSI、ローソク足が完全に機能）
+            # 単一銘柄特化：重複 (Overlay) ＆ カタリスト統合チャート
             # ==========================================
             t = selected_tickers[0]
             df_prices = df_prices_map[t]
             
-            # テクニカル指標の計算
+            # テクニカル計算
             df_prices["MA20"] = df_prices["Close"].rolling(window=20).mean()
             df_prices["STD20"] = df_prices["Close"].rolling(window=20).std()
             df_prices["BB_Upper"] = df_prices["MA20"] + (df_prices["STD20"] * 2)
@@ -566,6 +573,30 @@ if selected_tickers:
             rs = gain / (loss + 1e-9)
             df_prices["RSI"] = 100 - (100 / (1 + rs))
             
+            # 2軸 (Secondary Y) を持つOverlayチャートの作成
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            
+            # 1. メイン株価（左Y軸）
+            if chart_type == "ローソク足":
+                fig.add_trace(gr.Candlestick(
+                    x=df_prices.index, open=df_prices["Open"], high=df_prices["High"], low=df_prices["Low"], close=df_prices["Close"], 
+                    name="株価 (OHLC)",
+                    hoverinfo="x+y" # X軸統合ホバーを活かすため
+                ), secondary_y=False)
+            else:
+                fig.add_trace(gr.Scatter(
+                    x=df_prices.index, y=df_prices["Close"], mode="lines", 
+                    line=dict(color="#00FFCC", width=2), name="終値",
+                    hoverinfo="x+y"
+                ), secondary_y=False)
+            
+            # 2. ボリンジャーバンド
+            if show_bb:
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.15)", width=1, dash="dash"), name="BB Upper", showlegend=False), secondary_y=False)
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.15)", width=1, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.02)", name="BB Lower", showlegend=False), secondary_y=False)
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["MA20"], line=dict(color="orange", width=1.5, dash="dash"), name="20日移動平均"), secondary_y=False)
+            
+            # 3. インサイダー買い/売りマーカー（データベースから取得）
             df_ticker_raw = df_raw[df_raw["ticker"] == t].copy()
             insider_markers = []
             for _, trade in df_ticker_raw.iterrows():
@@ -580,86 +611,70 @@ if selected_tickers:
                     insider=trade["insider"],
                     value=trade["total_value"]
                 ))
-            df_markers = pd.DataFrame(insider_markers) if insider_markers else pd.DataFrame()
+            
+            if insider_markers:
+                df_markers = pd.DataFrame(insider_markers)
+                fig.add_trace(gr.Scatter(
+                    x=df_markers["date"], y=df_markers["price"], mode="markers", 
+                    marker=dict(symbol="triangle-up", size=15, color="#E0B0FF", line=dict(color="#AA00FF", width=2)), 
+                    text=df_markers.apply(lambda r: f"👤 {r['insider']}<br>💰 購入額: ${r['value']:,.0f}", axis=1), 
+                    hoverinfo="text", name="インサイダー買い"
+                ), secondary_y=False)
 
-            if "縦分割" in chart_layout_mode:
-                if show_rsi:
-                    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.7, 0.3])
-                else:
-                    fig = make_subplots(rows=1, cols=1)
-                
-                if chart_type == "ローソク足":
-                    fig.add_trace(gr.Candlestick(x=df_prices.index, open=df_prices["Open"], high=df_prices["High"], low=df_prices["Low"], close=df_prices["Close"], name="株価 (OHLC)"), row=1, col=1)
-                else:
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["Close"], mode="lines", line=dict(color="#00FFCC", width=2), name="終値"), row=1, col=1)
-                
-                if show_bb:
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.2)", width=1, dash="dash"), name="BB Upper", showlegend=False), row=1, col=1)
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.2)", width=1, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.03)", name="BB Lower", showlegend=False), row=1, col=1)
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["MA20"], line=dict(color="orange", width=1.5, dash="dash"), name="20日移動平均"), row=1, col=1)
-                
-                if not df_markers.empty:
-                    fig.add_trace(gr.Scatter(x=df_markers["date"], y=df_markers["price"], mode="markers", marker=dict(symbol="triangle-up", size=16, color="#E0B0FF", line=dict(color="#AA00FF", width=2)), text=df_markers.apply(lambda r: f"{r['insider']}<br>購入額: ${r['value']:,.0f}", axis=1), hoverinfo="text+x+y", name="インサイダー買い"), row=1, col=1)
-                
-                if show_rsi:
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["RSI"], line=dict(color="orange", width=1.5), name="RSI (14)"), row=2, col=1)
-                    fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1, opacity=0.5)
-                    fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1, opacity=0.5)
-                
-                fig.update_layout(height=600, template="plotly_dark", paper_bgcolor="#0E1117", plot_bgcolor="#0E1117", xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=20, b=20))
-                st.plotly_chart(fig, use_container_width=True)
+            # 4. RSI（右Y軸に薄く重ねる）
+            if show_rsi:
+                fig.add_trace(gr.Scatter(
+                    x=df_prices.index, y=df_prices["RSI"],
+                    line=dict(color="rgba(255, 165, 0, 0.45)", width=1.5), 
+                    name="RSI (14)",
+                    hoverinfo="y"
+                ), secondary_y=True)
+                fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 0, 0, 0.25)", secondary_y=True)
+                fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.25)", secondary_y=True)
+                fig.update_yaxes(title_text="RSI", range=[0, 100], secondary_y=True, showgrid=False)
 
-            elif "横分割" in chart_layout_mode:
-                if show_rsi:
-                    fig = make_subplots(rows=1, cols=2, shared_yaxes=False, horizontal_spacing=0.08, column_widths=[0.7, 0.3])
-                else:
-                    fig = make_subplots(rows=1, cols=1)
+            # 5. 【新機能】重大カタリスト（決算・FDA・治験・M&Aニュース）のプロット
+            df_catalysts = fetch_catalyst_events(t)
+            if not df_catalysts.empty:
+                catalyst_markers = []
+                for _, row in df_catalysts.iterrows():
+                    c_date = pd.to_datetime(row["date"])
+                    if c_date in df_prices.index:
+                        # ニュース発生日の高値の上にプロット
+                        plot_price = df_prices.loc[c_date, "High"] * 1.02
+                        catalyst_markers.append({
+                            "date": c_date,
+                            "price": plot_price,
+                            "title": row["title"],
+                            "category": row["category"]
+                        })
+                        
+                        # チャート上に垂直破線（カタリストライン）を引く
+                        fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.35)", secondary_y=False)
                 
-                if chart_type == "ローソク足":
-                    fig.add_trace(gr.Candlestick(x=df_prices.index, open=df_prices["Open"], high=df_prices["High"], low=df_prices["Low"], close=df_prices["Close"], name="株価 (OHLC)"), row=1, col=1)
-                else:
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["Close"], mode="lines", line=dict(color="#00FFCC", width=2), name="終値"), row=1, col=1)
-                
-                if show_bb:
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.2)", width=1, dash="dash"), name="BB Upper", showlegend=False), row=1, col=1)
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.2)", width=1, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.03)", name="BB Lower", showlegend=False), row=1, col=1)
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["MA20"], line=dict(color="orange", width=1.5, dash="dash"), name="20日移動平均"), row=1, col=1)
-                
-                if not df_markers.empty:
-                    fig.add_trace(gr.Scatter(x=df_markers["date"], y=df_markers["price"], mode="markers", marker=dict(symbol="triangle-up", size=16, color="#E0B0FF", line=dict(color="#AA00FF", width=2)), text=df_markers.apply(lambda r: f"{r['insider']}<br>購入額: ${r['value']:,.0f}", axis=1), hoverinfo="text+x+y", name="インサイダー買い"), row=1, col=1)
-                
-                if show_rsi:
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["RSI"], line=dict(color="orange", width=1.5), name="RSI (14)"), row=1, col=2)
-                    fig.add_hline(y=70, line_dash="dash", line_color="red", row=1, col=2, opacity=0.5)
-                    fig.add_hline(y=30, line_dash="dash", line_color="green", row=1, col=2, opacity=0.5)
-                
-                fig.update_layout(height=450, template="plotly_dark", paper_bgcolor="#0E1117", plot_bgcolor="#0E1117", xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=20, b=20))
-                st.plotly_chart(fig, use_container_width=True)
+                if catalyst_markers:
+                    df_cat_plot = pd.DataFrame(catalyst_markers)
+                    fig.add_trace(gr.Scatter(
+                        x=df_cat_plot["date"], y=df_cat_plot["price"], mode="markers",
+                        marker=dict(symbol="star", size=12, color="#FFD700", line=dict(color="#FF8C00", width=1)),
+                        text=df_cat_plot.apply(lambda r: f"📢 {r['category']}<br>📰 {r['title']}", axis=1),
+                        hoverinfo="text",
+                        name="重大カタリスト (★)"
+                    ), secondary_y=False)
 
-            elif "重複" in chart_layout_mode:
-                fig = make_subplots(specs=[[{"secondary_y": True}]])
-                
-                if chart_type == "ローソク足":
-                    fig.add_trace(gr.Candlestick(x=df_prices.index, open=df_prices["Open"], high=df_prices["High"], low=df_prices["Low"], close=df_prices["Close"], name="株価 (OHLC)"), secondary_y=False)
-                else:
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["Close"], mode="lines", line=dict(color="#00FFCC", width=2), name="終値"), secondary_y=False)
-                
-                if show_bb:
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.15)", width=1, dash="dash"), name="BB Upper", showlegend=False), secondary_y=False)
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.15)", width=1, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.02)", name="BB Lower", showlegend=False), secondary_y=False)
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["MA20"], line=dict(color="orange", width=1.5, dash="dash"), name="20日移動平均"), secondary_y=False)
-                
-                if not df_markers.empty:
-                    fig.add_trace(gr.Scatter(x=df_markers["date"], y=df_markers["price"], mode="markers", marker=dict(symbol="triangle-up", size=16, color="#E0B0FF", line=dict(color="#AA00FF", width=2)), text=df_markers.apply(lambda r: f"{r['insider']}<br>購入額: ${r['value']:,.0f}", axis=1), hoverinfo="text+x+y", name="インサイダー買い"), secondary_y=False)
-                
-                if show_rsi:
-                    fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["RSI"], line=dict(color="rgba(255, 165, 0, 0.4)", width=1.5), name="RSI (14) [右軸]"), secondary_y=True)
-                    fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 0, 0, 0.3)", secondary_y=True)
-                    fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.3)", secondary_y=True)
-                    fig.update_yaxes(title_text="RSI", range=[0, 100], secondary_y=True, showgrid=False)
-                
-                fig.update_yaxes(title_text="株価 ($)", secondary_y=False)
-                fig.update_layout(height=600, template="plotly_dark", paper_bgcolor="#0E1117", plot_bgcolor="#0E1117", xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=20, b=20))
-                st.plotly_chart(fig, use_container_width=True)
+            # レイアウトと「X軸統合ホバー (x unified)」の設定
+            fig.update_yaxes(title_text="株価 ($)", secondary_y=False)
+            fig.update_layout(
+                height=600,
+                template="plotly_dark",
+                paper_bgcolor="#0E1117",
+                plot_bgcolor="#0E1117",
+                xaxis_rangeslider_visible=False,
+                margin=dict(l=20, r=20, t=20, b=20),
+                hovermode="x unified",  # ⚡ カーソル位置の全データを1つのホバーに統合
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
