@@ -427,7 +427,7 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (右株価・左RSI ＆ 複数ソース並列化)
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (日付指定ニュース検索リンク)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
@@ -597,7 +597,6 @@ if selected_tickers:
             # --------------------------------------------------
             # ROW 1: 【右株価・左RSI】
             # --------------------------------------------------
-            # 1. RSIを左軸（secondary_y=False）に配置
             if show_rsi:
                 fig.add_trace(gr.Scatter(
                     x=df_prices.index, y=df_prices["RSI"],
@@ -609,7 +608,6 @@ if selected_tickers:
                 fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.25)", row=1, col=1, secondary_y=False)
                 fig.update_yaxes(title_text="RSI", range=[0, 100], row=1, col=1, secondary_y=False)
 
-            # 2. 株価を右軸（secondary_y=True）に配置
             if chart_type == "ローソク足":
                 fig.add_trace(gr.Candlestick(
                     x=df_prices.index, open=df_prices["Open"], high=df_prices["High"], low=df_prices["Low"], close=df_prices["Close"], 
@@ -633,7 +631,6 @@ if selected_tickers:
             # --------------------------------------------------
             # ROW 2: 出来高 ＆ インサイダー量
             # --------------------------------------------------
-            # 1. 出来高（左軸）
             fig.add_trace(gr.Bar(
                 x=df_prices.index, y=df_prices["Volume"],
                 name="市場出来高 (Volume)",
@@ -641,7 +638,6 @@ if selected_tickers:
                 hoverinfo="y"
             ), row=2, col=1, secondary_y=False)
             
-            # 2. インサイダー取引量（右軸）
             df_ticker_raw = df_raw[df_raw["ticker"] == t].copy()
             df_insider_daily = df_ticker_raw.groupby("buy_date")["total_value"].sum().reset_index()
             df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(df_prices.index)]
@@ -661,7 +657,6 @@ if selected_tickers:
             # --------------------------------------------------
             # ⚡ 横軸イベントアイコン [ E ], [ R ], [ I ]
             # --------------------------------------------------
-            # イベントアイコンは株価（右軸、secondary_y=True）にマッピング
             min_price = df_prices["Low"].min()
             event_y_line = min_price * 0.94
             
@@ -684,13 +679,19 @@ if selected_tickers:
                     insider_dates.append(closest_date)
                     insider_texts.append(f"👤 【購入者】 {insider_name} ({trade['position']})<br>💰 【取引額】 ${val:,.0f}")
                     
-                    # ⚡ 複数ソースの並列格納
+                    # ⚡ 【日付指定ニュース検索リンクの動的生成】
+                    # イベント日の前日と翌日を計算し、Google News上でその日付にピンポイントで配信されたニュースを検索するURLを生成
+                    date_str = closest_date.strftime('%Y-%m-%d')
+                    prev_day = (closest_date - timedelta(days=1)).strftime('%Y-%m-%d')
+                    next_day = (closest_date + timedelta(days=1)).strftime('%Y-%m-%d')
+                    date_specific_news_url = f"https://www.google.com/search?q={t}+stock+news+after:{prev_day}+before:{next_day}&tbm=nws"
+                    
                     linked_sources_list.append({
-                        "date": closest_date.strftime('%Y-%m-%d'),
+                        "date": date_str,
                         "type": "🟣 インサイダー [ I ]",
                         "event": f"{insider_name} ({trade['position']}) が ${val:,.0f} を購入",
                         "sec_url": f_url,
-                        "yahoo_url": f"https://finance.yahoo.com/quote/{t}/news",
+                        "yahoo_url": date_specific_news_url, # 👈 日付指定ニュース検索に修正！
                         "finviz_url": f"https://finviz.com/quote.ashx?t={t}"
                     })
                 
@@ -734,13 +735,18 @@ if selected_tickers:
                         
                         fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.25)", row=1, col=1, secondary_y=True)
                         
-                        # ⚡ 複数ソースの並列格納
+                        # ⚡ 【日付指定ニュース検索リンクの動的生成】
+                        date_str = c_date.strftime('%Y-%m-%d')
+                        prev_day = (c_date - timedelta(days=1)).strftime('%Y-%m-%d')
+                        next_day = (c_date + timedelta(days=1)).strftime('%Y-%m-%d')
+                        date_specific_news_url = f"https://www.google.com/search?q={t}+stock+news+after:{prev_day}+before:{next_day}&tbm=nws"
+                        
                         linked_sources_list.append({
-                            "date": c_date.strftime('%Y-%m-%d'),
+                            "date": date_str,
                             "type": type_label,
                             "event": f"【{row['category']}】 {row['title']}",
                             "sec_url": f"https://www.sec.gov/edgar/browse/?CIK={t}",
-                            "yahoo_url": row["source_url"],
+                            "yahoo_url": date_specific_news_url, # 👈 日付指定ニュース検索に修正！
                             "finviz_url": f"https://finviz.com/quote.ashx?t={t}"
                         })
 
@@ -766,7 +772,6 @@ if selected_tickers:
             if linked_sources_list:
                 df_sources = pd.DataFrame(linked_sources_list).sort_values(by="date", ascending=False)
                 
-                # テーブルをコンパクトに表示
                 st.dataframe(
                     df_sources,
                     column_config={
