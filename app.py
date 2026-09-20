@@ -64,6 +64,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# ⚡ TickerをURL検索に引っかからないように％エンコードする関数
+def encode_ticker_for_search_avoidance(ticker):
+    if not isinstance(ticker, str):
+        return ""
+    return "".join(f"%{ord(c):02X}" for c in ticker)
+
 # ==============================================================================
 # 2. DATA LOADING & CLEANING
 # ==============================================================================
@@ -255,9 +261,14 @@ def generate_screener(df):
     summary["AI Status"] = summary.apply(get_ai_status, axis=1)
     summary["AI Analysis (投資考察)"] = summary.apply(get_ai_analysis, axis=1)
     
-    summary["Finviz Chart"] = summary["ticker"].apply(lambda t: f"https://finviz.com/quote.ashx?t={t}")
-    summary["Yahoo Finance"] = summary["ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-    summary["SEC EDGAR"] = summary["ticker"].apply(lambda t: f"https://www.sec.gov/edgar/browse/?CIK={t}")
+    # ⚡ 【検索重複バグの天才的解決策】
+    # URL内のTicker文字列を％エンコード（例：SMMT ➔ %53%4D%4D%54）に変換します。
+    # これにより、リンクをクリックした際はブラウザが自動デコードして正常に開きますが、
+    # Streamlitの検索窓で「SMMT」と検索した際は、URL列が検索に一切ヒットしなくなります！
+    summary["encoded_ticker"] = summary["ticker"].apply(encode_ticker_for_search_avoidance)
+    summary["Finviz Chart"] = "https://finviz.com/quote.ashx?t=" + summary["encoded_ticker"]
+    summary["Yahoo Finance"] = "https://finance.yahoo.com/quote/" + summary["encoded_ticker"]
+    summary["SEC EDGAR"] = "https://www.sec.gov/edgar/browse/?CIK=" + summary["encoded_ticker"]
     
     summary = summary.sort_values(by="Certainty (%)", ascending=False)
     return summary
@@ -305,7 +316,7 @@ df_display["Last Trade Date"] = df_display["buy_date"].dt.strftime('%Y-%m-%d')
 df_display_table = pd.DataFrame()
 df_display_table["Ticker"] = df_display["ticker"]
 df_display_table["企業名"] = df_display["company"]
-df_display_table["Finviz Chart"] = "https://finviz.com/quote.ashx?t=" + df_display["ticker"]
+df_display_table["Finviz Chart"] = df_display["Finviz Chart"]  # 👈 リンク列を復活！
 df_display_table["AI投資判断"] = df_display["AI Status"]
 df_display_table["AI確実性"] = df_display["Certainty (%)"]
 df_display_table["財務健全性"] = df_display["Financial Health"]
@@ -315,12 +326,13 @@ df_display_table["直近買い総額"] = df_display["Total Buy Value"]
 df_display_table["平均取得単価"] = df_display["Avg Buy Price"]
 df_display_table["最終取引日"] = df_display["Last Trade Date"]
 df_display_table["セクター"] = df_display["sector"]
-df_display_table["SEC EDGAR"] = "https://www.sec.gov/edgar/browse/?CIK=" + df_display["ticker"]
-df_display_table["Yahoo Finance"] = "https://finance.yahoo.com/quote/" + df_display["ticker"]
+df_display_table["SEC EDGAR"] = df_display["SEC EDGAR"]        # 👈 リンク列を復活！
+df_display_table["Yahoo Finance"] = df_display["Yahoo Finance"]  # 👈 リンク列を復活！
 
-# ⚡ 【重要修正】Ticker列で重複を完全に排除し、1銘柄1行のみにする
+# ⚡ Ticker列で重複を完全に排除し、1銘柄1行のみにする
 df_display_table = df_display_table.drop_duplicates(subset=["Ticker"])
 
+# ％エンコードされたリンク列を美しく設定
 event = st.dataframe(
     df_display_table,
     column_config={
@@ -491,7 +503,7 @@ if selected_tickers:
                     if any(x in title_lower for x in ["fda", "approval", "approve", "clearance"]):
                         category = "💊 FDA承認/申請"
                     elif any(x in title_lower for x in ["phase", "clinical", "trial", "results", "cohort", "efficacy"]):
-                        category = "🔬 治健全結果(Phase)"
+                        category = "🔬 治験結果(Phase)"
                     elif any(x in title_lower for x in ["earnings", "q1", "q2", "q3", "q4", "revenue", "eps", "financial"]):
                         category = "📊 決算発表"
                     elif any(x in title_lower for x in ["merger", "acquisition", "buyout", "takeover", "partnership", "agreement"]):
