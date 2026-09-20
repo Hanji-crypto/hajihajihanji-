@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# プロ仕様ダークテーマCSS
+# プロ仕様ダークテーマ＆高密度CSS
 st.html("""
     <style>
     .stApp {
@@ -37,6 +37,14 @@ st.html("""
     }
     hr {
         border-color: #1E293B !important;
+    }
+    a {
+        color: #00FFCC !important;
+        text-decoration: none;
+        font-weight: bold;
+    }
+    a:hover {
+        text-decoration: underline;
     }
     /* AI・統計考察カードのスタイル */
     .strategy-card {
@@ -61,7 +69,7 @@ st.html("""
         border: 1px solid #1E293B;
         border-radius: 6px;
         padding: 12px;
-        max-height: 180px;
+        max-height: 200px;
         overflow-y: auto;
         font-family: 'Consolas', 'Courier New', monospace;
         font-size: 12px;
@@ -72,10 +80,12 @@ st.html("""
         border-bottom: 1px solid #1E293B;
         padding: 5px 0;
         display: flex;
+        align-items: flex-start;
     }
     .console-date {
         color: #64748B;
         min-width: 90px;
+        font-weight: bold;
     }
     .console-badge {
         display: inline-block;
@@ -273,36 +283,123 @@ def fetch_market_and_option_data(ticker):
     df_opt = pd.DataFrame(options_data) if options_data else pd.DataFrame()
     return hist, df_opt, target_exp, implied_vol, hv, pcr_volume
 
+# カタリスト取得ロジック
+@st.cache_data(ttl=7200)
+def fetch_catalyst_events(ticker, df_prices, df_raw_trades):
+    events = []
+    try:
+        stock = yf.Ticker(ticker)
+        news = stock.news
+        if news:
+            for item in news:
+                title = item.get("title", "")
+                pub_time = item.get("providerPublishTime", 0)
+                link_url = item.get("link", f"https://finance.yahoo.com/quote/{ticker}")
+                if pub_time == 0:
+                    continue
+                event_date = datetime.fromtimestamp(pub_time).strftime('%Y-%m-%d')
+                
+                title_lower = title.lower()
+                category = None
+                if any(x in title_lower for x in ["fda", "approval", "approve", "clearance"]):
+                    category = "💊 FDA承認/申請"
+                elif any(x in title_lower for x in ["phase", "clinical", "trial", "results", "cohort", "efficacy"]):
+                    category = "🔬 治験結果(Phase)"
+                elif any(x in title_lower for x in ["earnings", "q1", "q2", "q3", "q4", "revenue", "eps", "financial"]):
+                    category = "📊 決算発表"
+                elif any(x in title_lower for x in ["merger", "acquisition", "buyout", "takeover", "partnership", "agreement"]):
+                    category = "🤝 M&A/提携"
+                elif any(x in title_lower for x in ["offering", "dilution", "fundraising", "debt", "shares", "capital"]):
+                    category = "💸 資金調達/希薄化"
+                    
+                if category:
+                    events.append({
+                        "date": event_date,
+                        "title": title,
+                        "category": category,
+                        "source_url": link_url
+                    })
+    except:
+        pass
+
+    try:
+        df_ticker_trades = df_raw_trades[df_raw_trades["ticker"] == ticker]
+        for _, trade in df_ticker_trades.iterrows():
+            val = trade["total_value"]
+            insider_name = trade["insider"]
+            pos = trade["position"]
+            t_date = trade["buy_date"].strftime('%Y-%m-%d')
+            f_url = trade["filing_url"] if pd.notna(trade["filing_url"]) else f"https://www.sec.gov/edgar/browse/?CIK={ticker}"
+            
+            if val >= 1000000:
+                events.append({
+                    "date": t_date,
+                    "title": f"超大口インサイダー買い: {insider_name} ({pos}) が ${val:,.0f} を市場から購入",
+                    "category": "🐋 超大口インサイダー",
+                    "source_url": f_url
+                })
+            elif any(x in str(pos).lower() for x in ["ceo", "chief executive officer", "cfo", "chief financial officer"]):
+                events.append({
+                    "date": t_date,
+                    "title": f"経営トップ(CEO/CFO)による買い: {insider_name} が ${val:,.0f} を購入",
+                    "category": "👑 経営陣インサイダー",
+                    "source_url": f_url
+                })
+    except:
+        pass
+
+    return pd.DataFrame(events).drop_duplicates(subset=["date", "category"]) if events else pd.DataFrame()
+
 with st.spinner(f"【{current_ticker}】の市場データおよびオプションチェーンを解析中..."):
     hist_data, df_options, expiry_date, iv, hv, pcr = fetch_market_and_option_data(current_ticker)
 
 # ==============================================================================
-# 6. DUAL-PANE TERMINAL DISPLAY
+# 6. DUAL-PANE TERMINAL DISPLAY (統合レイアウト)
 # ==============================================================================
 if hist_data is not None:
     current_price = hist_data["Close"].iloc[-1]
     
+    # テクニカル計算 (ボリンジャーバンド & RSI)
+    hist_data["MA20"] = hist_data["Close"].rolling(window=20).mean()
+    hist_data["STD20"] = hist_data["Close"].rolling(window=20).std()
+    hist_data["BB_Upper"] = hist_data["MA20"] + (hist_data["STD20"] * 2)
+    hist_data["BB_Lower"] = hist_data["MA20"] - (hist_data["STD20"] * 2)
+    
+    delta = hist_data["Close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / (loss + 1e-9)
+    hist_data["RSI"] = 100 - (100 / (1 + rs))
+
     # 1標準偏差 (1σ) 予測レンジの算出 (満期30日想定)
     T_30 = 30 / 365.25
     one_sigma_move = current_price * iv * np.sqrt(T_30)
     upper_1sigma = current_price + one_sigma_move
     lower_1sigma = current_price - one_sigma_move
     
+    # コントロールパネル
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 2, 3])
+    with ctrl_col1:
+        show_bb = st.checkbox("ボリンジャーバンドを表示", value=True)
+    with ctrl_col2:
+        show_rsi = st.checkbox("RSI (14) を表示", value=True)
+    with ctrl_col3:
+        chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
+
     col_left, col_right = st.columns([4, 3])
     
     # --------------------------------------------------------------------------
-    # LEFT PANE: BI可視化 (株価・予測バンド・オプションチェーン)
+    # LEFT PANE: BI可視化 (株価・予測バンド・テクニカルチャート)
     # --------------------------------------------------------------------------
     with col_left:
-        st.markdown("### 📊 統計的市場データ ＆ BI可視化")
+        st.markdown("### 📊 統合テクニカル ＆ 予測バンドチャート")
         
-        # 2段構成チャート (上段: 株価 & 1σバンド, 下段: インサイダー出来高)
         fig = make_subplots(
             rows=2, cols=1, 
             shared_xaxes=True, 
             vertical_spacing=0.06, 
             row_heights=[0.7, 0.3],
-            specs=[[{"secondary_y": False}], [{"secondary_y": True}]]
+            specs=[[[{"secondary_y": True}]], [[{"secondary_y": True}]]]
         )
         
         # 1σ予測バンドの描画 (統計的確率約68%の推移予測)
@@ -310,25 +407,54 @@ if hist_data is not None:
         upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
         lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
         
-        fig.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["Close"].iloc[-60:],
-            mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
-        ), row=1, col=1)
-        
+        # RSIの描画 (ROW 1, secondary_y=False)
+        if show_rsi:
+            fig.add_trace(gr.Scatter(
+                x=hist_data.index[-60:], y=hist_data["RSI"].iloc[-60:],
+                line=dict(color="rgba(255, 165, 0, 0.45)", width=1.5), name="RSI (14)"
+            ), row=1, col=1, secondary_y=False)
+            fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 0, 0, 0.25)", row=1, col=1, secondary_y=False)
+            fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.25)", row=1, col=1, secondary_y=False)
+            fig.update_yaxes(title_text="RSI", range=[0, 100], row=1, col=1, secondary_y=False)
+
+        # 株価の描画 (ROW 1, secondary_y=True)
+        if chart_type == "ローソク足":
+            fig.add_trace(gr.Candlestick(
+                x=hist_data.index[-60:], open=hist_data["Open"].iloc[-60:], high=hist_data["High"].iloc[-60:],
+                low=hist_data["Low"].iloc[-60:], close=hist_data["Close"].iloc[-60:], name="株価 (OHLC)"
+            ), row=1, col=1, secondary_y=True)
+        else:
+            fig.add_trace(gr.Scatter(
+                x=hist_data.index[-60:], y=hist_data["Close"].iloc[-60:],
+                mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
+            ), row=1, col=1, secondary_y=True)
+            
+        # ボリンジャーバンドの描画
+        if show_bb:
+            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", hoverinfo="skip", showlegend=False), row=1, col=1, secondary_y=True)
+            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", hoverinfo="skip", showlegend=False), row=1, col=1, secondary_y=True)
+            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均", hoverinfo="skip"), row=1, col=1, secondary_y=True)
+
+        # 1σ予測バンドの描画
         fig.add_trace(gr.Scatter(
             x=future_dates, y=upper_band_curve,
             mode="lines", line=dict(color="rgba(0, 255, 204, 0.3)", width=1, dash="dash"),
             name="1σ 上昇上限 (確率68%)", showlegend=True
-        ), row=1, col=1)
+        ), row=1, col=1, secondary_y=True)
         
         fig.add_trace(gr.Scatter(
             x=future_dates, y=lower_band_curve,
             mode="lines", line=dict(color="rgba(239, 68, 68, 0.3)", width=1, dash="dash"),
             fill="tonexty", fillcolor="rgba(0, 255, 204, 0.02)",
             name="1σ 下落下限 (確率68%)", showlegend=True
-        ), row=1, col=1)
+        ), row=1, col=1, secondary_y=True)
         
-        # 下段: インサイダー取引量
+        # ROW 2: 出来高 ＆ インサイダー取引量 (軸分離)
+        fig.add_trace(gr.Bar(
+            x=hist_data.index[-60:], y=hist_data["Volume"].iloc[-60:],
+            name="市場出来高 (Volume)", marker_color="rgba(128, 128, 128, 0.25)"
+        ), row=2, col=1, secondary_y=False)
+        
         df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
         df_insider_daily = df_ticker_raw.groupby("buy_date")["total_value"].sum().reset_index()
         df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
@@ -336,34 +462,19 @@ if hist_data is not None:
         if not df_insider_daily.empty:
             fig.add_trace(gr.Bar(
                 x=df_insider_daily["buy_date"], y=df_insider_daily["total_value"],
-                name="インサイダー取引量 ($)", marker_color="#AA00FF"
-            ), row=2, col=1, secondary_y=False)
+                name="インサイダー取引量 ($)", marker_color="#AA00FF", width=1000 * 60 * 60 * 24 * 3
+            ), row=2, col=1, secondary_y=True)
             
-        fig.update_yaxes(title_text="株価 ($)", row=1, col=1)
-        fig.update_yaxes(title_text="インサイダー量 ($)", row=2, col=1, secondary_y=False)
+        fig.update_yaxes(title_text="株価 ($)", row=1, col=1, secondary_y=True)
+        fig.update_yaxes(title_text="出来高 (Vol)", row=2, col=1, secondary_y=False)
+        fig.update_yaxes(title_text="インサイダー量 ($)", row=2, col=1, secondary_y=True, showgrid=False)
         
         fig.update_layout(
-            height=450, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-            margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.08, x=0)
+            height=500, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+            margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.08, x=0),
+            hovermode="x"
         )
         st.plotly_chart(fig, use_container_width=True)
-        
-        # 統計的オプションチェーンテーブル
-        st.markdown("#### 📄 直近満期オプション・チェーン (統計指標付き)")
-        if df_options is not None and not df_options.empty:
-            df_opt_display = df_options.sort_values(by="Strike").copy()
-            df_opt_display["IV"] = df_opt_display["IV"].map(lambda x: f"{x*100:.1f}%")
-            df_opt_display["Delta"] = df_opt_display["Delta"].map(lambda x: f"{x:.2f}")
-            df_opt_display["Last Price"] = df_opt_display["Last Price"].map(lambda x: f"${x:.2f}")
-            
-            st.dataframe(
-                df_opt_display[["Strike", "Last Price", "Volume", "Open Interest", "IV", "Delta"]].head(8),
-                use_container_width=True,
-                hide_index=True,
-                height=200
-            )
-        else:
-            st.warning("⚠️ この銘柄の直近オプションチェーンデータを取得できませんでした。")
 
     # --------------------------------------------------------------------------
     # RIGHT PANE: AIオプション戦略 ＆ 統計的価格提案
@@ -390,7 +501,6 @@ if hist_data is not None:
 
         # 統計的オプション戦略構築アルゴリズム
         st.markdown("---")
-        st.markdown("#### ⚡ AI推奨オプション戦略 ＆ 統計的根拠")
         
         # 戦略選定ロジック
         is_iv_cheap = (iv / hv) < 1.1 if hv > 0 else True
@@ -452,23 +562,118 @@ if hist_data is not None:
             </div>
         """)
         
-        # リアルタイム・イベント・コンソール
+        # リアルタイム・イベント・コンソール（名寄せ・合算版）
         st.markdown("#### ⏱️ リアルタイム・イベント・コンソール")
-        if not df_ticker_raw.empty:
+        
+        # カタリストとインサイダーの合算
+        raw_events_by_date = {}
+        df_catalysts = fetch_catalyst_events(current_ticker, hist_data, df_raw)
+        
+        # インサイダー名寄せ
+        df_insider_grouped = df_ticker_raw.groupby(["buy_date", "insider"]).agg({
+            "total_value": "sum", "position": "first", "filing_url": "first"
+        }).reset_index()
+
+        for _, trade in df_insider_grouped.iterrows():
+            t_date = trade["buy_date"]
+            if t_date not in raw_events_by_date:
+                raw_events_by_date[t_date] = []
+            raw_events_by_date[t_date].append({
+                "type": "I", "insider": trade["insider"], "position": trade["position"],
+                "value": trade["total_value"], "url": trade["filing_url"]
+            })
+
+        if not df_catalysts.empty:
+            for _, row in df_catalysts.iterrows():
+                c_date = pd.to_datetime(row["date"])
+                if c_date not in raw_events_by_date:
+                    raw_events_by_date[c_date] = []
+                raw_events_by_date[c_date].append({
+                    "type": "C", "category": row["category"], "title": row["title"], "url": row["source_url"]
+                })
+
+        if raw_events_by_date:
             console_html = "<div class='event-console'>"
-            for _, row in df_ticker_raw.sort_values(by="buy_date", ascending=False).head(5).iterrows():
-                date_str = row["buy_date"].strftime('%Y-%m-%d')
-                val = row["total_value"]
-                insider_name = row["insider"]
-                pos = row["position"]
-                
-                badge = "<span class='console-badge' style='background-color: rgba(170, 0, 255, 0.15); color: #E0B0FF; border: 1px solid #AA00FF;'>インサイダー [ I ]</span>"
-                text = f"👤 <span style='color:#00FFCC; font-weight:bold;'>{insider_name}</span> ({pos}) が <b style='color:#00FFCC;'>${val:,.0f}</b> 分の現物を市場から直接購入"
-                console_html += f"<div class='console-row'><div class='console-date'>[{date_str}]</div>{badge}<div class='console-text'>{text}</div></div>"
+            for event_date in sorted(raw_events_by_date.keys(), reverse=True):
+                date_str = event_date.strftime('%Y-%m-%d')
+                for item in raw_events_by_date[event_date]:
+                    if item["type"] == "I":
+                        badge = "<span class='console-badge' style='background-color: rgba(170, 0, 255, 0.15); color: #E0B0FF; border: 1px solid #AA00FF;'>インサイダー [ I ]</span>"
+                        text = f"👤 <span style='color:#00FFCC; font-weight:bold;'>{item['insider']}</span> ({item['position']}) が 合計 <b style='color:#00FFCC;'>${item['value']:,.0f}</b> を市場から購入"
+                    else:
+                        badge = "<span class='console-badge' style='background-color: rgba(255, 215, 0, 0.15); color: #FFD700; border: 1px solid #FFD700;'>ニュース [ R ]</span>"
+                        text = f"📢 <span style='color:#FFD700;'>{item['category']}</span>: {item['title']}"
+                    console_html += f"<div class='console-row'><div class='console-date'>[{date_str}]</div>{badge}<div class='console-text'>{text}</div></div>"
             console_html += "</div>"
             st.html(console_html)
         else:
             st.info("💡 直近で検出された重大イベントはありません。")
+
+    # --------------------------------------------------------------------------
+    # LOWER SECTION: 詳細オプションチェーン ＆ マルチソース・リンク
+    # --------------------------------------------------------------------------
+    st.markdown("---")
+    st.markdown("### 📄 直近満期オプション・チェーン (詳細統計マトリックス)")
+    
+    if df_options is not None and not df_options.empty:
+        df_opt_display = df_options.sort_values(by="Strike").copy()
+        df_opt_display["IV"] = df_opt_display["IV"].map(lambda x: f"{x*100:.1f}%")
+        df_opt_display["Delta"] = df_opt_display["Delta"].map(lambda x: f"{x:.2f}")
+        df_opt_display["Last Price"] = df_opt_display["Last Price"].map(lambda x: f"${x:.2f}")
+        
+        st.dataframe(
+            df_opt_display[["Strike", "Type", "Last Price", "Volume", "Open Interest", "IV", "Delta"]],
+            use_container_width=True,
+            hide_index=True,
+            height=250
+        )
+    
+    st.markdown("---")
+    st.markdown(f"### 🔗 【{current_ticker}】 マルチソース・適時開示＆ニュースターミナル")
+    
+    # リンクテーブルの生成
+    linked_sources_list = []
+    for event_date in sorted(raw_events_by_date.keys(), reverse=True):
+        date_str = event_date.strftime('%Y-%m-%d')
+        prev_day = (event_date - timedelta(days=1)).strftime('%Y-%m-%d')
+        next_day = (event_date + timedelta(days=1)).strftime('%Y-%m-%d')
+        date_specific_news_url = f"https://www.google.com/search?q={current_ticker}+stock+news+after:{prev_day}+before:{next_day}&tbm=nws"
+        
+        for item in raw_events_by_date[event_date]:
+            if item["type"] == "I":
+                linked_sources_list.append({
+                    "日付": date_str,
+                    "分類": "🟣 インサイダー [ I ]",
+                    "イベント概要": f"{item['insider']} ({item['position']}) が 合計 ${item['value']:,.0f} を購入",
+                    "SEC開示 (Form 4)": item["url"],
+                    "Googleニュース": date_specific_news_url,
+                    "Finviz Chart": f"https://finviz.com/quote.ashx?t={current_ticker}"
+                })
+            else:
+                linked_sources_list.append({
+                    "日付": date_str,
+                    "分類": "🟡 カタリスト [ R ]",
+                    "イベント概要": f"【{item['category']}】 {item['title']}",
+                    "SEC開示 (Form 4)": f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
+                    "Googleニュース": item["url"],
+                    "Finviz Chart": f"https://finviz.com/quote.ashx?t={current_ticker}"
+                })
+                
+    if linked_sources_list:
+        df_sources = pd.DataFrame(linked_sources_list).drop_duplicates(subset=["日付", "イベント概要"])
+        st.dataframe(
+            df_sources,
+            column_config={
+                "SEC開示 (Form 4)": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
+                "Googleニュース": st.column_config.LinkColumn("Google News", display_text="News ↗"),
+                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
+            },
+            use_container_width=True,
+            hide_index=True,
+            height=250
+        )
+    else:
+        st.info("💡 リンク可能なイベント履歴はありません。")
             
 else:
     st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
