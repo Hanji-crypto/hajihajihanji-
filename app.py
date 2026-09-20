@@ -179,6 +179,7 @@ def generate_screener(df):
 
 df_screener = generate_screener(df_raw)
 top_10_tickers = df_screener["ticker"].head(10).tolist()
+all_available_tickers = df_screener["ticker"].tolist()
 
 # ==============================================================================
 # 4. INTERACTIVE SELECTION LOGIC (セッション状態の管理)
@@ -359,8 +360,17 @@ col_matrix, col_analysis = st.columns([5, 7])
 # --------------------------------------------------------------------------
 with col_matrix:
     st.subheader("📊 全銘柄多次元スクリーニング・マトリックス")
-    st.markdown("💡 **テーブル内の行をクリックするだけで、右側の詳細チャートやAIオプション戦略が瞬時に切り替わります。**")
     
+    # 100%確実に動作する同期用ドロップダウンセレクター
+    selected_from_dropdown = st.selectbox(
+        "🔍 解析する銘柄を全銘柄リストから選択:",
+        options=all_available_tickers,
+        index=all_available_tickers.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in all_available_tickers else 0
+    )
+    if selected_from_dropdown != st.session_state.selected_ticker:
+        st.session_state.selected_ticker = selected_from_dropdown
+        st.rerun()
+
     # 表示用データの整形
     df_screener_display = df_screener.copy()
     df_screener_display = df_screener_display.rename(columns={
@@ -380,23 +390,13 @@ with col_matrix:
     df_screener_display["直近取引日"] = df_screener_display["直近取引日"].dt.strftime('%Y-%m-%d')
     df_screener_display["統計的確実性スコア (%)"] = df_screener_display["統計的確実性スコア (%)"].map(lambda x: f"{x:.1f}%")
 
-    # インタラクティブな行選択機能付き st.dataframe
-    event = st.dataframe(
+    # 全銘柄マトリックスのテーブル表示
+    st.dataframe(
         df_screener_display[["ティッカー", "企業名", "取引総額 ($)", "平均取得単価 ($)", "主なインサイダー", "直近取引日", "取引回数", "統計的確実性スコア (%)"]],
         use_container_width=True,
         hide_index=True,
-        height=650,
-        selection_mode="single_row",
-        on_select="rerun"
+        height=580
     )
-
-    # 選択された行からティッカーを取得して同期
-    if event and "rows" in event.selection and event.selection["rows"]:
-        selected_row_idx = event.selection["rows"][0]
-        selected_ticker_from_matrix = df_screener_display.iloc[selected_row_idx]["ティッカー"]
-        if selected_ticker_from_matrix != st.session_state.selected_ticker:
-            st.session_state.selected_ticker = selected_ticker_from_matrix
-            st.rerun()
 
 # --------------------------------------------------------------------------
 # RIGHT PANE: 詳細解析、チャート、AIオプション戦略 ＆ 統計的価格提案
