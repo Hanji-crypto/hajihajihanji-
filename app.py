@@ -61,32 +61,14 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 15px;
     }
-    /* リンクステーションのスタイル */
-    .link-station {
+    /* イベントソースステーションのスタイル */
+    .source-station {
         background-color: #1E293B;
-        padding: 12px;
+        padding: 15px;
         border-radius: 6px;
         border: 1px solid #2D3748;
-        text-align: center;
-        margin-top: 10px;
+        margin-top: 15px;
         margin-bottom: 20px;
-    }
-    .link-btn {
-        display: inline-block;
-        background-color: #2D3748;
-        color: #00FFCC !important;
-        padding: 8px 16px;
-        margin: 0 10px;
-        border-radius: 4px;
-        font-weight: bold;
-        text-decoration: none;
-        border: 1px solid #00FFCC;
-        transition: background-color 0.3s;
-    }
-    .link-btn:hover {
-        background-color: #00FFCC;
-        color: #0E1117 !important;
-        text-decoration: none;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -153,14 +135,14 @@ def load_and_process_data():
             
         healthcare_tickers = {"CYBN", "ARTV", "ZSTK", "LLY", "MRNA", "PFE", "BIIB", "GILD", "SMMT"}
         financial_tickers = {"ARDC", "ARES", "GS", "MS", "JPM", "BAC", "C", "WFC"}
-        text_tickers = {"AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA"}
+        tech_tickers = {"AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA"}
         industrial_tickers = {"WAST", "CAT", "GE", "HON", "MMM", "UNP", "RS", "GWAV"}
         
         if ticker in healthcare_tickers:
             return "Healthcare"
         elif ticker in financial_tickers:
             return "Financials"
-        elif ticker in text_tickers:
+        elif ticker in tech_tickers:
             return "Technology"
         elif ticker in industrial_tickers:
             return "Industrials"
@@ -277,7 +259,7 @@ def generate_screener(df):
         elif score >= 60:
             return f"【好材料】内部関係者による総額 ${val:,.0f} のまとまった買い。下値支持線として機能する可能性が高く、押し目買いに適した水準です。"
         else:
-            return f"【様子見】直近で ${val:,.0f} 規模 of インサイダー買いが確認されました。財務スコアや取引規模を鑑み、追加の買い増しやテクニカルの反発を待ちたい局面です。"
+            return f"【様子見】直近で ${val:,.0f} 規模のインサイダー買いが確認されました。財務スコアや取引規模を鑑み、追加の買い増しやテクニカルの反発を待ちたい局面です。"
 
     summary["AI Status"] = summary.apply(get_ai_status, axis=1)
     summary["AI Analysis (投資考察)"] = summary.apply(get_ai_analysis, axis=1)
@@ -454,7 +436,7 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (スリムホバー＆固定リンクステーション)
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (日付連動ソースステーション)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
@@ -492,7 +474,7 @@ if selected_tickers:
                 pass
         return data_dict
 
-    # カタリスト取得ロジック（URLリンクは保持するが、ホバー内には表示しない）
+    # カタリスト取得ロジック（URLリンクを保持）
     @st.cache_data(ttl=7200)
     def fetch_catalyst_events(ticker, df_prices, df_raw_trades):
         events = []
@@ -658,6 +640,9 @@ if selected_tickers:
             track_spacing = min_price * 0.04
             timeline_top = min_price * 0.88
             
+            # 日付連動ソースリンクを格納するリスト
+            linked_sources_list = []
+            
             # インサイダー取引プロット
             for rank_idx, insider_name in enumerate(insider_ranking):
                 track_y = timeline_top - (rank_idx * track_spacing)
@@ -670,11 +655,12 @@ if selected_tickers:
                     closest_date_idx = df_prices.index.get_indexer([trade_date], method="nearest")[0]
                     closest_date = df_prices.index[closest_date_idx]
                     val = trade["total_value"]
+                    f_url = trade["filing_url"] if pd.notna(trade["filing_url"]) else f"https://www.sec.gov/edgar/browse/?CIK={t}"
                     
                     # 金額連動サイズ
                     dynamic_size = int(max(10, min(28, 10 + np.log10(val + 1) * 2.5)))
                     
-                    # 【ホバー極限スリム化】長大なURLリンクを完全に排除し、純粋なデータのみを縦並びで表示
+                    # ホバーテキスト（URLを完全に排除してスリム化）
                     insider_markers.append(dict(
                         date=closest_date,
                         price=track_y,
@@ -683,6 +669,15 @@ if selected_tickers:
                         value=val
                     ))
                     marker_sizes.append(dynamic_size)
+                    
+                    # ⚡ 日付連動ソースリストに格納
+                    linked_sources_list.append({
+                        "date": closest_date.strftime('%Y-%m-%d'),
+                        "type": "👤 インサイダー取引 (▲)",
+                        "event": f"{insider_name} ({trade['position']}) が ${val:,.0f} を購入",
+                        "url": f_url,
+                        "url_label": "📄 SEC Form 4 (公式開示) ↗"
+                    })
                 
                 if insider_markers:
                     df_m = pd.DataFrame(insider_markers)
@@ -707,7 +702,6 @@ if selected_tickers:
                 for _, row in df_catalysts.iterrows():
                     c_date = pd.to_datetime(row["date"])
                     if c_date in df_prices.index:
-                        # 【ホバー極限スリム化】長大なURLリンクを完全に排除
                         catalyst_markers.append({
                             "date": c_date,
                             "price": catalyst_track_y,
@@ -715,6 +709,15 @@ if selected_tickers:
                             "category": row["category"]
                         })
                         fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.35)", secondary_y=False)
+                        
+                        # ⚡ 日付連動ソースリストに格納
+                        linked_sources_list.append({
+                            "date": c_date.strftime('%Y-%m-%d'),
+                            "type": f"📢 カタリスト (★)",
+                            "event": f"【{row['category']}】 {row['title']}",
+                            "url": row["source_url"],
+                            "url_label": "📰 Yahoo Finance / ニュース記事 ↗"
+                        })
                 
                 if catalyst_markers:
                     df_cat_plot = pd.DataFrame(catalyst_markers)
@@ -741,26 +744,30 @@ if selected_tickers:
             st.plotly_chart(fig, use_container_width=True)
 
             # ==========================================
-            # ⚡ 【新開発】横軸下部 固定データソース・リンクステーション
+            # ⚡ 【新開発】「日付連動型・重大イベント＆ニュースソース・ターミナル」
             # ==========================================
-            # 選択されている銘柄のリンクを動的に生成
-            finviz_url = f"https://finviz.com/quote.ashx?t={t}"
-            edgar_url = f"https://www.sec.gov/edgar/browse/?CIK={t}"
-            yahoo_url = f"https://finance.yahoo.com/quote/{t}"
+            st.markdown(f"### 🔗 【{t}】 日付連動型・重大イベント＆ニュースソース・ターミナル")
+            st.markdown("チャート上の **★ (カタリスト)** や **▲ (インサイダー取引)** が発生した**特定の日付**における、公式ニュース記事やSEC開示資料の直接リンク一覧です。")
             
-            # SEC Form 4の最新の開示リンクをデータベースから取得
-            latest_filing = df_ticker_raw.sort_values(by="filing_date", ascending=False)
-            latest_sec_url = latest_filing.iloc[0]["filing_url"] if not latest_filing.empty and pd.notna(latest_filing.iloc[0]["filing_url"]) else edgar_url
-
-            st.markdown(f"""
-                <div class="link-station">
-                    <span style="font-weight: bold; color: #888888; margin-right: 15px;">🔗 【{t}】 外部データソース直結ステーション:</span>
-                    <a href="{finviz_url}" target="_blank" class="link-btn">📊 Finviz Interactive Chart ↗</a>
-                    <a href="{latest_sec_url}" target="_blank" class="link-btn">📄 SEC Form 4 (最新適時開示) ↗</a>
-                    <a href="{edgar_url}" target="_blank" class="link-btn">🏛️ SEC EDGAR (全開示履歴) ↗</a>
-                    <a href="{yahoo_url}" target="_blank" class="link-btn">📰 Yahoo Finance (詳細・ニュース) ↗</a>
-                </div>
-            """, unsafe_allow_html=True)
+            if linked_sources_list:
+                # 日付の新しい順にソート
+                df_sources = pd.DataFrame(linked_sources_list).sort_values(by="date", ascending=False)
+                
+                # テーブル形式で美しく表示
+                st.dataframe(
+                    df_sources,
+                    column_config={
+                        "date": st.column_config.TextColumn("📅 発生日付", width="medium"),
+                        "type": st.column_config.TextColumn("🏷️ 分類", width="medium"),
+                        "event": st.column_config.TextColumn("📝 イベント概要", width="max"),
+                        "url": st.column_config.LinkColumn("🔗 直接ソースリンク (新規タブで開く)", display_text="ソースを開く ↗")
+                    },
+                    use_container_width=True,
+                    hide_index=True,
+                    height=250
+                )
+            else:
+                st.info("💡 直近1年間で検出された重大イベントはありません。")
             
     else:
         st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
