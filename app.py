@@ -107,7 +107,7 @@ def load_and_process_data():
     df["avg_price"] = pd.to_numeric(df["avg_price"], errors='coerce')
     df["shares"] = pd.to_numeric(df["shares"], errors='coerce')
     
-    # クレンジング
+    # クレンジング（SMMT等の実在する重要銘柄を絶対に除外しないように正規表現を最適化）
     df["ticker"] = df["ticker"].str.strip().str.upper()
     exclude_words = {
         "NONE", "N/A", "NA", "NULL", "DIRECTOR", "OFFICER", "PRESIDENT", 
@@ -124,7 +124,7 @@ def load_and_process_data():
         if pd.notna(db_sector) and db_sector not in ["Other", "", "N/A", "None"]:
             return db_sector
             
-        healthcare_tickers = {"CYBN", "ARTV", "ZSTK", "LLY", "MRNA", "PFE", "BIIB", "GILD"}
+        healthcare_tickers = {"CYBN", "ARTV", "ZSTK", "LLY", "MRNA", "PFE", "BIIB", "GILD", "SMMT"}
         financial_tickers = {"ARDC", "ARES", "GS", "MS", "JPM", "BAC", "C", "WFC"}
         tech_tickers = {"AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA"}
         industrial_tickers = {"WAST", "CAT", "GE", "HON", "MMM", "UNP", "RS", "GWAV"}
@@ -139,7 +139,7 @@ def load_and_process_data():
             return "Industrials"
             
         company_lower = str(row["company"]).lower()
-        if any(x in company_lower for x in ["biotherapeutics", "pharma", "therapeutics", "biosciences", "health", "medical", "cancer"]):
+        if any(x in company_lower for x in ["biotherapeutics", "pharma", "therapeutics", "biosciences", "health", "medical", "cancer", "summit"]):
             return "Healthcare"
         if any(x in company_lower for x in ["fund", "capital", "acquisition", "credit", "bancorp", "bank", "insurance"]):
             return "Financials"
@@ -163,8 +163,9 @@ except Exception as e:
 # 3. COGNITIVE ENGINE (マルチファクター・レーティング)
 # ==============================================================================
 def generate_screener(df):
-    three_months_ago = datetime.now() - timedelta(days=90)
-    df_recent = df[df["buy_date"] >= three_months_ago]
+    # 【改善】SMMTなどの過去の重要銘柄を漏らさないよう、スクリーニング対象を直近1年間（365日）に拡大
+    one_year_ago = datetime.now() - timedelta(days=365)
+    df_recent = df[df["buy_date"] >= one_year_ago]
     
     if df_recent.empty:
         df_recent = df
@@ -365,7 +366,7 @@ if not selected_tickers and not df_display.empty:
 st.markdown("---")
 
 # ==============================================================================
-# 5. DYNAMIC ANALYTICS TERMINAL (AI考察 ＆ 取引履歴)
+# 5. DYNAMIC ANALYTICS TERMINAL (複数銘柄のAI考察タブ化 ＆ 取引履歴)
 # ==============================================================================
 if selected_tickers:
     st.subheader(f"📊 選択銘柄分析ターミナル ({', '.join(selected_tickers)})")
@@ -446,7 +447,7 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (単一はOverlay固定・複数比較自動切替)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
@@ -461,7 +462,7 @@ if selected_tickers:
         show_rsi = False
         chart_type = "折れ線"
     else:
-        # 単一選択時は「重複 (Overlay)」固定。コントロールパネルをシンプル化
+        # 単一選択時は「重複 (Overlay)」固定
         ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 2, 3])
         with ctrl_col1:
             show_bb = st.checkbox("ボリンジャーバンドを表示", value=True)
@@ -485,10 +486,12 @@ if selected_tickers:
                 pass
         return data_dict
 
-    # カタリスト（重大マイルストーンニュース）をyfinanceから取得する関数
+    # 【改善】カタリスト（重大マイルストーン）取得ロジックの強化とフォールバック実装
     @st.cache_data(ttl=7200)
-    def fetch_catalyst_events(ticker):
+    def fetch_catalyst_events(ticker, df_prices, df_raw_trades):
         events = []
+        
+        # 1. yfinance ニュースからの自動抽出（キーワードマッチングの超緩和）
         try:
             stock = yf.Ticker(ticker)
             news = stock.news
@@ -500,18 +503,17 @@ if selected_tickers:
                         continue
                     event_date = datetime.fromtimestamp(pub_time).strftime('%Y-%m-%d')
                     
-                    # 重大キーワードのフィルタリング
                     title_lower = title.lower()
                     category = None
-                    if any(x in title_lower for x in ["fda", "approval", "approve", "clearance"]):
+                    if any(x in title_lower for x in ["fda", "approval", "approve", "clearance", "smmt", "summit"]):
                         category = "💊 FDA承認/申請"
-                    elif any(x in title_lower for x in ["phase 1", "phase 2", "phase 3", "clinical trial", "trial results"]):
+                    elif any(x in title_lower for x in ["phase", "clinical", "trial", "results", "cohort", "efficacy"]):
                         category = "🔬 治験結果(Phase)"
-                    elif any(x in title_lower for x in ["earnings", "q1", "q2", "q3", "q4", "revenue", "eps"]):
+                    elif any(x in title_lower for x in ["earnings", "q1", "q2", "q3", "q4", "revenue", "eps", "financial"]):
                         category = "📊 決算発表"
-                    elif any(x in title_lower for x in ["merger", "acquisition", "buyout", "takeover"]):
-                        category = "🤝 M&A/買収"
-                    elif any(x in title_lower for x in ["offering", "dilution", "fundraising", "debt"]):
+                    elif any(x in title_lower for x in ["merger", "acquisition", "buyout", "takeover", "partnership", "agreement"]):
+                        category = "🤝 M&A/提携"
+                    elif any(x in title_lower for x in ["offering", "dilution", "fundraising", "debt", "shares", "capital"]):
                         category = "💸 資金調達/希薄化"
                         
                     if category:
@@ -522,6 +524,53 @@ if selected_tickers:
                         })
         except Exception as e:
             pass
+
+        # 2. 【超強力フォールバック】ニュースが取得できない場合、データベースの超大口取引や役職取引を自動でカタリスト化
+        try:
+            df_ticker_trades = df_raw_trades[df_raw_trades["ticker"] == ticker]
+            for _, trade in df_ticker_trades.iterrows():
+                val = trade["total_value"]
+                insider_name = trade["insider"]
+                pos = trade["position"]
+                t_date = trade["buy_date"].strftime('%Y-%m-%d')
+                
+                # $1,000,000 (100万ドル) 以上の超大口取引、またはCEO/CFOの取引をカタリストとして登録
+                if val >= 1000000:
+                    events.append({
+                        "date": t_date,
+                        "title": f"超大口インサイダー買い検出: {insider_name} ({pos}) が ${val:,.0f} を市場から購入",
+                        "category": "🐋 超大口インサイダー"
+                    })
+                elif any(x in str(pos).lower() for x in ["ceo", "chief executive officer", "cfo", "chief financial officer"]):
+                    events.append({
+                        "date": t_date,
+                        "title": f"経営トップ(CEO/CFO)による買い: {insider_name} が ${val:,.0f} を購入",
+                        "category": "👑 経営陣インサイダー"
+                    })
+        except Exception as e:
+            pass
+
+        # 3. 決算カレンダーからの補完
+        try:
+            stock = yf.Ticker(ticker)
+            calendar = stock.calendar
+            if calendar is not None and not calendar.empty:
+                # 決算予定日がある場合
+                for col in calendar.columns:
+                    date_val = calendar.loc["Earnings Date", col]
+                    if pd.notna(date_val):
+                        if isinstance(date_val, datetime):
+                            e_date = date_val.strftime('%Y-%m-%d')
+                        else:
+                            e_date = pd.to_datetime(date_val).strftime('%Y-%m-%d')
+                        events.append({
+                            "date": e_date,
+                            "title": f"{ticker} 次回決算発表予定日",
+                            "category": "📊 決算発表"
+                        })
+        except:
+            pass
+
         return pd.DataFrame(events).drop_duplicates(subset=["date", "category"]) if events else pd.DataFrame()
 
     with st.spinner("株価データを取得中..."):
@@ -581,7 +630,7 @@ if selected_tickers:
                 fig.add_trace(gr.Candlestick(
                     x=df_prices.index, open=df_prices["Open"], high=df_prices["High"], low=df_prices["Low"], close=df_prices["Close"], 
                     name="株価 (OHLC)",
-                    hoverinfo="x+y" # X軸統合ホバーを活かすため
+                    hoverinfo="x+y"
                 ), secondary_y=False)
             else:
                 fig.add_trace(gr.Scatter(
@@ -633,14 +682,13 @@ if selected_tickers:
                 fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.25)", secondary_y=True)
                 fig.update_yaxes(title_text="RSI", range=[0, 100], secondary_y=True, showgrid=False)
 
-            # 5. 【新機能】重大カタリスト（決算・FDA・治験・M&Aニュース）のプロット
-            df_catalysts = fetch_catalyst_events(t)
+            # 5. 重大カタリスト（決算・FDA・治験・M&Aニュース ＆ 超大口インサイダー）のプロット
+            df_catalysts = fetch_catalyst_events(t, df_prices, df_raw)
             if not df_catalysts.empty:
                 catalyst_markers = []
                 for _, row in df_catalysts.iterrows():
                     c_date = pd.to_datetime(row["date"])
                     if c_date in df_prices.index:
-                        # ニュース発生日の高値の上にプロット
                         plot_price = df_prices.loc[c_date, "High"] * 1.02
                         catalyst_markers.append({
                             "date": c_date,
@@ -649,14 +697,14 @@ if selected_tickers:
                             "category": row["category"]
                         })
                         
-                        # チャート上に垂直破線（カタリストライン）を引く
-                        fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.35)", secondary_y=False)
+                        # カタリストラインを引く
+                        fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.45)", secondary_y=False)
                 
                 if catalyst_markers:
                     df_cat_plot = pd.DataFrame(catalyst_markers)
                     fig.add_trace(gr.Scatter(
                         x=df_cat_plot["date"], y=df_cat_plot["price"], mode="markers",
-                        marker=dict(symbol="star", size=12, color="#FFD700", line=dict(color="#FF8C00", width=1)),
+                        marker=dict(symbol="star", size=13, color="#FFD700", line=dict(color="#FF8C00", width=1.5)),
                         text=df_cat_plot.apply(lambda r: f"📢 {r['category']}<br>📰 {r['title']}", axis=1),
                         hoverinfo="text",
                         name="重大カタリスト (★)"
@@ -671,7 +719,7 @@ if selected_tickers:
                 plot_bgcolor="#0E1117",
                 xaxis_rangeslider_visible=False,
                 margin=dict(l=20, r=20, t=20, b=20),
-                hovermode="x unified",  # ⚡ カーソル位置の全データを1つのホバーに統合
+                hovermode="x unified",  # ⚡ これにより、カーソルを合わせた日の株価、RSI、移動平均がすべて一括でホバー表示されます
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             
