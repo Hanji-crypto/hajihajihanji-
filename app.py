@@ -464,7 +464,7 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (同日・同購入者合算＆色分け版)
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (半透明・個別オフセットホバー版)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
@@ -690,20 +690,19 @@ if selected_tickers:
             fig.update_yaxes(title_text="インサイダー量 ($)", row=2, col=1, secondary_y=True, showgrid=False)
 
             # --------------------------------------------------
-            # ⚡ 同日イベント統合マージシステム ＆ 【同日同購入者合算 ＆ 色分け】
+            # ⚡ 同日イベント統合マージシステム
             # --------------------------------------------------
             min_price = df_prices["Low"].min()
             event_y_line = min_price * 0.93
             
             linked_sources_list = []
-            raw_events_by_date = {}  # 日付ごとの統合ホバー用
+            raw_events_by_date = {}
 
-            # 🎨 色分け用のカラーパレット（鮮やかでダークテーマに映える色）
             color_palette = ["#00FFCC", "#FF00FF", "#00FF00", "#FF9900", "#00FFFF", "#FFFF00"]
             unique_insiders_list = list(df_ticker_raw["insider"].unique())
             insider_colors = {name: color_palette[i % len(color_palette)] for i, name in enumerate(unique_insiders_list)}
 
-            # ① 同日・同インサイダーの取引を完全に合算（グループ化）
+            # ① 同日・同インサイダーの取引を完全に合算
             df_insider_grouped = df_ticker_raw.groupby(["buy_date", "insider"]).agg({
                 "total_value": "sum",
                 "position": "first",
@@ -724,11 +723,10 @@ if selected_tickers:
                 next_day = (closest_date + timedelta(days=1)).strftime('%Y-%m-%d')
                 date_specific_news_url = f"https://www.google.com/search?q={t}+stock+news+after:{prev_day}+before:{next_day}&tbm=nws"
                 
-                # ⚡ 【マルチソース・ターミナル】同日・同購入者は完全に合算された1行として追加
                 linked_sources_list.append({
                     "date": date_str,
                     "type": "🟣 インサイダー [ I ]",
-                    "event": f"{insider_name} ({pos}) が 合計 ${val:,.0f} を購入", # 👈 合算表記
+                    "event": f"{insider_name} ({pos}) が 合計 ${val:,.0f} を購入",
                     "sec_url": f_url,
                     "yahoo_url": date_specific_news_url,
                     "finviz_url": f"https://finviz.com/quote.ashx?t={t}"
@@ -737,7 +735,6 @@ if selected_tickers:
                 if closest_date not in raw_events_by_date:
                     raw_events_by_date[closest_date] = []
                 
-                # ⚡ 【ホバー表示】購入者ごとにカラーコードを割り当てて色分け
                 color = insider_colors.get(insider_name, "#00FFCC")
                 raw_events_by_date[closest_date].append({
                     "type": "I",
@@ -775,7 +772,7 @@ if selected_tickers:
                             "text": f"📢 <span style='color:#FFD700;'>【{row['category']}】 {row['title']}</span>"
                         })
 
-            # ③ 統合プロットの実行（重なりゼロ ＆ 視覚的色分け）
+            # ③ 統合プロットの実行
             for event_date, items in raw_events_by_date.items():
                 unique_types = list(set([item["type"] for item in items]))
                 
@@ -822,6 +819,10 @@ if selected_tickers:
                 if marker_char in ["★", "E"]:
                     fig.add_vline(x=event_date, line_dash="dot", line_color="rgba(0, 255, 204, 0.2)" if marker_char == "★" else "rgba(255, 68, 68, 0.2)", row=1, col=1, secondary_y=True)
 
+            # ⚡ 【視認性の劇的改善：半透明・個別オフセットホバー】
+            # - hovermode="x" に変更することで、縦一括の巨大ボックスを廃止。
+            # - 各プロットから吹き出し（バルーン）が自動的に外側にオフセットして表示されます。
+            # - hoverlabel の背景色を半透明（不透明度0.85）に設定し、裏側のチャートが透けて見えるようにしました。
             fig.update_layout(
                 height=700,
                 template="plotly_dark",
@@ -829,8 +830,14 @@ if selected_tickers:
                 plot_bgcolor="#0E1117",
                 xaxis_rangeslider_visible=False,
                 margin=dict(l=20, r=20, t=20, b=20),
-                hovermode="x unified",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                hovermode="x",  # 👈 unifiedを廃止し、個別オフセットホバーに変更！
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                hoverlabel=dict(
+                    bgcolor="rgba(26, 31, 44, 0.85)",  # 👈 半透明化
+                    bordercolor="rgba(255, 255, 255, 0.1)",
+                    font_size=11,  # 👈 フォントサイズをコンパクトに
+                    font_family="Arial"
+                )
             )
             
             st.plotly_chart(fig, use_container_width=True)
@@ -842,7 +849,6 @@ if selected_tickers:
             
             if linked_sources_list:
                 df_sources = pd.DataFrame(linked_sources_list).sort_values(by="date", ascending=False)
-                # ターミナル側でも完全に重複行を排除（日付、分類、イベント内容で一意化）
                 df_sources = df_sources.drop_duplicates(subset=["date", "event"])
                 
                 st.dataframe(
