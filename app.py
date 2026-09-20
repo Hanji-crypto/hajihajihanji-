@@ -61,10 +61,29 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 15px;
     }
+    /* キーボードショートカットガイドのスタイル */
+    .kb-guide {
+        background-color: #1A1F2C;
+        border: 1px solid #2D3748;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        color: #A0AEC0;
+        margin-bottom: 10px;
+    }
+    .kb-key {
+        background-color: #2D3748;
+        color: #FFF;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: monospace;
+        font-weight: bold;
+        border-bottom: 2px solid #1A202C;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# ⚡ TickerをURL検索に引っかからないように％エンコードする関数
+# TickerをURL検索に引っかからないように％エンコードする関数
 def encode_ticker_for_search_avoidance(ticker):
     if not isinstance(ticker, str):
         return ""
@@ -261,10 +280,7 @@ def generate_screener(df):
     summary["AI Status"] = summary.apply(get_ai_status, axis=1)
     summary["AI Analysis (投資考察)"] = summary.apply(get_ai_analysis, axis=1)
     
-    # ⚡ 【検索重複バグの天才的解決策】
-    # URL内のTicker文字列を％エンコード（例：SMMT ➔ %53%4D%4D%54）に変換します。
-    # これにより、リンクをクリックした際はブラウザが自動デコードして正常に開きますが、
-    # Streamlitの検索窓で「SMMT」と検索した際は、URL列が検索に一切ヒットしなくなります！
+    # URL内のTicker文字列を％エンコード（例：SMMT ➔ %53%4D%4D%54）に変換
     summary["encoded_ticker"] = summary["ticker"].apply(encode_ticker_for_search_avoidance)
     summary["Finviz Chart"] = "https://finviz.com/quote.ashx?t=" + summary["encoded_ticker"]
     summary["Yahoo Finance"] = "https://finance.yahoo.com/quote/" + summary["encoded_ticker"]
@@ -298,10 +314,19 @@ df_filtered_screener = df_screener[df_screener["sector"].isin(selected_sectors)]
 st.markdown("---")
 
 # ------------------------------------------------------------------------------
-# B. MAIN SCREENER TABLE
+# B. MAIN SCREENER TABLE & KEYBOARD SHORTCUTS
 # ------------------------------------------------------------------------------
 st.subheader("📋 マルチファクター・高密度銘柄マトリックス")
-st.info("💡 **【複数選択ガイド】** Windowsは `Ctrl` キー、Macは `Cmd` キーを押しながら行をクリックすると、**複数銘柄を選択して下部チャートで相対パフォーマンスを重ね合わせ比較**できます。")
+
+# ⚡ キーボード操作ガイドの表示
+st.markdown("""
+    <div class="kb-guide">
+        ⌨️ <b>プロフェッショナル・キーボード操作ガイド:</b><br>
+        1. 右上の 🔍 検索窓に <code>smmt</code> 等を入力して <span class="kb-key">Enter</span>。<br>
+        2. <span class="kb-key">Tab</span> キーを数回押してテーブル内にフォーカスを移動。<br>
+        3. 矢印キー <span class="kb-key">↑</span> <span class="kb-key">↓</span> で銘柄を選択し、<span class="kb-key">Space</span> キーでチェックボックスをON/OFF。
+    </div>
+""", unsafe_allow_html=True)
 
 # 表示用にデータフレームを整形
 df_display = df_filtered_screener.copy()
@@ -316,7 +341,7 @@ df_display["Last Trade Date"] = df_display["buy_date"].dt.strftime('%Y-%m-%d')
 df_display_table = pd.DataFrame()
 df_display_table["Ticker"] = df_display["ticker"]
 df_display_table["企業名"] = df_display["company"]
-df_display_table["Finviz Chart"] = df_display["Finviz Chart"]  # 👈 リンク列を復活！
+df_display_table["Finviz Chart"] = df_display["Finviz Chart"]
 df_display_table["AI投資判断"] = df_display["AI Status"]
 df_display_table["AI確実性"] = df_display["Certainty (%)"]
 df_display_table["財務健全性"] = df_display["Financial Health"]
@@ -326,13 +351,12 @@ df_display_table["直近買い総額"] = df_display["Total Buy Value"]
 df_display_table["平均取得単価"] = df_display["Avg Buy Price"]
 df_display_table["最終取引日"] = df_display["Last Trade Date"]
 df_display_table["セクター"] = df_display["sector"]
-df_display_table["SEC EDGAR"] = df_display["SEC EDGAR"]        # 👈 リンク列を復活！
-df_display_table["Yahoo Finance"] = df_display["Yahoo Finance"]  # 👈 リンク列を復活！
+df_display_table["SEC EDGAR"] = df_display["SEC EDGAR"]
+df_display_table["Yahoo Finance"] = df_display["Yahoo Finance"]
 
-# ⚡ Ticker列で重複を完全に排除し、1銘柄1行のみにする
+# Ticker列で重複を完全に排除し、1銘柄1行のみにする
 df_display_table = df_display_table.drop_duplicates(subset=["Ticker"])
 
-# ％エンコードされたリンク列を美しく設定
 event = st.dataframe(
     df_display_table,
     column_config={
@@ -442,7 +466,7 @@ if selected_tickers:
     st.markdown("---")
 
     # ==============================================================================
-    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (右株価・左RSI ＆ 複数ソース並列化)
+    # 6. CATALYST INTEGRATED OVERLAY CHART SYSTEM (自律的視認性改善版)
     # ==============================================================================
     st.markdown("### 📈 インサイダー買い・テクニカルチャート / 複数銘柄パフォーマンス比較")
     
@@ -637,19 +661,20 @@ if selected_tickers:
                 ), row=1, col=1, secondary_y=True)
             
             if show_bb:
-                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.15)", width=1, dash="dash"), name="BB Upper", showlegend=False), row=1, col=1, secondary_y=True)
-                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.15)", width=1, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.02)", name="BB Lower", showlegend=False), row=1, col=1, secondary_y=True)
-                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["MA20"], line=dict(color="orange", width=1.5, dash="dash"), name="20日移動平均"), row=1, col=1, secondary_y=True)
+                # ⚡ 視認性改善：ボリンジャーバンドの不透明度をさらに下げ、境界線を極細に
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", showlegend=False), row=1, col=1, secondary_y=True)
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", showlegend=False), row=1, col=1, secondary_y=True)
+                fig.add_trace(gr.Scatter(x=df_prices.index, y=df_prices["MA20"], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均"), row=1, col=1, secondary_y=True)
             
             fig.update_yaxes(title_text="株価 ($)", row=1, col=1, secondary_y=True)
 
             # --------------------------------------------------
-            # ROW 2: 出来高 ＆ インサイダー量
+            # ROW 2: 出来高 ＆ インサイダー量 (⚡ 軸分離で視認性極大化)
             # --------------------------------------------------
             fig.add_trace(gr.Bar(
                 x=df_prices.index, y=df_prices["Volume"],
                 name="市場出来高 (Volume)",
-                marker_color="rgba(128, 128, 128, 0.3)",
+                marker_color="rgba(128, 128, 128, 0.25)",
                 hoverinfo="y"
             ), row=2, col=1, secondary_y=False)
             
@@ -667,13 +692,17 @@ if selected_tickers:
                 ), row=2, col=1, secondary_y=True)
                 
             fig.update_yaxes(title_text="出来高 (Vol)", row=2, col=1, secondary_y=False)
+            # ⚡ インサイダー取引量のY軸を出来高から完全に独立させ、出来高の潰れを防止
             fig.update_yaxes(title_text="インサイダー量 ($)", row=2, col=1, secondary_y=True, showgrid=False)
 
             # --------------------------------------------------
-            # ⚡ 横軸イベントアイコン [ E ], [ R ], [ I ]
+            # ⚡ 横軸イベントアイコン [ E ], [ R ], [ I ] (重なり防止オフセット)
             # --------------------------------------------------
             min_price = df_prices["Low"].min()
-            event_y_line = min_price * 0.94
+            
+            # イベントごとにY軸のプロット高さをわずかにずらして重なりを防止
+            y_insider = min_price * 0.94
+            y_catalyst = min_price * 0.91
             
             linked_sources_list = []
             
@@ -711,7 +740,7 @@ if selected_tickers:
                 
                 if insider_dates:
                     fig.add_trace(gr.Scatter(
-                        x=insider_dates, y=[event_y_line] * len(insider_dates),
+                        x=insider_dates, y=[y_insider] * len(insider_dates),
                         mode="markers+text",
                         marker=dict(symbol="square", size=18, color="#AA00FF", line=dict(color="#E0B0FF", width=1)),
                         text=["I"] * len(insider_dates),
@@ -735,7 +764,7 @@ if selected_tickers:
                         type_label = "🔴 決算 [ E ]" if is_earnings else "🟡 カタリスト [ R ]"
                         
                         fig.add_trace(gr.Scatter(
-                            x=[c_date], y=[event_y_line],
+                            x=[c_date], y=[y_catalyst],  # ⚡ 重なり防止のため少し下にプロット
                             mode="markers+text",
                             marker=dict(symbol="square", size=18, color=marker_color, line=dict(color="white", width=1)),
                             text=[text_char],
@@ -747,7 +776,7 @@ if selected_tickers:
                             showlegend=False
                         ), row=1, col=1, secondary_y=True)
                         
-                        fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.25)", row=1, col=1, secondary_y=True)
+                        fig.add_vline(x=c_date, line_dash="dot", line_color="rgba(255, 215, 0, 0.2)", row=1, col=1, secondary_y=True)
                         
                         # 日付指定ニュース検索リンクの動的生成
                         date_str = c_date.strftime('%Y-%m-%d')
@@ -791,7 +820,7 @@ if selected_tickers:
                     column_config={
                         "date": st.column_config.TextColumn("日付", width="small"),
                         "type": st.column_config.TextColumn("分類", width="small"),
-                        "event": st.column_config.TextColumn("イベント", width="large"),
+                        "event": st.column_config.TextColumn("event", width="large"),
                         "sec_url": st.column_config.LinkColumn("SEC開示", display_text="Form 4 ↗", width="small"),
                         "yahoo_url": st.column_config.LinkColumn("Yahooニュース", display_text="News ↗", width="small"),
                         "finviz_url": st.column_config.LinkColumn("Finviz", display_text="Chart ↗", width="small")
