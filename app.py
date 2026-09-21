@@ -676,7 +676,7 @@ st.html("""
                     </tr>
                     <tr style="border-bottom: 1px solid #1E293B;">
                         <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (取組高)</td>
-                        <td style="padding: 6px;">未決済の契約残高 / <b>機関投資家の本気度・壁</b></td>
+                        <td style="padding: 6px;">未決済 of 契約残高 / <b>機関投資家の本気度・壁</b></td>
                         <td style="padding: 6px; color: #38BDF8;">強力な支持・抵抗帯 (磁石効果)</td>
                         <td style="padding: 6px;">市場の関与が極めて薄い</td>
                     </tr>
@@ -778,4 +778,15 @@ if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_
                 ])
                 
     if linked_sources_list:
-        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "分類",
+        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "分類", "イベント概要", "SEC Link", "Google News", "Finviz Chart"])
+        st.dataframe(
+            df_sources,
+            column_config={
+                "SEC Link": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
+                "Google News": st.column_config.LinkColumn("Google News", display_text="News ↗"),
+                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
+            },
+            use_container_width=True, hide_index=True, height=250
+        )
+else:
+    st.info("💡 リンク可能なイベント履歴はありません。")
