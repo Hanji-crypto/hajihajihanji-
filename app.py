@@ -156,7 +156,7 @@ if raw_hist is not None:
         sub_indicator = st.selectbox("下段サブ指標の選択:", ["RSI + MACD", "ATR (ボラティリティ値幅)"])
 
     # ----------------------------------------------------------------------
-    # CHART 1: 多段テクニカルチャート
+    # CHART 1: 多段テクニカルチャート (完全分離・防御的設計)
     # ----------------------------------------------------------------------
     st.markdown("### 📈 テクニカル分析チャート")
 
@@ -173,19 +173,19 @@ if raw_hist is not None:
         unsafe_allow_html=True
     )
 
-    # サブプロット作成 (下から順に比率を設定するため、[0.2, 0.2, 0.6] で Row1=60%, Row2=20%, Row3=20% に完全固定)
+    # 【バグ根絶】shared_xaxes=True を完全に廃止。各サブプロットの干渉を物理的に遮断します。
     if sub_indicator == "RSI + MACD":
-        fig_tech = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_width=[0.2, 0.2, 0.6])
+        fig_tech = make_subplots(rows=3, cols=1, shared_xaxes=False, vertical_spacing=0.06, row_width=[0.2, 0.2, 0.58])
     else:
-        fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_width=[0.3, 0.7])
+        fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=False, vertical_spacing=0.08, row_width=[0.3, 0.7])
     
-    # 【超重要】実績データ（60日間）のみを厳密に切り出す
+    # 実績データ（60日間）
     df_plot = hist_data.iloc[-60:].copy()
     plot_dates = df_plot.index
     start_date = plot_dates[0]
     end_date = plot_dates[-1]
     
-    # 未来予測期間（30日間）の日付リスト（実績データとは完全に分離して管理）
+    # 未来予測期間（30日間）
     future_dates = [end_date + timedelta(days=i) for i in range(1, 31)]
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
@@ -200,8 +200,7 @@ if raw_hist is not None:
             x=df_plot.index, y=df_plot["Close"], mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価"
         ), row=1, col=1)
         
-    # 2. 重ね合わせ指標 (Row 1)
-    # 【バグ修正】fill='none' (小文字の文字列) を明示し、Plotlyの自動塗りつぶしによる他領域汚染を100%防止。
+    # 2. 重ね合わせ指標 (Row 1) - fill='none' を指定し、1段目のみに描画
     if overlay_indicator == "ボリンジャーバンド" and "BB_Upper" in df_plot.columns:
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.35)", width=1.0, dash="dash"), fill='none', name="BB Upper"), row=1, col=1)
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.35)", width=1.0, dash="dash"), fill='none', name="BB Lower"), row=1, col=1)
@@ -215,13 +214,13 @@ if raw_hist is not None:
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Tenkan_Sen"], line=dict(color="#38BDF8", width=1.0), fill='none', name="転換線"), row=1, col=1)
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Kijun_Sen"], line=dict(color="#F43F5E", width=1.0), fill='none', name="基準線"), row=1, col=1)
 
-    # 3. 1σ予測レンジ (Row 1) - 未来期間のみを完全に重ね書き
+    # 3. 1σ予測レンジ (Row 1) - 未来期間を1段目のみに重ね書き
     fig_tech.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(56, 189, 248, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ上限"), row=1, col=1)
     fig_tech.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ下限"), row=1, col=1)
 
-    # 4. 下段サブ指標の描画 (Row 2 & Row 3) - 実績データのみを渡すため、インデックスが完璧に一致し100%表示されます
+    # 4. 下段サブ指標の描画 (Row 2 & Row 3) - 独立したトレースとして追加
     if sub_indicator == "RSI + MACD":
-        # RSI (Row 2)
+        # RSI (Row 2) - 不要なローソク足の侵入を防ぐため、完全に独立したScatterとして描画
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["RSI_14"], mode="lines", line=dict(color="#A855F7", width=2.0), fill='none', name="RSI"), row=2, col=1)
         fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.5)", row=2, col=1)
         fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.5)", row=2, col=1)
@@ -235,7 +234,7 @@ if raw_hist is not None:
         # ATR (Row 2)
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["ATR"], mode="lines", line=dict(color="#E2E8F0", width=1.8), fill='none', name="ATR"), row=2, col=1)
 
-    # レイアウト調整（表示範囲は「実績データの存在する期間」に厳密にクリップ）
+    # レイアウト調整（X軸表示範囲を「実績データの存在する期間」に手動で厳密に同期）
     fig_tech.update_layout(
         height=650, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
         margin=dict(l=10, r=10, t=10, b=10), showlegend=False, hovermode="x unified",
@@ -243,7 +242,7 @@ if raw_hist is not None:
         dragmode="drawline", newshape=dict(line=dict(color="#00FFCC", width=1.5), opacity=0.8)
     )
 
-    # 表示範囲を「実績データの開始日〜終了日」に厳密に固定
+    # 【バグ根絶】各サブプロットの表示期間（range）を実績データの期間に厳密に固定し、手動で同期させます。
     xaxis_range = [start_date, end_date]
     fig_tech.update_layout(
         xaxis=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
@@ -252,13 +251,13 @@ if raw_hist is not None:
 
     if sub_indicator == "RSI + MACD":
         fig_tech.update_layout(
-            xaxis2=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-            xaxis3=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
+            xaxis2=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)", matches=None),
+            xaxis3=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)", matches=None),
             yaxis2=dict(title="RSI", range=[10, 90]), yaxis3=dict(title="MACD")
         )
     else:
         fig_tech.update_layout(
-            xaxis2=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
+            xaxis2=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)", matches=None),
             yaxis2=dict(title="ATR")
         )
     
