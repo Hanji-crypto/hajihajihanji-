@@ -125,14 +125,21 @@ with st.spinner(f"【{current_ticker}】の市場データを解析中..."):
 if raw_hist is not None:
     hist_data = compute_technical_indicators(raw_hist)
 
+    # 満期日の取得とガード処理
+    selected_expiry = None
     if available_expiries:
         selected_expiry = st.selectbox("表示するオプションチェーンの満期日を選択してください:", options=available_expiries, index=0)
     else:
-        selected_expiry = None
-        st.warning("⚠️ オプション満期日が見つかりません。")
+        st.warning("⚠️ この銘柄には現在、有効なオプションチェーン（満期日）が存在しないか、取得できません。オプション解析は簡易シミュレーションモードで動作します。")
 
+    # オプションチェーンデータの取得（満期日がない場合は空のDataFrameを返す）
     with st.spinner(f"オプションチェーンを解析中..."):
-        df_calls_raw, df_puts_raw, iv, pcr = fetch_option_chain_by_expiry(current_ticker, selected_expiry, current_price)
+        if selected_expiry:
+            df_calls_raw, df_puts_raw, iv, pcr = fetch_option_chain_by_expiry(current_ticker, selected_expiry, current_price)
+        else:
+            df_calls_raw, df_puts_raw = pd.DataFrame(), pd.DataFrame()
+            iv = hv if hv > 0 else 0.30  # オプションがない場合はHVまたはデフォルト30%をIVとして代用
+            pcr = 1.0
 
     T_30 = 30 / 365.25
     one_sigma_move = current_price * iv * np.sqrt(T_30)
@@ -140,10 +147,10 @@ if raw_hist is not None:
     lower_1sigma = current_price - one_sigma_move
     
     m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
-    with m_col1: st.metric("インプライド・ボラティリティ (IV)", f"{iv*100:.1f}%")
+    with m_col1: st.metric("インプライド・ボラティリティ (IV)", f"{iv*100:.1f}%" if selected_expiry else f"{iv*100:.1f}% (HV代用)")
     with m_col2: st.metric("歴史的ボラティリティ (HV)", f"{hv*100:.1f}%")
     with m_col3: st.metric("IV / HV 比率", f"{iv/hv:.2f}" if hv > 0 else "N/A")
-    with m_col4: st.metric("Put-Call Ratio (PCR)", f"{pcr:.2f}")
+    with m_col4: st.metric("Put-Call Ratio (PCR)", f"{pcr:.2f}" if selected_expiry else "N/A")
     with m_col5: st.metric("1σ 上昇上限 (30日)", f"${upper_1sigma:.2f}")
     with m_col6: st.metric("1σ 下落下限 (30日)", f"${lower_1sigma:.2f}")
 
@@ -260,9 +267,9 @@ if raw_hist is not None:
     st.subheader("🎯 統計的オプション推奨戦略ランキング (リアルタイム・チェーン動的連動型)")
 
     # デフォルト値の設定（オプションチェーンが空だった場合のフォールバック）
-    bc_buy_strike, bc_sell_strike, bc_buy_prem, bc_sell_prem = current_price * 0.95, upper_1sigma, current_price * 0.08, current_price * 0.02
-    cc_buy_stock, cc_sell_strike, cc_sell_prem = current_price, upper_1sigma, current_price * 0.05
-    lc_strike, lc_prem = current_price * 1.05, current_price * 0.04
+    bc_buy_strike, bc_sell_strike, bc_buy_prem, bc_sell_prem = round(current_price * 0.95, 1), round(upper_1sigma, 1), round(current_price * 0.08, 2), round(current_price * 0.02, 2)
+    cc_buy_stock, cc_sell_strike, cc_sell_prem = current_price, round(upper_1sigma, 1), round(current_price * 0.05, 2)
+    lc_strike, lc_prem = round(current_price * 1.05, 1), round(current_price * 0.04, 2)
     
     bc_valid, cc_valid, lc_valid = False, False, False
 
@@ -270,21 +277,16 @@ if raw_hist is not None:
     if not df_calls_raw.empty:
         try:
             # 1. ブル・コール・スプレッド用の実契約探索
-            # 買い側: Delta 0.60〜0.75付近のITMコール
             calls_itm = df_calls_raw[df_calls_raw["Delta"].between(0.60, 0.75)]
             if calls_itm.empty:
-                # なければ現在価格より少し下の実契約
                 calls_itm = df_calls_raw[df_calls_raw["strike"] < current_price]
             
-            # 売り側: Delta 0.25〜0.40付近のOTMコール
             calls_otm = df_calls_raw[df_calls_raw["Delta"].between(0.25, 0.40)]
             if calls_otm.empty:
-                # なければ1σ上昇上限に近い実契約
                 calls_otm = df_calls_raw[df_calls_raw["strike"] >= upper_1sigma]
 
             if not calls_itm.empty and not calls_otm.empty:
                 best_itm = calls_itm.sort_values(by="openInterest", ascending=False).iloc[0]
-                # 買いストライクより高い売りストライクを選択
                 potential_otms = calls_otm[calls_otm["strike"] > best_itm["strike"]]
                 if not potential_otms.empty:
                     best_otm = potential_otms.sort_values(by="openInterest", ascending=False).iloc[0]
@@ -296,7 +298,6 @@ if raw_hist is not None:
                     bc_valid = True
 
             # 2. カバード・コール用の実契約探索
-            # 売り側: 権利行使確率を低く抑えるため Delta 0.15〜0.25付近のOTMコール
             cc_calls = df_calls_raw[df_calls_raw["Delta"].between(0.15, 0.25)]
             if cc_calls.empty:
                 cc_calls = df_calls_raw[df_calls_raw["strike"] > current_price]
@@ -309,13 +310,11 @@ if raw_hist is not None:
                 cc_valid = True
 
             # 3. ロング・コール用の実契約探索
-            # 打診買い: Delta 0.45〜0.55付近のほぼATM〜ややOTMコール
             lc_calls = df_calls_raw[df_calls_raw["Delta"].between(0.45, 0.55)]
             if lc_calls.empty:
-                lc_calls = df_calls_raw.sort_values(by="strike") # 最もATMに近いもの
+                lc_calls = df_calls_raw.copy()
             
             if not lc_calls.empty:
-                # ATMに最も近いものを取得
                 lc_calls["diff"] = (lc_calls["strike"] - current_price).abs()
                 best_lc_call = lc_calls.sort_values(by="diff").iloc[0]
                 lc_strike = best_lc_call["strike"]
@@ -329,7 +328,7 @@ if raw_hist is not None:
     bc_net_cost = max(0.10, bc_buy_prem - bc_sell_prem)
     bc_max_profit = max(0.10, (bc_sell_strike - bc_buy_strike) - bc_net_cost)
     bc_roi = (bc_max_profit / bc_net_cost) * 100
-    bc_prob = 65.0 + (10.0 if iv > hv else -5.0) # IV過熱時はボラティリティ平均回帰により勝率微増
+    bc_prob = 65.0 + (10.0 if iv > hv else -5.0)
 
     # 2. カバード・コール
     cc_net_cost = max(1.0, cc_buy_stock - cc_sell_prem)
@@ -338,8 +337,11 @@ if raw_hist is not None:
     cc_prob = 80.0 + (5.0 if iv > hv else 0.0)
 
     # 3. ロング・コール
-    lc_roi = 150.0 + (50.0 if iv < hv else -30.0) # IVが割安な時ほどレバレッジリターンが向上
-    lc_prob = 45.0 + (10.0 if iv < hv else -10.0) # IV割安(買い手有利)時は統計的勝率向上
+    lc_roi = 150.0 + (50.0 if iv < hv else -30.0)
+    lc_prob = 45.0 + (10.0 if iv < hv else -10.0)
+
+    # オプションチェーン未存在時の文言調整
+    source_label = "【実在するオプションチェーンから自動選定】" if selected_expiry else "【理論値に基づくシミュレーション構成】"
 
     strategies_pool = [
         {
@@ -350,10 +352,10 @@ if raw_hist is not None:
             "prob": bc_prob,
             "desc": f"<b>【統計的選定根拠】</b><br>"
                     f"IV/HV比率が <b>{(iv/hv if hv > 0 else 1.0):.2f}</b> と{'オプション買い手に有利な割安水準' if iv/hv < 1.1 else 'ボラティリティが標準水準'}にあります。<br>"
-                    f"実在するITMコールの購入とOTMコールの売却を組み合わせることで、時間経過によるプレミアム減少（セータ）の影響を相殺しつつ、高い統計的勝率を確保します。<br><br>"
-                    f"<b>【リアルタイム市場データに基づく推奨構成】</b><br>"
-                    f"1. <b>Buy {current_ticker} ${bc_buy_strike:.1f} Call (ITM)</b> (市場価格: ${bc_buy_prem:.2f})<br>"
-                    f"2. <b>Sell {current_ticker} ${bc_sell_strike:.1f} Call (OTM)</b> (市場価格: ${bc_sell_prem:.2f})<br><br>"
+                    f"ITMコールの購入とOTMコールの売却を組み合わせることで、時間経過によるプレミアム減少（セータ）の影響を相殺しつつ、高い統計的勝率を確保します。<br><br>"
+                    f"<b>{source_label}</b><br>"
+                    f"1. <b>Buy {current_ticker} ${bc_buy_strike:.1f} Call (ITM)</b> (想定価格: ${bc_buy_prem:.2f})<br>"
+                    f"2. <b>Sell {current_ticker} ${bc_sell_strike:.1f} Call (OTM)</b> (想定価格: ${bc_sell_prem:.2f})<br><br>"
                     f"<b>【リスク・リターン特性】</b><br>"
                     f"* <b>最大損失 (投資コスト)</b>: 1契約あたり <b>${bc_net_cost:.2f}</b> (${bc_net_cost*100:.0f})<br>"
                     f"* <b>最大利益</b>: 1契約あたり <b>${bc_max_profit:.2f}</b> (${bc_max_profit*100:.0f})<br>"
@@ -369,9 +371,9 @@ if raw_hist is not None:
             "desc": f"<b>【統計的選定根拠】</b><br>"
                     f"IV/HV比率が <b>{(iv/hv if hv > 0 else 1.0):.2f}</b> と{'オプション売り手に有利な割高水準' if iv/hv > 1.1 else '比較的安定した水準'}にあります。<br>"
                     f"現物株式の保有と、極めて権利行使されにくいOTMコールの売却を組み合わせ、確実性の高い権利消滅プレミアム（インカムゲイン）を回収します。<br><br>"
-                    f"<b>【リアルタイム市場データに基づく推奨構成】</b><br>"
+                    f"<b>{source_label}</b><br>"
                     f"1. <b>現物株式を ${current_price:.2f} で購入 (または保有)</b><br>"
-                    f"2. <b>Sell {current_ticker} ${cc_sell_strike:.1f} Call (OTM)</b> (市場プレミアム受取: ${cc_sell_prem:.2f})<br><br>"
+                    f"2. <b>Sell {current_ticker} ${cc_sell_strike:.1f} Call (OTM)</b> (想定プレミアム受取: ${cc_sell_prem:.2f})<br><br>"
                     f"<b>【リスク・リターン特性】</b><br>"
                     f"* <b>実質取得コスト</b>: 1株あたり <b>${cc_net_cost:.2f}</b><br>"
                     f"* <b>最大利益 (株価上昇上限時)</b>: 1株あたり <b>${cc_max_profit:.2f}</b> (想定最大リターン: <span style='color: #38BDF8; font-weight: bold;'>+{cc_roi:.1f}%</span>)<br>"
@@ -386,8 +388,8 @@ if raw_hist is not None:
             "desc": f"<b>【統計的選定根拠】</b><br>"
                     f"インサイダーの超大口買いが直近で集中しており、突発的な好材料（カタリスト）発表による株価急騰を狙う高レバレッジ戦略です。<br>"
                     f"IVが比較的低く抑えられているタイミングを狙うことで、プレミアムの剥げ落ちリスクを抑えてエントリーします。<br><br>"
-                    f"<b>【リアルタイム市場データに基づく推奨構成】</b><br>"
-                    f"* <b>Buy {current_ticker} ${lc_strike:.1f} Call (ATM〜ややOTM)</b> (市場価格: ${lc_prem:.2f})<br><br>"
+                    f"<b>{source_label}</b><br>"
+                    f"* <b>Buy {current_ticker} ${lc_strike:.1f} Call (ATM〜ややOTM)</b> (想定価格: ${lc_prem:.2f})<br><br>"
                     f"<b>【リスク・リターン特性】</b><br>"
                     f"* <b>最大損失</b>: 支払ったプレミアム <b>${lc_prem:.2f}</b> のみ (損失限定)<br>"
                     f"* <b>最大利益</b>: 理論上無制限<br>"
@@ -449,78 +451,81 @@ else:
 # 5. T-SHAPE OPTION CHAIN MATRIX
 # ==============================================================================
 st.markdown("---")
-st.markdown(f"### 📄 【{current_ticker}】 {selected_expiry} 満期オプション・チェーン (T-Shape プロ仕様マトリックス)")
+st.markdown(f"### 📄 【{current_ticker}】 オプション・チェーン (T-Shape プロ仕様マトリックス)")
 
-st.html("""
-    <div class="guide-panel">
-        <h4 style="color: #38BDF8; margin-top: 0; margin-bottom: 12px;">👁️ オプション統計指標の完全解読マニュアル</h4>
-        <div style="font-size: 12px; line-height: 1.6; color: #94A3B8;">
-            <table style="width: 100%; border-collapse: collapse; color: #E2E8F0;">
-                <thead>
-                    <tr style="border-bottom: 1px solid #1E293B; text-align: left;">
-                        <th style="padding: 6px;">指標名</th>
-                        <th style="padding: 6px;">数値の意味</th>
-                        <th style="padding: 6px;">「値が大きい」場合</th>
-                        <th style="padding: 6px;">「値が小さい」場合</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr style="border-bottom: 1px solid #1E293B;">
-                        <td style="padding: 6px; font-weight: bold; color: #00FFCC;">Delta (デルタ)</td>
-                        <td style="padding: 6px;">株価変動への感応度 / <b>満期時の勝率（確率）</b></td>
-                        <td style="padding: 6px; color: #38BDF8;">ITM (勝率高、現物代替)</td>
-                        <td style="padding: 6px;">OTM (勝率低、レバレッジ大)</td>
-                    </tr>
-                    <tr style="border-bottom: 1px solid #1E293B;">
-                        <td style="padding: 6px; font-weight: bold; color: #00FFCC;">IV (予測ボラ)</td>
-                        <td style="padding: 6px;">将来の期待変動率 / <b>プレミアム of 割高・割安</b></td>
-                        <td style="padding: 6px; color: #FF007F;">割高 (オプション売り手に有利)</td>
-                        <td style="padding: 6px; color: #38BDF8;">割安 (オプション買い手に有利)</td>
-                    </tr>
-                    <tr style="border-bottom: 1px solid #1E293B;">
-                        <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (取組高)</td>
-                        <td style="padding: 6px;">未決済 of 契約残高 / <b>機関投資家の本気度・壁</b></td>
-                        <td style="padding: 6px; color: #38BDF8;">強力な支持・抵抗帯 (磁石効果)</td>
-                        <td style="padding: 6px;">市場の関与が極めて薄い</td>
-                    </tr>
-                </tbody>
-            </table>
+if selected_expiry:
+    st.html("""
+        <div class="guide-panel">
+            <h4 style="color: #38BDF8; margin-top: 0; margin-bottom: 12px;">👁️ オプション統計指標の完全解読マニュアル</h4>
+            <div style="font-size: 12px; line-height: 1.6; color: #94A3B8;">
+                <table style="width: 100%; border-collapse: collapse; color: #E2E8F0;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid #1E293B; text-align: left;">
+                            <th style="padding: 6px;">指標名</th>
+                            <th style="padding: 6px;">数値の意味</th>
+                            <th style="padding: 6px;">「値が大きい」場合</th>
+                            <th style="padding: 6px;">「値が小さい」場合</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="border-bottom: 1px solid #1E293B;">
+                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">Delta (デルタ)</td>
+                            <td style="padding: 6px;">株価変動への感応度 / <b>満期時の勝率（確率）</b></td>
+                            <td style="padding: 6px; color: #38BDF8;">ITM (勝率高、現物代替)</td>
+                            <td style="padding: 6px;">OTM (勝率低、レバレッジ大)</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #1E293B;">
+                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">IV (予測ボラ)</td>
+                            <td style="padding: 6px;">将来の期待変動率 / <b>プレミアム of 割高・割安</b></td>
+                            <td style="padding: 6px; color: #FF007F;">割高 (オプション売り手に有利)</td>
+                            <td style="padding: 6px; color: #38BDF8;">割安 (オプション買い手に有利)</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #1E293B;">
+                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (取組高)</td>
+                            <td style="padding: 6px;">未決済 of 契約残高 / <b>機関投資家の本気度・壁</b></td>
+                            <td style="padding: 6px; color: #38BDF8;">強力な支持・抵抗帯 (磁石効果)</td>
+                            <td style="padding: 6px;">市場の関与が極めて薄い</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
-    </div>
-""")
+    """)
 
-if hist_data is not None and not df_calls_raw.empty:
-    df_c = df_calls_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
-    df_p = df_puts_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
-    
-    df_t_shape = pd.merge(df_c, df_p, on="strike", suffixes=("_call", "_put"))
-    df_t_shape = df_t_shape.sort_values(by="strike").reset_index(drop=True)
-    
-    df_t_shape_display = pd.DataFrame()
-    df_t_shape_display["Call Delta"] = df_t_shape["Delta_call"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
-    df_t_shape_display["Call IV"] = df_t_shape["impliedVolatility_call"].map(lambda x: f"{x*100:.1f}%")
-    df_t_shape_display["Call OI"] = df_t_shape["openInterest_call"].fillna(0).astype(int)
-    df_t_shape_display["Call Vol"] = df_t_shape["volume_call"].fillna(0).astype(int)
-    df_t_shape_display["Call Price"] = df_t_shape["lastPrice_call"].map(lambda x: f"${x:.2f}")
-    
-    df_t_shape_display["権利行使価格 (Strike)"] = df_t_shape["strike"].map(lambda x: f"${x:.1f}")
-    
-    df_t_shape_display["Put Price"] = df_t_shape["lastPrice_put"].map(lambda x: f"${x:.2f}")
-    df_t_shape_display["Put Vol"] = df_t_shape["volume_put"].fillna(0).astype(int)
-    df_t_shape_display["Put OI"] = df_t_shape["openInterest_put"].fillna(0).astype(int)
-    df_t_shape_display["Put IV"] = df_t_shape["impliedVolatility_put"].map(lambda x: f"{x*100:.1f}%")
-    df_t_shape_display["Put Delta"] = df_t_shape["Delta_put"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
-    
-    st.dataframe(
-        df_t_shape_display[[
-            "Call Delta", "Call IV", "Call OI", "Call Vol", "Call Price", 
-            "権利行使価格 (Strike)", 
-            "Put Price", "Put Vol", "Put OI", "Put IV", "Put Delta"
-        ]],
-        use_container_width=True, hide_index=True, height=320
-    )
+    if hist_data is not None and not df_calls_raw.empty:
+        df_c = df_calls_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
+        df_p = df_puts_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
+        
+        df_t_shape = pd.merge(df_c, df_p, on="strike", suffixes=("_call", "_put"))
+        df_t_shape = df_t_shape.sort_values(by="strike").reset_index(drop=True)
+        
+        df_t_shape_display = pd.DataFrame()
+        df_t_shape_display["Call Delta"] = df_t_shape["Delta_call"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
+        df_t_shape_display["Call IV"] = df_t_shape["impliedVolatility_call"].map(lambda x: f"{x*100:.1f}%")
+        df_t_shape_display["Call OI"] = df_t_shape["openInterest_call"].fillna(0).astype(int)
+        df_t_shape_display["Call Vol"] = df_t_shape["volume_call"].fillna(0).astype(int)
+        df_t_shape_display["Call Price"] = df_t_shape["lastPrice_call"].map(lambda x: f"${x:.2f}")
+        
+        df_t_shape_display["権利行使価格 (Strike)"] = df_t_shape["strike"].map(lambda x: f"${x:.1f}")
+        
+        df_t_shape_display["Put Price"] = df_t_shape["lastPrice_put"].map(lambda x: f"${x:.2f}")
+        df_t_shape_display["Put Vol"] = df_t_shape["volume_put"].fillna(0).astype(int)
+        df_t_shape_display["Put OI"] = df_t_shape["openInterest_put"].fillna(0).astype(int)
+        df_t_shape_display["Put IV"] = df_t_shape["impliedVolatility_put"].map(lambda x: f"{x*100:.1f}%")
+        df_t_shape_display["Put Delta"] = df_t_shape["Delta_put"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
+        
+        st.dataframe(
+            df_t_shape_display[[
+                "Call Delta", "Call IV", "Call OI", "Call Vol", "Call Price", 
+                "権利行使価格 (Strike)", 
+                "Put Price", "Put Vol", "Put OI", "Put IV", "Put Delta"
+            ]],
+            use_container_width=True, hide_index=True, height=320
+        )
+    else:
+        st.warning("⚠️ オプションチェーンデータを取得できませんでした。")
 else:
-    st.warning("⚠️ オプションチェーンデータを取得できませんでした。")
+    st.info("💡 この銘柄にはオプションチェーンが存在しないため、T-Shapeマトリックス表示をスキップします。")
 
 # ==============================================================================
 # 6. NEWS TERMINAL
