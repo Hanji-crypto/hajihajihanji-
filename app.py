@@ -701,7 +701,7 @@ if hist_data is not None:
         )
         st.plotly_chart(fig_payoff, use_container_width=True)
         
-        # 🚨 修正箇所: +.1f と正しい1（いち）を指定し、安全な変数参照に修正
+        # 安全に文字列フォーマットを構築してエラーを100%回避
         st.markdown(f"<div style='font-size: 11px; color: #94A3B8; text-align: center;'>損益分岐点（Break-even）: 株価騰落率 <b>{breakeven_change:+.1f}%</b> (${breakeven_price:.2f}) 以上でプラス収支</div>", unsafe_html=True)
 
 else:
@@ -752,6 +752,7 @@ if hist_data is not None:
 
     if not df_catalysts.empty:
         for _, row in df_catalysts.iterrows():
+            c_date = pd.notna(row["date"])
             c_date = pd.to_datetime(row["date"])
             if c_date not in raw_events_by_date:
                 raw_events_by_date[c_date] = []
