@@ -583,7 +583,7 @@ if hist_data is not None:
             strategy_class = "strategy-card"
             strategy_desc = f"""
             **【統計的選定根拠】**
-            *   **ボラティリティの歪み**: IV/HV比率が **{(iv/hv if hv > 0 else 0):.2f}** と極めて低く、オプション価格が歴史的な実績変動率に対して**統計的に過小評価（割安）**されています。オプションの「買い」に圧倒的な優位性があります。
+            *   **ボラティリティ of 歪み**: IV/HV比率が **{(iv/hv if hv > 0 else 0):.2f}** と極めて低く、オプション価格が歴史的な実績変動率に対して**統計的に過小評価（割安）**されています。オプションの「買い」に圧倒的な優位性があります。
             
             **【具体的取引価格の統計的提案】**
             1.  **Buy {current_ticker} 30日満期 ${buy_strike:.1f} Call (ITM)** (目安プレミアム: ${buy_premium:.2f})
@@ -603,7 +603,7 @@ if hist_data is not None:
             strategy_class = "strategy-card"
             strategy_desc = f"""
             **【統計的選定根拠】**
-            *   **ボラティリティの過熱**: IV/HV比率が **{(iv/hv if hv > 0 else 0):.2f}** と高く、オプション価格が統計的に割高（プレミアムが膨張）しています。オプションの「売り（ショート）」を絡める戦略が有利です。
+            *   **ボラティリティ of 過熱**: IV/HV比率が **{(iv/hv if hv > 0 else 0):.2f}** と高く、オプション価格が統計的に割高（プレミアムが膨張）しています。オプションの「売り（ショート）」を絡める戦略が有利です。
             
             **【具体的取引価格の統計的提案】**
             1.  **現物株式を ${current_price:.2f} で購入**
@@ -701,9 +701,9 @@ if hist_data is not None:
         )
         st.plotly_chart(fig_payoff, use_container_width=True)
         
-        # 🚨 100%安全な文字列結合（f-stringのネストや改行による構文エラーを物理的に排除）
-        be_text = "損益分岐点（Break-even）: 株価騰落率 <b>" + f"{breakeven_change:+.1f}" + "%</b> ($" + f"{breakeven_price:.2f}" + ") 以上でプラス収支"
-        st.markdown("<div style='font-size: 11px; color: #94A3B8; text-align: center;'>" + be_text + "</div>", unsafe_html=True)
+        # 🚨 物理的解決：HTMLタグを完全に排除し、Streamlit標準の st.caption で安全に表示
+        be_text = f"損益分岐点（Break-even）: 株価騰落率 {breakeven_change:+.1f}% (${breakeven_price:.2f}) 以上でプラス収支"
+        st.caption(be_text)
 
 else:
     st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
