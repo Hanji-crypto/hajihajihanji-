@@ -83,14 +83,6 @@ st.html("""
         margin-bottom: 24px;
         border-top: 4px solid #38BDF8;
     }
-    /* 描画パレット用インラインバーのスタイル */
-    .drawing-bar {
-        background-color: #111827;
-        border: 1px solid #1F2937;
-        border-radius: 6px;
-        padding: 12px;
-        margin-bottom: 10px;
-    }
     /* ラジオボタンの横並び高密度化 */
     div[data-testid="stRadio"] > div {
         gap: 12px;
@@ -180,14 +172,6 @@ all_available_tickers = df_screener["ticker"].tolist()
 # ==============================================================================
 if "selected_ticker" not in st.session_state:
     st.session_state.selected_ticker = top_10_tickers[0] if top_10_tickers else ""
-
-# 自由描画オブジェクトの保存用セッション
-if "draw_hlines" not in st.session_state:
-    st.session_state.draw_hlines = []
-if "draw_vlines" not in st.session_state:
-    st.session_state.draw_vlines = []
-if "draw_texts" not in st.session_state:
-    st.session_state.draw_texts = []
 
 # ==============================================================================
 # 5. STATISTICAL OPTION & MARKET DATA FETCHING (限月ドリルダウン対応)
@@ -467,64 +451,6 @@ if hist_data is not None:
 
     st.markdown("---")
 
-    # ----------------------------------------------------------------------
-    # INTERACTIVE IN-LINE DRAWING TOOLBAR (証券会社ツール模倣パレット)
-    # ----------------------------------------------------------------------
-    st.markdown("### 📈 テクニカル分析チャート")
-    
-    # チャート直上に格納・展開可能なプロ仕様描画パレットを配置
-    with st.expander("🛠️ チャート描画・分析パレット (サポートライン / レジスタンス / メモ追加)", expanded=False):
-        st.markdown("<div class='drawing-bar'>", unsafe_allow_html=True)
-        draw_col1, draw_col2, draw_col3 = st.columns(3)
-        
-        with draw_col1:
-            st.markdown("**1. 水平線（サポート・レジスタンス）**")
-            hline_val = st.number_input("価格 ($):", value=float(round(current_price, 2)), step=0.5, key="inline_hl_val")
-            hline_color = st.selectbox("色:", ["#FFD700", "#FF007F", "#00FFCC", "#FF8C00", "#FFFFFF"], key="inline_hl_col")
-            hline_style = st.selectbox("線種:", ["dash", "solid", "dot"], key="inline_hl_style")
-            if st.button("水平線を描画", use_container_width=True, key="btn_hl"):
-                if hline_val > 0:
-                    st.session_state.draw_hlines.append({"y": hline_val, "color": hline_color, "style": hline_style})
-                    st.toast(f"水平線を描画しました: ${hline_val:.2f}")
-                    st.rerun()
-                    
-        with draw_col2:
-            st.markdown("**2. 垂直線（カタリスト・イベント日）**")
-            vline_date = st.date_input("日付:", datetime.now() - timedelta(days=10), key="inline_vl_date")
-            vline_color = st.selectbox("色:", ["#38BDF8", "#A855F7", "#E2E8F0"], key="inline_vl_col")
-            vline_style = st.selectbox("線種:", ["dash", "solid", "dot"], key="inline_vl_style")
-            if st.button("垂直線を描画", use_container_width=True, key="btn_vl"):
-                date_str = vline_date.strftime('%Y-%m-%d')
-                st.session_state.draw_vlines.append({"x": date_str, "color": vline_color, "style": vline_style})
-                st.toast(f"垂直線を描画しました: {date_str}")
-                st.rerun()
-                
-        with draw_col3:
-            st.markdown("**3. テキストメモ・アノテーション**")
-            note_text = st.text_input("メモ内容:", placeholder="例: 直近高値レジスタンス", key="inline_note_text")
-            note_x = st.date_input("配置する日付:", datetime.now() - timedelta(days=5), key="inline_note_x")
-            note_y = st.number_input("配置する価格 ($):", value=float(round(current_price * 1.05, 2)), step=0.5, key="inline_note_y")
-            note_color = st.selectbox("文字色:", ["#FFFFFF", "#00FFCC", "#FFD700"], key="inline_note_col")
-            if st.button("テキストを配置", use_container_width=True, key="btn_note"):
-                if note_text and note_y > 0:
-                    st.session_state.draw_texts.append({
-                        "x": note_x.strftime('%Y-%m-%d'),
-                        "y": note_y,
-                        "text": note_text,
-                        "color": note_color
-                    })
-                    st.toast("テキストメモを配置しました。")
-                    st.rerun()
-                    
-        st.markdown("---")
-        if st.button("🧹 すべての描画オブジェクトをクリア", use_container_width=True, type="primary"):
-            st.session_state.draw_hlines = []
-            st.session_state.draw_vlines = []
-            st.session_state.draw_texts = []
-            st.toast("すべての描画をクリアしました。")
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-
     # コントロールパネル（全幅）
     ctrl_col1, ctrl_col2 = st.columns([3, 5])
     with ctrl_col1:
@@ -535,6 +461,9 @@ if hist_data is not None:
     # ----------------------------------------------------------------------
     # CHART 1: 多段テクニカルチャート (株価/BB/インサイダー + RSI + MACD)
     # ----------------------------------------------------------------------
+    st.markdown("### 📈 テクニカル分析チャート")
+    st.caption("💡 【直接描画機能】: チャート右上（Modebar）の「ライン描画アイコン（Draw line）」や「消しゴム（Erase active shape）」をクリックすると、チャート上をクリック＆ドラッグして自由にサポートライン等を引くことができます。")
+
     # サブプロットの作成 (株価: 3, RSI: 1, MACD: 1 の比率)
     fig_tech = make_subplots(
         rows=3, cols=1, 
@@ -634,33 +563,7 @@ if hist_data is not None:
         marker_color=hist_colors, name="Histogram"
     ), row=3, col=1)
 
-    # ----------------------------------------------------------------------
-    # 自由描画オブジェクト（アノテーション）の適用
-    # ----------------------------------------------------------------------
-    # A. 水平線の追加
-    for hl in st.session_state.draw_hlines:
-        fig_tech.add_hline(y=hl["y"], line_dash=hl["style"], line_color=hl["color"], row=1, col=1)
-
-    # B. 垂直線の追加
-    for vl in st.session_state.draw_vlines:
-        fig_tech.add_vline(x=vl["x"], line_dash=vl["style"], line_color=vl["color"], row=1, col=1)
-
-    # C. テキストメモの追加
-    for txt in st.session_state.draw_texts:
-        fig_tech.add_annotation(
-            x=txt["x"], y=txt["y"],
-            text=txt["text"],
-            showarrow=True,
-            arrowhead=1,
-            arrowcolor=txt["color"],
-            font=dict(color=txt["color"], size=11),
-            bgcolor="rgba(11, 15, 25, 0.85)",
-            bordercolor=txt["color"],
-            borderwidth=1,
-            row=1, col=1
-        )
-
-    # レイアウト調整
+    # レイアウト調整および直接ドラッグ描画ツール（Modebar）の完全有効化
     fig_tech.update_layout(
         height=650, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
         margin=dict(l=10, r=10, t=50, b=10),
@@ -672,9 +575,29 @@ if hist_data is not None:
         yaxis2=dict(title="RSI", range=[10, 90]),
         yaxis3=dict(title="MACD"),
         hovermode="x unified",
-        hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace")
+        hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace"),
+        
+        # 直接ドラッグ描画を許可する設定
+        dragmode="drawline", # デフォルトで直線描画モードをアクティブ化
+        newshape=dict(line=dict(color="#00FFCC", width=1.5), opacity=0.8) # 描画される線の色と太さ
     )
-    st.plotly_chart(fig_tech, use_container_width=True)
+    
+    # PlotlyのModebarに直接描画ツール（直線、矩形、消しゴムなど）を統合
+    st.plotly_chart(
+        fig_tech, 
+        use_container_width=True,
+        config={
+            "modeBarButtonsToAdd": [
+                "drawline",       # 直線を描くツール（ドラッグ対応）
+                "drawopenpath",   # フリーハンドの折れ線を描くツール
+                "drawrect",       # 矩形（ボックス）を描くツール
+                "eraseshape"      # クリックした描画オブジェクトを消去する消しゴムツール
+            ],
+            "modeBarButtonsToRemove": ["lasso2d", "select2d"], # 不要な選択ツールを非表示に
+            "displaylogo": False,
+            "scrollZoom": True # マウスホイールでのズームを有効化
+        }
+    )
 
     # ----------------------------------------------------------------------
     # CHART 2: 純粋なボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング (全幅・高さ 280px)
@@ -1021,4 +944,75 @@ if hist_data is not None and not df_calls_raw.empty:
     df_t_shape_display["Call Delta"] = df_t_shape["Delta_call"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
     df_t_shape_display["Call IV"] = df_t_shape["impliedVolatility_call"].map(lambda x: f"{x*100:.1f}%")
     df_t_shape_display["Call OI"] = df_t_shape["openInterest_call"].fillna(0).astype(int)
-    df_t_shape_
+    df_t_shape_display["Call Vol"] = df_t_shape["volume_call"].fillna(0).astype(int)
+    df_t_shape_display["Call Price"] = df_t_shape["lastPrice_call"].map(lambda x: f"${x:.2f}")
+    
+    # 中央のStrike
+    df_t_shape_display["権利行使価格 (Strike)"] = df_t_shape["strike"].map(lambda x: f"${x:.1f}")
+    
+    df_t_shape_display["Put Price"] = df_t_shape["lastPrice_put"].map(lambda x: f"${x:.2f}")
+    df_t_shape_display["Put Vol"] = df_t_shape["volume_put"].fillna(0).astype(int)
+    df_t_shape_display["Put OI"] = df_t_shape["openInterest_put"].fillna(0).astype(int)
+    df_t_shape_display["Put IV"] = df_t_shape["impliedVolatility_put"].map(lambda x: f"{x*100:.1f}%")
+    df_t_shape_display["Put Delta"] = df_t_shape["Delta_put"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
+    
+    # 列幅を最小限に最適化した全幅データフレーム
+    st.dataframe(
+        df_t_shape_display[[
+            "Call Delta", "Call IV", "Call OI", "Call Vol", "Call Price", 
+            "権利行使価格 (Strike)", 
+            "Put Price", "Put Vol", "Put OI", "Put IV", "Put Delta"
+        ]],
+        use_container_width=True,
+        hide_index=True,
+        height=320
+    )
+else:
+    st.warning("⚠️ オプションチェーンデータを取得できませんでした。")
+
+st.markdown("---")
+st.markdown(f"### 🔗 【{current_ticker}】 マルチソース・適時開示＆ニュースターミナル")
+
+# カタリストとインサイダーの合算
+if hist_data is not None:
+    raw_events_by_date = {}
+    df_catalysts = fetch_catalyst_events(current_ticker, hist_data, df_raw)
+    
+    # インサイダー名寄せ
+    df_insider_grouped = df_ticker_raw.groupby(["buy_date", "insider"]).agg({
+        "total_value": "sum", "position": "first", "filing_url": "first"
+    }).reset_index()
+
+    for _, trade in df_insider_grouped.iterrows():
+        t_date = trade["buy_date"]
+        if t_date not in raw_events_by_date:
+            raw_events_by_date[t_date] = []
+        raw_events_by_date[t_date].append({
+            "type": "I", "insider": trade["insider"], "position": trade["position"],
+            "value": trade["total_value"], "url": trade["filing_url"]
+        })
+
+    if not df_catalysts.empty:
+        for _, row in df_catalysts.iterrows():
+            c_date = pd.to_datetime(row["date"])
+            if c_date not in raw_events_by_date:
+                raw_events_by_date[c_date] = []
+            raw_events_by_date[c_date].append({
+                "type": "C", "category": row["category"], "title": row["title"], "url": row["source_url"]
+            })
+
+if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_date:
+    # リンクテーブルの生成
+    linked_sources_list = []
+    for event_date in sorted(raw_events_by_date.keys(), reverse=True):
+        date_str = event_date.strftime('%Y-%m-%d')
+        prev_day = (event_date - timedelta(days=1)).strftime('%Y-%m-%d')
+        next_day = (event_date + timedelta(days=1)).strftime('%Y-%m-%d')
+        date_specific_news_url = f"https://www.google.com/search?q={current_ticker}+stock+news+after:{prev_day}+before:{next_day}&tbm=nws"
+        
+        for item in raw_events_by_date[event_date]:
+            if item["type"] == "I":
+                linked_sources_list.append({
+                    "日付": date_str,
+                    "分類": "🟣 インサイダー [ I ]",
+                    "イベント概要": f"{item['ins
