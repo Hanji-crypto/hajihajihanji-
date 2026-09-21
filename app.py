@@ -15,7 +15,7 @@ st.set_page_config(
     page_title="Whale-Eye: Institutional Option & Insider Intelligence",
     page_icon="👁️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # プロ仕様ダークテーマ＆高密度CSS
@@ -82,6 +82,14 @@ st.html("""
         border-radius: 8px;
         margin-bottom: 24px;
         border-top: 4px solid #38BDF8;
+    }
+    /* 描画パレット用インラインバーのスタイル */
+    .drawing-bar {
+        background-color: #111827;
+        border: 1px solid #1F2937;
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 10px;
     }
     /* ラジオボタンの横並び高密度化 */
     div[data-testid="stRadio"] > div {
@@ -172,6 +180,14 @@ all_available_tickers = df_screener["ticker"].tolist()
 # ==============================================================================
 if "selected_ticker" not in st.session_state:
     st.session_state.selected_ticker = top_10_tickers[0] if top_10_tickers else ""
+
+# 自由描画オブジェクトの保存用セッション
+if "draw_hlines" not in st.session_state:
+    st.session_state.draw_hlines = []
+if "draw_vlines" not in st.session_state:
+    st.session_state.draw_vlines = []
+if "draw_texts" not in st.session_state:
+    st.session_state.draw_texts = []
 
 # ==============================================================================
 # 5. STATISTICAL OPTION & MARKET DATA FETCHING (限月ドリルダウン対応)
@@ -310,65 +326,6 @@ def fetch_catalyst_events(ticker, df_prices, df_raw_trades):
         pass
 
     return pd.DataFrame(events).drop_duplicates(subset=["date", "category"]) if events else pd.DataFrame()
-
-# ==============================================================================
-# 5.5 SIDEBAR DRAWING TOOLS & TEHCNICAL CONFIG (自由描画ツール)
-# ==============================================================================
-st.sidebar.title("🛠️ チャート描画・分析ツール")
-st.sidebar.markdown("チャート上にサポートラインやメモを自由に追加できます。")
-
-# 描画オブジェクトの保存用セッション
-if "draw_hlines" not in st.session_state:
-    st.session_state.draw_hlines = []
-if "draw_vlines" not in st.session_state:
-    st.session_state.draw_vlines = []
-if "draw_texts" not in st.session_state:
-    st.session_state.draw_texts = []
-
-# 1. 水平線の追加
-st.sidebar.subheader("➕ 水平線を追加 (サポート/レジスタンス)")
-hline_val = st.sidebar.number_input("価格 ($):", value=0.0, step=0.5)
-hline_color = st.sidebar.selectbox("色:", ["#FFD700", "#FF007F", "#00FFCC", "#FF8C00", "#FFFFFF"], key="hl_col")
-hline_style = st.sidebar.selectbox("線種:", ["dash", "solid", "dot"], key="hl_style")
-if st.sidebar.button("水平線を描画", use_container_width=True):
-    if hline_val > 0:
-        st.session_state.draw_hlines.append({"y": hline_val, "color": hline_color, "style": hline_style})
-        st.toast(f"水平線を描画しました: ${hline_val:.2f}")
-
-# 2. 垂直線の追加
-st.sidebar.subheader("➕ 垂直線を追加 (イベント日など)")
-vline_date = st.sidebar.date_input("日付:", datetime.now() - timedelta(days=10))
-vline_color = st.sidebar.selectbox("色:", ["#38BDF8", "#A855F7", "#E2E8F0"], key="vl_col")
-vline_style = st.sidebar.selectbox("線種:", ["dash", "solid", "dot"], key="vl_style")
-if st.sidebar.button("垂直線を描画", use_container_width=True):
-    date_str = vline_date.strftime('%Y-%m-%d')
-    st.session_state.draw_vlines.append({"x": date_str, "color": vline_color, "style": vline_style})
-    st.toast(f"垂直線を描画しました: {date_str}")
-
-# 3. テキストアノテーションの追加
-st.sidebar.subheader("➕ テキストメモを追加")
-note_text = st.sidebar.text_input("メモ内容:", placeholder="例: 直近高値ブレイク")
-note_x = st.sidebar.date_input("配置する日付:", datetime.now() - timedelta(days=5))
-note_y = st.sidebar.number_input("配置する価格 ($):", value=0.0, step=0.5, key="note_y")
-note_color = st.sidebar.selectbox("文字色:", ["#FFFFFF", "#00FFCC", "#FFD700"], key="note_col")
-if st.sidebar.button("テキストを配置", use_container_width=True):
-    if note_text and note_y > 0:
-        st.session_state.draw_texts.append({
-            "x": note_x.strftime('%Y-%m-%d'),
-            "y": note_y,
-            "text": note_text,
-            "color": note_color
-        })
-        st.toast("テキストメモを配置しました。")
-
-# 4. 描画のリセット
-st.sidebar.subheader("🧹 描画の管理")
-if st.sidebar.button("すべての描画をクリア", use_container_width=True, type="primary"):
-    st.session_state.draw_hlines = []
-    st.session_state.draw_vlines = []
-    st.session_state.draw_texts = []
-    st.toast("すべての描画をクリアしました。")
-    st.rerun()
 
 # ==============================================================================
 # 6. MAIN TERMINAL LAYOUT (VERTICAL STACK SYSTEM)
@@ -510,6 +467,64 @@ if hist_data is not None:
 
     st.markdown("---")
 
+    # ----------------------------------------------------------------------
+    # INTERACTIVE IN-LINE DRAWING TOOLBAR (証券会社ツール模倣パレット)
+    # ----------------------------------------------------------------------
+    st.markdown("### 📈 テクニカル分析チャート")
+    
+    # チャート直上に格納・展開可能なプロ仕様描画パレットを配置
+    with st.expander("🛠️ チャート描画・分析パレット (サポートライン / レジスタンス / メモ追加)", expanded=False):
+        st.markdown("<div class='drawing-bar'>", unsafe_allow_html=True)
+        draw_col1, draw_col2, draw_col3 = st.columns(3)
+        
+        with draw_col1:
+            st.markdown("**1. 水平線（サポート・レジスタンス）**")
+            hline_val = st.number_input("価格 ($):", value=float(round(current_price, 2)), step=0.5, key="inline_hl_val")
+            hline_color = st.selectbox("色:", ["#FFD700", "#FF007F", "#00FFCC", "#FF8C00", "#FFFFFF"], key="inline_hl_col")
+            hline_style = st.selectbox("線種:", ["dash", "solid", "dot"], key="inline_hl_style")
+            if st.button("水平線を描画", use_container_width=True, key="btn_hl"):
+                if hline_val > 0:
+                    st.session_state.draw_hlines.append({"y": hline_val, "color": hline_color, "style": hline_style})
+                    st.toast(f"水平線を描画しました: ${hline_val:.2f}")
+                    st.rerun()
+                    
+        with draw_col2:
+            st.markdown("**2. 垂直線（カタリスト・イベント日）**")
+            vline_date = st.date_input("日付:", datetime.now() - timedelta(days=10), key="inline_vl_date")
+            vline_color = st.selectbox("色:", ["#38BDF8", "#A855F7", "#E2E8F0"], key="inline_vl_col")
+            vline_style = st.selectbox("線種:", ["dash", "solid", "dot"], key="inline_vl_style")
+            if st.button("垂直線を描画", use_container_width=True, key="btn_vl"):
+                date_str = vline_date.strftime('%Y-%m-%d')
+                st.session_state.draw_vlines.append({"x": date_str, "color": vline_color, "style": vline_style})
+                st.toast(f"垂直線を描画しました: {date_str}")
+                st.rerun()
+                
+        with draw_col3:
+            st.markdown("**3. テキストメモ・アノテーション**")
+            note_text = st.text_input("メモ内容:", placeholder="例: 直近高値レジスタンス", key="inline_note_text")
+            note_x = st.date_input("配置する日付:", datetime.now() - timedelta(days=5), key="inline_note_x")
+            note_y = st.number_input("配置する価格 ($):", value=float(round(current_price * 1.05, 2)), step=0.5, key="inline_note_y")
+            note_color = st.selectbox("文字色:", ["#FFFFFF", "#00FFCC", "#FFD700"], key="inline_note_col")
+            if st.button("テキストを配置", use_container_width=True, key="btn_note"):
+                if note_text and note_y > 0:
+                    st.session_state.draw_texts.append({
+                        "x": note_x.strftime('%Y-%m-%d'),
+                        "y": note_y,
+                        "text": note_text,
+                        "color": note_color
+                    })
+                    st.toast("テキストメモを配置しました。")
+                    st.rerun()
+                    
+        st.markdown("---")
+        if st.button("🧹 すべての描画オブジェクトをクリア", use_container_width=True, type="primary"):
+            st.session_state.draw_hlines = []
+            st.session_state.draw_vlines = []
+            st.session_state.draw_texts = []
+            st.toast("すべての描画をクリアしました。")
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
     # コントロールパネル（全幅）
     ctrl_col1, ctrl_col2 = st.columns([3, 5])
     with ctrl_col1:
@@ -582,7 +597,6 @@ if hist_data is not None:
     df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
     
     if not df_insider_daily.empty:
-        # 株価チャート上の対応する日付の終値を取得してプロット
         df_insider_plot = df_insider_daily.merge(hist_data[["Close"]], left_on="buy_date", right_index=True)
         fig_tech.add_trace(gr.Scatter(
             x=df_insider_plot["buy_date"],
@@ -600,7 +614,6 @@ if hist_data is not None:
         x=hist_data.index[-60:], y=hist_data["RSI_14"].iloc[-60:],
         mode="lines", line=dict(color="#A855F7", width=1.5), name="RSI (14)"
     ), row=2, col=1)
-    # RSI 境界線 (70 / 30)
     fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.4)", row=2, col=1)
     fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.4)", row=2, col=1)
 
@@ -844,7 +857,7 @@ if hist_data is not None:
             <b>【統計的選定根拠】</b><br>
             ボラティリティは中立ですが、インサイダーの超大口買いが直近で集中しており、突発的な好材料（カタリスト）発表による株価急騰（ボラティリティ・スパイク）を狙う高レバレッジ戦略です。<br><br>
             
-            <b>【具体的取引価格 of 統計的提案】</b><br>
+            <b>【具体的取引価格の統計的提案】</b><br>
             * <b>Buy {current_ticker} 30日満期 ${lc_strike:.1f} Call (ややOTM)</b> (目安プレミアム: ${lc_prem:.2f})<br><br>
             
             <b>【リスク・リターン特性】</b><br>
@@ -858,7 +871,7 @@ if hist_data is not None:
     filtered_strategies = [s for s in strategies_pool if s["prob"] >= 50.0]
     ranked_strategies = sorted(filtered_strategies, key=lambda x: x["roi"], reverse=True)
 
-    # ランキングカードの描画
+    # 期待値ランキングカードの描画
     rank_medals = ["🥇 1st Active Strategy", "🥈 2nd Alternative Strategy", "🥉 3rd Tactical Strategy"]
     for idx, strat in enumerate(ranked_strategies[:3]):
         st.html(f"""
@@ -1008,5 +1021,4 @@ if hist_data is not None and not df_calls_raw.empty:
     df_t_shape_display["Call Delta"] = df_t_shape["Delta_call"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
     df_t_shape_display["Call IV"] = df_t_shape["impliedVolatility_call"].map(lambda x: f"{x*100:.1f}%")
     df_t_shape_display["Call OI"] = df_t_shape["openInterest_call"].fillna(0).astype(int)
-    df_t_shape_display["Call Vol"] = df_t_shape["volume_call"].fillna(0).astype(int)
-    df_t_shape_display["Call Price"] = df_t_shape["lastPrice_call"].map(lambda x: f"${x:.2f}")
+    df_t_shape_
