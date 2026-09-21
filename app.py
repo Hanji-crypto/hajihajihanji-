@@ -63,40 +63,6 @@ st.html("""
         border-radius: 8px;
         margin-bottom: 12px;
     }
-    /* リアルタイム・イベント・コンソールのスタイル */
-    .event-console {
-        background-color: #090D16;
-        border: 1px solid #1E293B;
-        border-radius: 6px;
-        padding: 10px;
-        max-height: 180px;
-        overflow-y: auto;
-        font-family: 'Consolas', 'Courier New', monospace;
-        font-size: 11px;
-        line-height: 1.4;
-        margin-bottom: 12px;
-    }
-    .console-row {
-        border-bottom: 1px solid #1E293B;
-        padding: 4px 0;
-        display: flex;
-        align-items: flex-start;
-    }
-    .console-date {
-        color: #64748B;
-        min-width: 80px;
-        font-weight: bold;
-    }
-    .console-badge {
-        display: inline-block;
-        padding: 1px 4px;
-        border-radius: 3px;
-        font-size: 9px;
-        font-weight: bold;
-        margin-right: 6px;
-        min-width: 90px;
-        text-align: center;
-    }
     /* ラジオボタンの横並び高密度化 */
     div[data-testid="stRadio"] > div {
         gap: 6px;
@@ -438,83 +404,97 @@ if hist_data is not None:
     
     # LEFT: 統合チャート (上段: 株価&1σバンド, 下段: 純粋なボラティリティ推移&インサイダーシグナルのみ)
     with col_chart:
-        # サブプロットの作成 (下段はsecondary_yを完全にFalseにして重複する株価の描画を排除)
-        fig = make_subplots(
-            rows=2, cols=1, 
-            shared_xaxes=True, 
-            vertical_spacing=0.08, 
-            row_heights=[0.65, 0.35],
-            specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
-        )
+        # 3段のサブプロットを作成（1段目：株価、2段目：RSI、3段目：ボラティリティ）
+        # secondary_yを完全に排除し、プロットの混ざり合い（ローソク足の重複）を物理的に防ぎます
+        if show_rsi:
+            fig = make_subplots(
+                rows=3, cols=1, 
+                shared_xaxes=True, 
+                vertical_spacing=0.05, 
+                row_heights=[0.55, 0.20, 0.25]
+            )
+        else:
+            fig = make_subplots(
+                rows=2, cols=1, 
+                shared_xaxes=True, 
+                vertical_spacing=0.08, 
+                row_heights=[0.70, 0.30]
+            )
         
         # 1σ予測バンドの描画 (統計的確率約68%の推移予測)
         future_dates = [hist_data.index[-1] + timedelta(days=i) for i in range(31)]
         upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
         lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
         
-        # RSIの描画 (ROW 1, secondary_y=False)
-        if show_rsi:
-            fig.add_trace(gr.Scatter(
-                x=hist_data.index[-60:], y=hist_data["RSI"].iloc[-60:],
-                line=dict(color="rgba(255, 165, 0, 0.45)", width=1.5), name="RSI (14)"
-            ), row=1, col=1, secondary_y=False)
-            fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 0, 0, 0.25)", row=1, col=1, secondary_y=False)
-            fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.25)", row=1, col=1, secondary_y=False)
-            fig.update_yaxes(title_text="RSI", range=[0, 100], row=1, col=1, secondary_y=False)
-
-        # 株価の描画 (ROW 1, secondary_y=True)
+        # ----------------------------------------------------------------------
+        # ROW 1: 現物株価チャート (ボリンジャーバンド & 1σ予測バンド)
+        # ----------------------------------------------------------------------
         if chart_type == "ローソク足":
             fig.add_trace(gr.Candlestick(
                 x=hist_data.index[-60:], open=hist_data["Open"].iloc[-60:], high=hist_data["High"].iloc[-60:],
                 low=hist_data["Low"].iloc[-60:], close=hist_data["Close"].iloc[-60:], name="株価 (OHLC)"
-            ), row=1, col=1, secondary_y=True)
+            ), row=1, col=1)
         else:
             fig.add_trace(gr.Scatter(
                 x=hist_data.index[-60:], y=hist_data["Close"].iloc[-60:],
                 mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
-            ), row=1, col=1, secondary_y=True)
+            ), row=1, col=1)
             
         # ボリンジャーバンドの描画
         if show_bb:
-            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", hoverinfo="skip", showlegend=False), row=1, col=1, secondary_y=True)
-            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", hoverinfo="skip", showlegend=False), row=1, col=1, secondary_y=True)
-            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均", hoverinfo="skip"), row=1, col=1, secondary_y=True)
+            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", hoverinfo="skip", showlegend=False), row=1, col=1)
+            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", hoverinfo="skip", showlegend=False), row=1, col=1)
+            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均", hoverinfo="skip"), row=1, col=1)
 
         # 1σ予測バンドの描画
         fig.add_trace(gr.Scatter(
             x=future_dates, y=upper_band_curve,
             mode="lines", line=dict(color="rgba(0, 255, 204, 0.3)", width=1, dash="dash"),
             name="1σ 上昇上限 (確率68%)", showlegend=True
-        ), row=1, col=1, secondary_y=True)
+        ), row=1, col=1)
         
         fig.add_trace(gr.Scatter(
             x=future_dates, y=lower_band_curve,
             mode="lines", line=dict(color="rgba(239, 68, 68, 0.3)", width=1, dash="dash"),
             fill="tonexty", fillcolor="rgba(0, 255, 204, 0.02)",
             name="1σ 下落下限 (確率68%)", showlegend=True
-        ), row=1, col=1, secondary_y=True)
+        ), row=1, col=1)
         
         # ----------------------------------------------------------------------
-        # ROW 2: 純粋なボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング (株価の重複排除)
+        # ROW 2: RSI チャート (表示チェックがONの場合のみ専用段に描画)
+        # ----------------------------------------------------------------------
+        vol_row = 2
+        if show_rsi:
+            vol_row = 3
+            fig.add_trace(gr.Scatter(
+                x=hist_data.index[-60:], y=hist_data["RSI"].iloc[-60:],
+                line=dict(color="#FFA500", width=1.5), name="RSI (14)"
+            ), row=2, col=1)
+            fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 0, 0, 0.4)", row=2, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.4)", row=2, col=1)
+            fig.update_yaxes(title_text="RSI", range=[0, 100], row=2, col=1)
+
+        # ----------------------------------------------------------------------
+        # ROW 2 or 3: 純粋なボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング
         # ----------------------------------------------------------------------
         # 過去のHV推移のシミュレーション（20日移動標準偏差から算出）
         hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
         # IV推移（ATMオプション価格から逆算した歴史的IV推移のシミュレーション）
         hist_data["IV_Sim"] = hist_data["HV_20"] * (iv / (hv if hv > 0 else 1.0))
 
-        # HV推移の描画 (ROW 2, secondary_yは無し)
+        # HV推移の描画
         fig.add_trace(gr.Scatter(
             x=hist_data.index[-60:], y=hist_data["HV_20"].iloc[-60:],
             mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"
-        ), row=2, col=1)
+        ), row=vol_row, col=1)
 
-        # IV推移の描画 (ROW 2, secondary_yは無し)
+        # IV推移の描画
         fig.add_trace(gr.Scatter(
             x=hist_data.index[-60:], y=hist_data["IV_Sim"].iloc[-60:],
             mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"
-        ), row=2, col=1)
+        ), row=vol_row, col=1)
 
-        # インサイダー買いタイミング（ボラティリティチャート上にのみスタンプ）
+        # インサイダー買いタイミング
         df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
         df_insider_daily = df_ticker_raw.groupby("buy_date")["total_value"].sum().reset_index()
         df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
@@ -528,14 +508,15 @@ if hist_data is not None:
                 text=["🐋 Buy"] * len(df_insider_daily),
                 textposition="top center",
                 name="インサイダー買いタイミング"
-            ), row=2, col=1)
+            ), row=vol_row, col=1)
             
-        fig.update_yaxes(title_text="株価 ($)", row=1, col=1, secondary_y=True)
-        fig.update_yaxes(title_text="ボラティリティ (%)", row=2, col=1)
+        fig.update_yaxes(title_text="株価 ($)", row=1, col=1)
+        fig.update_yaxes(title_text="ボラティリティ (%)", row=vol_row, col=1)
         
+        # チャート全体の高さを 450 -> 700 に大幅に拡大して視認性を最大化
         fig.update_layout(
-            height=450, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-            margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1, x=0),
+            height=700, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+            margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.05, x=0),
             hovermode="x"
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -701,7 +682,7 @@ if hist_data is not None:
         )
         st.plotly_chart(fig_payoff, use_container_width=True)
         
-        # 🚨 物理的解決：HTMLタグを完全に排除し、Streamlit標準の st.caption で安全に表示
+        # 安全なテキスト表示
         be_text = f"損益分岐点（Break-even）: 株価騰落率 {breakeven_change:+.1f}% (${breakeven_price:.2f}) 以上でプラス収支"
         st.caption(be_text)
 
