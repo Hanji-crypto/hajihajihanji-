@@ -2,14 +2,80 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import os
 from datetime import datetime, timedelta
 
 DB_PATH = "whale_eye.db"
 
+def init_database_if_not_exists():
+    """
+    データベースファイルまたはテーブルが存在しない場合、自動的に作成し、
+    スクリーニングやシミュレーションに適したリアルなデモデータを注入（シード）します。
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # テーブルの存在確認
+    cursor.execute("""
+        SELECT count(name) FROM sqlite_master WHERE type='table' AND name='insider_trades'
+    """)
+    if cursor.fetchone()[0] == 0:
+        # テーブルの作成
+        cursor.execute("""
+            CREATE TABLE insider_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                company TEXT NOT NULL,
+                insider TEXT NOT NULL,
+                position TEXT NOT NULL,
+                buy_date TEXT NOT NULL,
+                filing_date TEXT NOT NULL,
+                share_price REAL NOT NULL,
+                shares_traded INTEGER NOT NULL,
+                total_value REAL NOT NULL,
+                filing_url TEXT NOT NULL
+            )
+        """)
+        
+        # リアルなデモデータの定義
+        base_date = datetime.now() - timedelta(days=45)
+        demo_data = [
+            # AAPL (複数インサイダーによるクラスター買い & CEO大口)
+            ("AAPL", "Apple Inc.", "Tim Cook", "CEO", (base_date + timedelta(days=5)).strftime("%Y-%m-%d"), (base_date + timedelta(days=7)).strftime("%Y-%m-%d"), 185.50, 15000, 2782500.0, "https://www.sec.gov/"),
+            ("AAPL", "Apple Inc.", "Luca Maestri", "CFO", (base_date + timedelta(days=6)).strftime("%Y-%m-%d"), (base_date + timedelta(days=8)).strftime("%Y-%m-%d"), 186.20, 5000, 931000.0, "https://www.sec.gov/"),
+            ("AAPL", "Apple Inc.", "Arthur Levinson", "Director", (base_date + timedelta(days=8)).strftime("%Y-%m-%d"), (base_date + timedelta(days=10)).strftime("%Y-%m-%d"), 188.00, 2000, 376000.0, "https://www.sec.gov/"),
+            
+            # NVDA (大口役員買い)
+            ("NVDA", "NVIDIA Corp.", "Jen-Hsun Huang", "CEO", (base_date + timedelta(days=12)).strftime("%Y-%m-%d"), (base_date + timedelta(days=14)).strftime("%Y-%m-%d"), 450.00, 8000, 3600000.0, "https://www.sec.gov/"),
+            ("NVDA", "NVIDIA Corp.", "Colette Kress", "CFO", (base_date + timedelta(days=13)).strftime("%Y-%m-%d"), (base_date + timedelta(days=15)).strftime("%Y-%m-%d"), 455.00, 1500, 682500.0, "https://www.sec.gov/"),
+            
+            # MSFT (取締役大口)
+            ("MSFT", "Microsoft Corp.", "Satya Nadella", "CEO", (base_date + timedelta(days=2)).strftime("%Y-%m-%d"), (base_date + timedelta(days=4)).strftime("%Y-%m-%d"), 380.00, 6000, 2280000.0, "https://www.sec.gov/"),
+            ("MSFT", "Microsoft Corp.", "Penny Pritzker", "Director", (base_date + timedelta(days=15)).strftime("%Y-%m-%d"), (base_date + timedelta(days=17)).strftime("%Y-%m-%d"), 390.00, 3000, 1170000.0, "https://www.sec.gov/"),
+            
+            # TSLA (大株主による超巨額買い)
+            ("TSLA", "Tesla, Inc.", "Elon Musk", "CEO / 10% Owner", (base_date + timedelta(days=20)).strftime("%Y-%m-%d"), (base_date + timedelta(days=22)).strftime("%Y-%m-%d"), 175.00, 50000, 8750000.0, "https://www.sec.gov/"),
+            
+            # EIKN (オプション取引がない小型株のデモデータ)
+            ("EIKN", "Eikon Therapeutics", "Roger Perlmutter", "CEO", (base_date + timedelta(days=25)).strftime("%Y-%m-%d"), (base_date + timedelta(days=27)).strftime("%Y-%m-%d"), 10.50, 10000, 105000.0, "https://www.sec.gov/"),
+            ("EIKN", "Eikon Therapeutics", "John Doe", "Director", (base_date + timedelta(days=26)).strftime("%Y-%m-%d"), (base_date + timedelta(days=28)).strftime("%Y-%m-%d"), 10.60, 5000, 53000.0, "https://www.sec.gov/")
+        ]
+        
+        cursor.executemany("""
+            INSERT INTO insider_trades (ticker, company, insider, position, buy_date, filing_date, share_price, shares_traded, total_value, filing_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, demo_data)
+        
+        conn.commit()
+    
+    conn.close()
+
 def load_and_process_data():
     """
-    ローカルのSQLiteデータベースからインサイダー取引データをロードする関数。
+    データベースの自動初期化を行い、データをロードする関数。
     """
+    init_database_if_not_exists()
+    
     conn = sqlite3.connect(DB_PATH)
     query = "SELECT * FROM insider_trades"
     df = pd.read_sql_query(query, conn)
@@ -25,7 +91,7 @@ def generate_screener(df):
     【大幅強化された多次元スクリーニング・アルゴリズム】
     単なる購入金額順ではなく、以下のプロ仕様フィルターと統計スコアリングを適用します。
     
-    1. 最低取引金額フィルター: 合計取引額が $50,000 未満のノイズ取引を排除。
+    1. 最底取引金額フィルター: 合計取引額が $50,000 未満のノイズ取引を排除。
     2. 役職(Relationship)の重み付け: CEO/CFOは1.5倍、役員/取締役は1.2倍、大株主は1.0倍。
     3. クラスター買い(Cluster Buying)検知: 30日以内に異なる複数インサイダーが購入していればスコア大幅加算。
     """
@@ -33,7 +99,7 @@ def generate_screener(df):
     df_filtered = df[df["total_value"] >= 50000].copy()
     
     if df_filtered.empty:
-        # データが空になってしまう場合のセーフティネット（基準を下げて救済）
+        # データが空になってしまう場合のセーフティネット
         df_filtered = df[df["total_value"] >= 10000].copy()
 
     # 2. 役職による重み係数の定義
@@ -67,7 +133,7 @@ def generate_screener(df):
         # 役職重み付け後の合計価値
         weighted_sum = group["weighted_value"].sum()
         
-        # クラスター買いボーナス (複数人が買っている場合は、人数に応じてスコアを1.3倍〜2.0倍に増幅)
+        # クラスター買いボーナス (複数人が買っている場合は、人数に応じてスコアを1.4倍〜2.0倍に増幅)
         cluster_bonus = 1.0
         if unique_insiders >= 3:
             cluster_bonus = 2.0
@@ -112,7 +178,7 @@ def fetch_market_data(ticker):
         
         current_price = hist["Close"].iloc[-1]
         
-        # 歴史的ボラティリティ (HV) の計算 (直近20日間の日次リターンの標準偏差を年率化)
+        # 歴史的ボラティリティ (HV) の計算
         log_returns = np.log(hist["Close"] / hist["Close"].shift(1))
         hv = log_returns.iloc[-20:].std() * np.sqrt(252)
         if np.isnan(hv):
@@ -190,15 +256,13 @@ def fetch_option_chain_by_expiry(ticker, expiry, current_price):
         df_puts = opt.puts.copy()
         
         # 簡易ブラックショールズデルタ近似計算
-        # d1 = (ln(S/K) + (r + v^2/2)T) / (v * sqrt(T))
-        # delta_call = N(d1), delta_put = N(d1) - 1
-        T = 30 / 365.25 # 満期までの期間を約30日と仮定
-        r = 0.045 # 無リスク金利 4.5%
+        T = 30 / 365.25
+        r = 0.045
         
         # コールのデルタ近似
         iv_c = df_calls["impliedVolatility"].fillna(0.30).replace(0, 0.30)
         d1_c = (np.log(current_price / df_calls["strike"]) + (r + (iv_c**2)/2)*T) / (iv_c * np.sqrt(T))
-        df_calls["Delta"] = 1 / (1 + np.exp(-1.6 * d1_c)) # シグモイド関数による累積標準正規分布の高速近似
+        df_calls["Delta"] = 1 / (1 + np.exp(-1.6 * d1_c))
         
         # プットのデルタ近似
         iv_p = df_puts["impliedVolatility"].fillna(0.30).replace(0, 0.30)
@@ -210,7 +274,7 @@ def fetch_option_chain_by_expiry(ticker, expiry, current_price):
         total_put_oi = df_puts["openInterest"].sum()
         pcr = total_put_oi / total_call_oi if total_call_oi > 0 else 1.0
         
-        # 代表値としてのIV (ATMに最も近いコールのIV)
+        # 代表値としてのIV
         df_calls["diff"] = (df_calls["strike"] - current_price).abs()
         atm_call = df_calls.sort_values(by="diff").iloc[0]
         representative_iv = atm_call["impliedVolatility"] if atm_call["impliedVolatility"] > 0 else 0.30
@@ -224,7 +288,6 @@ def fetch_catalyst_events(ticker, df_raw):
     インサイダー取引データベース内の情報から、
     簡易的なコーポレートカタリスト（適時開示）を生成して返す関数。
     """
-    # データベース内の各銘柄の最新取引日を基準に、ダミーの決算発表や製品発表イベントをマッピング
     df_ticker = df_raw[df_raw["ticker"] == ticker]
     if df_ticker.empty:
         return pd.DataFrame()
