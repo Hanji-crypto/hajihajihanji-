@@ -218,7 +218,7 @@ def fetch_option_chain_by_expiry(ticker, expiry_date, current_price):
             call_deltas.append(std_normal_cdf(d1))
         calls["Delta"] = call_deltas
         
-        # Put Deltaの計算 (Put Delta ≈ Call Delta - 1)
+        # Put Delta의 計算 (Put Delta ≈ Call Delta - 1)
         put_deltas = []
         for _, row in puts.iterrows():
             strike = row["strike"]
@@ -702,8 +702,8 @@ if hist_data is not None:
     else:  # long_call
         for S in underlying_prices:
             net_payoff = (max(0, S - lc_strike) - lc_prem) / lc_prem * 100
-                payoffs.append(net_payoff)
-            breakeven_price = lc_strike + lc_prem
+            payoffs.append(net_payoff)
+        breakeven_price = lc_strike + lc_prem
             
     breakeven_change = ((breakeven_price / current_price) - 1) * 100
     
