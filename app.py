@@ -173,6 +173,8 @@ if raw_hist is not None:
         unsafe_allow_html=True
     )
 
+    # shared_xaxes=Trueのサブプロット作成
+    # row_widthは下から順に指定するため、[0.2, 0.2, 0.6] は Row3=0.2, Row2=0.2, Row1=0.6 となり正しい比率になります。
     if sub_indicator == "RSI + MACD":
         fig_tech = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_width=[0.2, 0.2, 0.6])
     else:
@@ -203,34 +205,38 @@ if raw_hist is not None:
         ), row=1, col=1)
         
     # 重ね合わせ指標 (Row 1)
-    # 【バグ修正】fill=None を明示し、かつ配色を「極細の半透明な水色（rgba(0, 255, 204, 0.35)）の破線」に完全固定。
+    # 【バグ修正】fill='none' (小文字の文字列) を明示し、Plotlyの自動塗りつぶしによる他領域汚染を100%防止。
     if overlay_indicator == "ボリンジャーバンド" and "BB_Upper" in df_plot.columns:
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.35)", width=1.0, dash="dash"), fill=None, name="BB Upper"), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.35)", width=1.0, dash="dash"), fill=None, name="BB Lower"), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MA20"], line=dict(color="orange", width=1.0, dash="dot"), fill=None, name="20日移動平均"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.35)", width=1.0, dash="dash"), fill='none', name="BB Upper"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.35)", width=1.0, dash="dash"), fill='none', name="BB Lower"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MA20"], line=dict(color="orange", width=1.0, dash="dot"), fill='none', name="20日移動平均"), row=1, col=1)
     elif overlay_indicator == "EMA (20/50)":
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["EMA20"], line=dict(color="#00C5FF", width=1.2), fill=None, name="EMA 20"), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["EMA50"], line=dict(color="#FF8C00", width=1.2), fill=None, name="EMA 50"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["EMA20"], line=dict(color="#00C5FF", width=1.2), fill='none', name="EMA 20"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["EMA50"], line=dict(color="#FF8C00", width=1.2), fill='none', name="EMA 50"), row=1, col=1)
     elif overlay_indicator == "一目均衡表 (Ichimoku)":
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Senkou_Span_A"], line=dict(color="rgba(56, 189, 248, 0.4)", width=0.8, dash="dash"), fill=None, name="先行スパンA"), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Senkou_Span_B"], line=dict(color="rgba(244, 63, 94, 0.4)", width=0.8, dash="dash"), fill=None, name="先行スパンB"), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Tenkan_Sen"], line=dict(color="#38BDF8", width=1.0), fill=None, name="転換線"), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Kijun_Sen"], line=dict(color="#F43F5E", width=1.0), fill=None, name="基準線"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Senkou_Span_A"], line=dict(color="rgba(56, 189, 248, 0.4)", width=0.8, dash="dash"), fill='none', name="先行スパンA"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Senkou_Span_B"], line=dict(color="rgba(244, 63, 94, 0.4)", width=0.8, dash="dash"), fill='none', name="先行スパンB"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Tenkan_Sen"], line=dict(color="#38BDF8", width=1.0), fill='none', name="転換線"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Kijun_Sen"], line=dict(color="#F43F5E", width=1.0), fill='none', name="基準線"), row=1, col=1)
 
-    fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Upper_1Sigma"], mode="lines", line=dict(color="rgba(56, 189, 248, 0.6)", width=1.2, dash="dash"), fill=None, name="1σ上限"), row=1, col=1)
-    fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Lower_1Sigma"], mode="lines", line=dict(color="rgba(239, 68, 68, 0.6)", width=1.2, dash="dash"), fill=None, name="1σ下限"), row=1, col=1)
+    fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Upper_1Sigma"], mode="lines", line=dict(color="rgba(56, 189, 248, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ上限"), row=1, col=1)
+    fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Lower_1Sigma"], mode="lines", line=dict(color="rgba(239, 68, 68, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ下限"), row=1, col=1)
 
+    # 下段サブ指標の描画
     if sub_indicator == "RSI + MACD":
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["RSI_14"], mode="lines", line=dict(color="#A855F7", width=2.0), fill=None, name="RSI"), row=2, col=1)
+        # RSI (Row 2) - fill='none' を明示し、X軸同期による表示バグを完全解消
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["RSI_14"], mode="lines", line=dict(color="#A855F7", width=2.0), fill='none', name="RSI"), row=2, col=1)
         fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.5)", row=2, col=1)
         fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.5)", row=2, col=1)
 
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MACD"], mode="lines", line=dict(color="#38BDF8", width=1.5), fill=None, name="MACD"), row=3, col=1)
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MACD_Signal"], mode="lines", line=dict(color="#FF8C00", width=1.5), fill=None, name="Signal"), row=3, col=1)
+        # MACD (Row 3)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MACD"], mode="lines", line=dict(color="#38BDF8", width=1.5), fill='none', name="MACD"), row=3, col=1)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MACD_Signal"], mode="lines", line=dict(color="#FF8C00", width=1.5), fill='none', name="Signal"), row=3, col=1)
         hist_colors = ["#00FFCC" if (not math.isnan(val) and val >= 0) else "#FF007F" for val in df_plot["MACD_Hist"]]
         fig_tech.add_trace(gr.Bar(x=df_plot.index, y=df_plot["MACD_Hist"], marker_color=hist_colors, name="Hist"), row=3, col=1)
     else:
-        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["ATR"], mode="lines", line=dict(color="#E2E8F0", width=1.8), fill=None, name="ATR"), row=2, col=1)
+        # ATR (Row 2)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["ATR"], mode="lines", line=dict(color="#E2E8F0", width=1.8), fill='none', name="ATR"), row=2, col=1)
 
     fig_tech.update_layout(
         height=650, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
@@ -354,7 +360,7 @@ if raw_hist is not None:
         },
         {
             "id": "covered_call", "title": "🟡 カバード・コール (Covered Call)", "class": "strategy-card-secondary", "roi": cc_roi, "prob": cc_prob,
-            "desc": f"<b>【統計的選定根拠】</b><br>ボラティリティが過熱傾向（IV/HV比率 <b>{(iv/hv if hv > 0 else 1.0):.2f}</b>）にあるため、コール売りプレミアムを回収するインカムゲイン戦略が極めて有利です。<br><br><b>【具体的取引価格 of 統計的提案】</b><br>1. <b>現物株式を ${current_price:.2f} で購入</b><br>2. <b>Sell {current_ticker} 30日満期 ${cc_sell_strike:.1f} Call (OTM)</b> (目安プレミアム受取: ${cc_sell_prem:.2f})<br><br><b>【リスク・リターン特性】</b><br>* <b>実質コスト</b>: ${cc_net_cost:.2f}<br>* <b>最大利益</b>: ${cc_max_profit:.2f} (想定最大リターン: <b>+{cc_roi:.1f}%</b>)<br>* <b>統計的勝率</b>: <b>{cc_prob:.1f}%</b>"
+            "desc": f"<b>【統計的選定根拠】</b><br>ボラティリティが過熱傾向（IV/HV比率 <b>{(iv/hv if hv > 0 else 1.0):.2f}</b>）にあるため、コール売りプレミアムを回収するインカムゲイン戦略が極めて有利です。<br><br><b>【具体的取引価格の統計的提案】</b><br>1. <b>現物株式を ${current_price:.2f} で購入</b><br>2. <b>Sell {current_ticker} 30日満期 ${cc_sell_strike:.1f} Call (OTM)</b> (目安プレミアム受取: ${cc_sell_prem:.2f})<br><br><b>【リスク・リターン特性】</b><br>* <b>実質コスト</b>: ${cc_net_cost:.2f}<br>* <b>最大利益</b>: ${cc_max_profit:.2f} (想定最大リターン: <b>+{cc_roi:.1f}%</b>)<br>* <b>統計的勝率</b>: <b>{cc_prob:.1f}%</b>"
         },
         {
             "id": "long_call", "title": "🟣 ロング・コール (Long Call) 単体打診買い", "class": "strategy-card-warning", "roi": lc_roi, "prob": lc_prob,
