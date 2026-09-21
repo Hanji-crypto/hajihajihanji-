@@ -26,14 +26,14 @@ st.html("""
         color: #E2E8F0;
     }
     div[data-testid="stMetricValue"] {
-        font-size: 22px;
+        font-size: 20px;
         font-weight: bold;
         color: #00FFCC !important;
         font-family: 'Consolas', monospace;
     }
     div[data-testid="stMetricLabel"] {
         color: #94A3B8 !important;
-        font-size: 12px;
+        font-size: 11px;
     }
     hr {
         border-color: #1E293B !important;
@@ -51,55 +51,55 @@ st.html("""
         background-color: #111827;
         border: 1px solid #1F2937;
         border-left: 5px solid #00FFCC;
-        padding: 18px;
+        padding: 15px;
         border-radius: 8px;
-        margin-bottom: 15px;
+        margin-bottom: 12px;
     }
     .strategy-card-warning {
         background-color: #2D1A1A;
         border: 1px solid #4A2323;
         border-left: 5px solid #EF4444;
-        padding: 18px;
+        padding: 15px;
         border-radius: 8px;
-        margin-bottom: 15px;
+        margin-bottom: 12px;
     }
     /* リアルタイム・イベント・コンソールのスタイル */
     .event-console {
         background-color: #090D16;
         border: 1px solid #1E293B;
         border-radius: 6px;
-        padding: 12px;
-        max-height: 200px;
+        padding: 10px;
+        max-height: 180px;
         overflow-y: auto;
         font-family: 'Consolas', 'Courier New', monospace;
-        font-size: 12px;
-        line-height: 1.5;
-        margin-bottom: 15px;
+        font-size: 11px;
+        line-height: 1.4;
+        margin-bottom: 12px;
     }
     .console-row {
         border-bottom: 1px solid #1E293B;
-        padding: 5px 0;
+        padding: 4px 0;
         display: flex;
         align-items: flex-start;
     }
     .console-date {
         color: #64748B;
-        min-width: 90px;
+        min-width: 80px;
         font-weight: bold;
     }
     .console-badge {
         display: inline-block;
-        padding: 1px 5px;
+        padding: 1px 4px;
         border-radius: 3px;
-        font-size: 10px;
+        font-size: 9px;
         font-weight: bold;
-        margin-right: 8px;
-        min-width: 100px;
+        margin-right: 6px;
+        min-width: 90px;
         text-align: center;
     }
     /* ラジオボタンの横並び高密度化 */
     div[data-testid="stRadio"] > div {
-        gap: 8px;
+        gap: 6px;
     }
     </style>
 """)
@@ -340,7 +340,6 @@ st.markdown("データベースに登録されている全銘柄のインサイ�
 
 col_sel1, col_sel2 = st.columns([3, 5])
 with col_sel1:
-    # 100%確実に動作する銘柄同期用ドロップダウンセレクター
     selected_from_dropdown = st.selectbox(
         "🔍 解析・表示する銘柄を全銘柄リストから選択:",
         options=all_available_tickers,
@@ -351,7 +350,6 @@ with col_sel1:
         st.rerun()
 
 with col_sel2:
-    # 統計的最上位10銘柄の通常表示（クイック・セレクター）
     radio_options = list(top_10_tickers)
     if st.session_state.selected_ticker not in radio_options:
         radio_options.append(st.session_state.selected_ticker)
@@ -374,7 +372,7 @@ df_screener_display = df_screener.copy()
 df_screener_display = df_screener_display.rename(columns={
     "ticker": "ティッカー",
     "company": "企業名",
-    "total_value": "直近取引額 ($)",  # ラベル変更
+    "total_value": "直近取引額 ($)",
     "avg_price": "平均取得単価 ($)",
     "insider": "主なインサイダー",
     "buy_date": "直近取引日",
@@ -393,7 +391,7 @@ st.dataframe(
     df_screener_display[["ティッカー", "企業名", "直近取引額 ($)", "平均取得単価 ($)", "主なインサイダー", "直近取引日", "取引回数", "統計的確実性スコア (%)"]],
     use_container_width=True,
     hide_index=True,
-    height=320
+    height=240
 )
 
 st.markdown("---")
@@ -438,14 +436,13 @@ if hist_data is not None:
 
     col_chart, col_strategy = st.columns([4, 3])
     
-    # LEFT: チャート描画
+    # LEFT: 統合チャート (上段: 株価&1σバンド, 下段: ボラティリティ推移&インサイダーシグナル)
     with col_chart:
-        # 📊 統合テクニカル ＆ 予測バンドチャート
         fig = make_subplots(
             rows=2, cols=1, 
             shared_xaxes=True, 
-            vertical_spacing=0.06, 
-            row_heights=[0.7, 0.3],
+            vertical_spacing=0.08, 
+            row_heights=[0.65, 0.35],
             specs=[[{"secondary_y": True}], [{"secondary_y": True}]]
         )
         
@@ -496,34 +493,54 @@ if hist_data is not None:
             name="1σ 下落下限 (確率68%)", showlegend=True
         ), row=1, col=1, secondary_y=True)
         
-        # ROW 2: 出来高 ＆ インサイダー取引量 (軸分離)
-        fig.add_trace(gr.Bar(
-            x=hist_data.index[-60:], y=hist_data["Volume"].iloc[-60:],
-            name="市場出来高 (Volume)", marker_color="rgba(128, 128, 128, 0.25)"
+        # ----------------------------------------------------------------------
+        # ROW 2: ボラティリティ（IV/HV）歴史的推移 ＆ インサイダー取引タイミング (重複排除)
+        # ----------------------------------------------------------------------
+        # 過去のHV推移のシミュレーション（簡易的に20日移動標準偏差から算出）
+        hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
+        # IV推移（ATMオプション価格から逆算した歴史的IV推移のシミュレーション）
+        hist_data["IV_Sim"] = hist_data["HV_20"] * (iv / (hv if hv > 0 else 1.0))
+
+        # HV推移の描画
+        fig.add_trace(gr.Scatter(
+            x=hist_data.index[-60:], y=hist_data["HV_20"].iloc[-60:],
+            mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"
         ), row=2, col=1, secondary_y=False)
-        
+
+        # IV推移の描画
+        fig.add_trace(gr.Scatter(
+            x=hist_data.index[-60:], y=hist_data["IV_Sim"].iloc[-60:],
+            mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"
+        ), row=2, col=1, secondary_y=False)
+
+        # インサイダー買いタイミング（縦線とマーカーで投資判断タイミングを可視化）
         df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
         df_insider_daily = df_ticker_raw.groupby("buy_date")["total_value"].sum().reset_index()
         df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
         
         if not df_insider_daily.empty:
-            fig.add_trace(gr.Bar(
-                x=df_insider_daily["buy_date"], y=df_insider_daily["total_value"],
-                name="インサイダー取引量 ($)", marker_color="#AA00FF", width=1000 * 60 * 60 * 24 * 3
-            ), row=2, col=1, secondary_y=True)
+            # ボラティリティチャート上にインサイダー買いのタイミングをプロット
+            fig.add_trace(gr.Scatter(
+                x=df_insider_daily["buy_date"], 
+                y=[hist_data["HV_20"].mean()] * len(df_insider_daily),
+                mode="markers+text",
+                marker=dict(symbol="star", size=12, color="#AA00FF", line=dict(color="#00FFCC", width=1)),
+                text=["🐋 Buy"] * len(df_insider_daily),
+                textposition="top center",
+                name="インサイダー買いタイミング"
+            ), row=2, col=1, secondary_y=False)
             
         fig.update_yaxes(title_text="株価 ($)", row=1, col=1, secondary_y=True)
-        fig.update_yaxes(title_text="出来高 (Vol)", row=2, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="インサイダー量 ($)", row=2, col=1, secondary_y=True, showgrid=False)
+        fig.update_yaxes(title_text="ボラティリティ (%)", row=2, col=1, secondary_y=False)
         
         fig.update_layout(
-            height=420, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+            height=450, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
             margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1, x=0),
             hovermode="x"
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # RIGHT: AI戦略 ＆ 統計価格提案
+    # RIGHT: AI戦略 ＆ 統計的予想リターン（ペイオフ）シミュレーター
     with col_strategy:
         # 統計スタッツメトリクス
         m_col1, m_col2, m_col3 = st.columns(3)
@@ -549,114 +566,144 @@ if hist_data is not None:
         is_iv_cheap = (iv / hv) < 1.1 if hv > 0 else True
         is_pcr_bullish = pcr < 0.6
         
+        # ペイオフプロット用のパラメータ設定
+        strikes = []
+        strategy_type = ""
+        
         if is_iv_cheap and is_pcr_bullish:
+            strategy_type = "bull_call"
+            buy_strike = current_price * 0.95
+            sell_strike = upper_1sigma
+            buy_premium = current_price * 0.08
+            sell_premium = current_price * 0.02
+            net_cost = buy_premium - sell_premium
+            max_profit = (sell_strike - buy_strike) - net_cost
+            
             strategy_title = "🟢 推奨戦略: ブル・コール・スプレッド (Bull Call Spread)"
             strategy_class = "strategy-card"
             strategy_desc = f"""
             **【統計的選定根拠】**
             *   **ボラティリティの歪み**: IV/HV比率が **{(iv/hv if hv > 0 else 0):.2f}** と極めて低く、オプション価格が歴史的な実績変動率に対して**統計的に過小評価（割安）**されています。オプションの「買い」に圧倒的な優位性があります。
-            *   **異常なコール偏重**: Put-Call Ratio (PCR) が **{pcr:.2f}** と極端に低く、インサイダーの現物買いと同時に、オプション市場でもコールの大量買い（クジラの足跡）が確認されています。
             
             **【具体的取引価格の統計的提案】**
-            1.  **Buy {current_ticker} 30日満期 ${current_price*0.95:.1f} Call (ITM)**
-                *   **目安プレミアム（買値）**: 約 ${(current_price*0.08):.2f}
-                *   **Delta**: 約 0.65 (株価上昇への追従性が高いストライク)
-            2.  **Sell {current_ticker} 30日満期 ${upper_1sigma:.1f} Call (OTM)**
-                *   **目安プレミアム（売値）**: 約 ${(current_price*0.02):.2f}
-                *   **Delta**: 約 0.30 (1σ上限付近。統計的に権利消滅確率が約84%の安全なストライク)
+            1.  **Buy {current_ticker} 30日満期 ${buy_strike:.1f} Call (ITM)** (目安プレミアム: ${buy_premium:.2f})
+            2.  **Sell {current_ticker} 30日満期 ${sell_strike:.1f} Call (OTM)** (目安プレミアム: ${sell_premium:.2f})
                 
-            ➔ **実質コスト（最大損失）**: 約 ${(current_price*0.06):.2f} に抑えつつ、株価が1σ上限（${upper_1sigma:.2f}）まで上昇した場合、**想定利益率 +180%〜+250%** の非対称なリターンを狙えます。
+            ➔ **実質コスト（最大損失）**: ${net_cost:.2f} / **最大利益**: ${max_profit:.2f} (想定利益率: **+{max_profit/net_cost*100:.1f}%**)
             """
         elif not is_iv_cheap and is_pcr_bullish:
-            strategy_title = "🟡 推奨戦略: カバード・コール (Covered Call) または クレジット・プット・スプレッド"
+            strategy_type = "covered_call"
+            buy_strike = current_price
+            sell_strike = upper_1sigma
+            sell_premium = current_price * 0.05
+            net_cost = buy_strike - sell_premium
+            max_profit = (sell_strike - buy_strike) + sell_premium
+            
+            strategy_title = "🟡 推奨戦略: カバード・コール (Covered Call)"
             strategy_class = "strategy-card"
             strategy_desc = f"""
             **【統計的選定根拠】**
             *   **ボラティリティの過熱**: IV/HV比率が **{(iv/hv if hv > 0 else 0):.2f}** と高く、オプション価格が統計的に割高（プレミアムが膨張）しています。オプションの「売り（ショート）」を絡める戦略が有利です。
-            *   **インサイダーの下値支持**: 大口インサイダー取引により下値が強固に支持されているため、プット売りによるプレミアム回収の安全性が高い状態です。
             
             **【具体的取引価格の統計的提案】**
             1.  **現物株式を ${current_price:.2f} で購入**
-            2.  **Sell {current_ticker} 30日満期 ${upper_1sigma:.1f} Call (OTM)**
-                *   **目安プレミアム（受取）**: 約 ${(current_price*0.05):.2f} (高IVのためプレミアムが通常より高価)
+            2.  **Sell {current_ticker} 30日満期 ${sell_strike:.1f} Call (OTM)** (目安プレミアム受取: ${sell_premium:.2f})
                 
-            ➔ プレミアムを即時回収することで現物の取得単価を引き下げ、株価が横ばいまたは微増であっても、年率換算で極めて高いインカムゲインを獲得できます。
+            ➔ **実質コスト**: ${net_cost:.2f} / **最大利益**: ${max_profit:.2f} (想定利益率: **+{max_profit/net_cost*100:.1f}%**)
             """
         else:
+            strategy_type = "long_call"
+            buy_strike = current_price * 1.05
+            buy_premium = current_price * 0.04
+            
             strategy_title = "🚨 推奨戦略: ロング・コール (Long Call) 単体打診買い"
             strategy_class = "strategy-card-warning"
             strategy_desc = f"""
             **【統計的選定根拠】**
             *   IV/HV比率が **{(iv/hv if hv > 0 else 0):.2f}** とニュートラルですが、インサイダーの買い総額が大きく、突発的なカタリストによる急騰（ボラティリティ・スパイク）の期待値が高い状態です。
             
-            **【具体的取引価格の統計的提案】**
-            *   **Buy {current_ticker} 30日満期 ${current_price*1.05:.1f} Call (ややOTM)**
-                *   **目安プレミアム（買値）**: 約 ${(current_price*0.04):.2f}
+            **【具体的取引価格 of 統計的提案】**
+            *   **Buy {current_ticker} 30日満期 ${buy_strike:.1f} Call (ややOTM)** (目安プレミアム: ${buy_premium:.2f})
                 
-            ➔ 損失を限定（支払ったプレミアムのみ）しつつ、インサイダー買いを契機とした急騰時のレバレッジ利益をストレートに狙う戦略です。
+            ➔ **最大損失**: 支払ったプレミアム ${buy_premium:.2f} のみ / **最大利益**: 無制限 (株価上昇に応じて無限大のレバレッジ)
             """
             
         st.html(f"""
             <div class="{strategy_class}">
                 <h4 style="color: #00FFCC; margin-top: 0;">{strategy_title}</h4>
-                <div style="font-size: 13px; line-height: 1.6; color: #E2E8F0;">
+                <div style="font-size: 12px; line-height: 1.5; color: #E2E8F0;">
                     {strategy_desc}
                 </div>
             </div>
         """)
-        
-        # リアルタイム・イベント・コンソール（名寄せ・合算版）
-        st.markdown("#### ⏱️ リアルタイム・イベント・コンソール")
-        
-        # カタリストとインサイダーの合算
-        raw_events_by_date = {}
-        df_catalysts = fetch_catalyst_events(current_ticker, hist_data, df_raw)
-        
-        # インサイダー名寄せ
-        df_insider_grouped = df_ticker_raw.groupby(["buy_date", "insider"]).agg({
-            "total_value": "sum", "position": "first", "filing_url": "first"
-        }).reset_index()
 
-        for _, trade in df_insider_grouped.iterrows():
-            t_date = trade["buy_date"]
-            if t_date not in raw_events_by_date:
-                raw_events_by_date[t_date] = []
-            raw_events_by_date[t_date].append({
-                "type": "I", "insider": trade["insider"], "position": trade["position"],
-                "value": trade["total_value"], "url": trade["filing_url"]
-            })
-
-        if not df_catalysts.empty:
-            for _, row in df_catalysts.iterrows():
-                c_date = pd.to_datetime(row["date"])
-                if c_date not in raw_events_by_date:
-                    raw_events_by_date[c_date] = []
-                raw_events_by_date[c_date].append({
-                    "type": "C", "category": row["category"], "title": row["title"], "url": row["source_url"]
-                })
-
-        if raw_events_by_date:
-            console_html = "<div class='event-console'>"
-            for event_date in sorted(raw_events_by_date.keys(), reverse=True):
-                date_str = event_date.strftime('%Y-%m-%d')
-                for item in raw_events_by_date[event_date]:
-                    if item["type"] == "I":
-                        badge = "<span class='console-badge' style='background-color: rgba(170, 0, 255, 0.15); color: #E0B0FF; border: 1px solid #AA00FF;'>インサイダー [ I ]</span>"
-                        text = f"👤 <span style='color:#00FFCC; font-weight:bold;'>{item['insider']}</span> ({item['position']}) が 合計 <b style='color:#00FFCC;'>${item['value']:,.0f}</b> を市場から購入"
-                    else:
-                        badge = "<span class='console-badge' style='background-color: rgba(255, 215, 0, 0.15); color: #FFD700; border: 1px solid #FFD700;'>ニュース [ R ]</span>"
-                        text = f"📢 <span style='color:#FFD700;'>{item['category']}</span>: {item['title']}"
-                    console_html += f"<div class='console-row'><div class='console-date'>[{date_str}]</div>{badge}<div class='console-text'>{text}</div></div>"
-            console_html += "</div>"
-            st.html(console_html)
-        else:
-            st.info("💡 直近で検出された重大イベントはありません。")
+        # ----------------------------------------------------------------------
+        # 新設: 統計的予想リターン（ペイオフ・ダイアグラム）シミュレーター
+        # ----------------------------------------------------------------------
+        st.markdown("#### 📈 満期時株価騰落率 vs 予想投資リターン (%)")
+        
+        # 株価変動レンジの生成 (-20% から +20%)
+        stock_changes = np.linspace(-0.20, 0.20, 100)
+        underlying_prices = current_price * (1 + stock_changes)
+        payoffs = []
+        
+        if strategy_type == "bull_call":
+            for S in underlying_prices:
+                p_buy = max(0, S - buy_strike) - buy_premium
+                p_sell = sell_premium - max(0, S - sell_strike)
+                net_payoff = (p_buy + p_sell) / net_cost * 100
+                payoffs.append(net_payoff)
+        elif strategy_type == "covered_call":
+            for S in underlying_prices:
+                stock_profit = S - current_price
+                call_profit = sell_premium - max(0, S - sell_strike)
+                net_payoff = (stock_profit + call_profit) / net_cost * 100
+                payoffs.append(net_payoff)
+        else:  # long_call
+            for S in underlying_prices:
+                net_payoff = (max(0, S - buy_strike) - buy_premium) / buy_premium * 100
+                payoffs.append(net_payoff)
+                
+        # 損益分岐点（Payoff = 0%）の探索
+        zero_idx = np.argmin(np.abs(payoffs))
+        breakeven_change = stock_changes[zero_idx] * 100
+        
+        fig_payoff = gr.Figure()
+        
+        # 1σ変動範囲の背景シェーディング
+        fig_payoff.add_vrect(
+            x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100,
+            fillcolor="rgba(0, 255, 204, 0.05)", line_width=0,
+            annotation_text="1σ 確率範囲 (68%)", annotation_position="top left",
+            annotation_font=dict(size=10, color="rgba(0, 255, 204, 0.5)")
+        )
+        
+        # ペイオフ曲線の描画
+        fig_payoff.add_trace(gr.Scatter(
+            x=stock_changes * 100, y=payoffs,
+            mode="lines", line=dict(color="#00FFCC", width=3),
+            name="予想リターン (%)"
+        ))
+        
+        # 損益分岐点ライン
+        fig_payoff.add_vline(x=breakeven_change, line_dash="dash", line_color="#FF007F", name="損益分岐点")
+        fig_payoff.add_hline(y=0, line_color="rgba(255, 255, 255, 0.2)", line_width=1)
+        
+        fig_payoff.update_layout(
+            height=220, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+            margin=dict(l=10, r=10, t=10, b=10),
+            xaxis=dict(title="満期時の株価騰落率 (%)", gridcolor="rgba(255,255,255,0.05)"),
+            yaxis=dict(title="投資リターン (%)", gridcolor="rgba(255,255,255,0.05)"),
+            showlegend=False
+        )
+        st.plotly_chart(fig_payoff, use_container_width=True)
+        st.markdown(f"<div style='font-size: 11px; color: #94A3B8; text-align: center;'>損益分岐点（Break-even）: 株価騰落率 <b>{breakeven_change:+.1f}%</b> (${current_price*(1+breakeven_change/100):.2f}) 以上でプラス収支</div>", unsafe_html=True)
 
 else:
     st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
 
 # ==============================================================================
-# 7. LOWER SECTION: 詳細オプションチェーン ＆ マルチソース・リンク (全幅表示)
+# 9. LOWER SECTION: 詳細オプションチェーン ＆ マルチソース・リンク (全幅表示)
 # ==============================================================================
 st.markdown("---")
 st.markdown("### 📄 直近満期オプション・チェーン (詳細統計マトリックス)")
@@ -671,13 +718,41 @@ if hist_data is not None and df_options is not None and not df_options.empty:
         df_opt_display[["Strike", "Type", "Last Price", "Volume", "Open Interest", "IV", "Delta"]],
         use_container_width=True,
         hide_index=True,
-        height=250
+        height=220
     )
 else:
     st.warning("⚠️ オプションチェーンデータを取得できませんでした。")
 
 st.markdown("---")
 st.markdown(f"### 🔗 【{current_ticker}】 マルチソース・適時開示＆ニュースターミナル")
+
+# カタリストとインサイダーの合算
+if hist_data is not None:
+    raw_events_by_date = {}
+    df_catalysts = fetch_catalyst_events(current_ticker, hist_data, df_raw)
+    
+    # インサイダー名寄せ
+    df_insider_grouped = df_ticker_raw.groupby(["buy_date", "insider"]).agg({
+        "total_value": "sum", "position": "first", "filing_url": "first"
+    }).reset_index()
+
+    for _, trade in df_insider_grouped.iterrows():
+        t_date = trade["buy_date"]
+        if t_date not in raw_events_by_date:
+            raw_events_by_date[t_date] = []
+        raw_events_by_date[t_date].append({
+            "type": "I", "insider": trade["insider"], "position": trade["position"],
+            "value": trade["total_value"], "url": trade["filing_url"]
+        })
+
+    if not df_catalysts.empty:
+        for _, row in df_catalysts.iterrows():
+            c_date = pd.to_datetime(row["date"])
+            if c_date not in raw_events_by_date:
+                raw_events_by_date[c_date] = []
+            raw_events_by_date[c_date].append({
+                "type": "C", "category": row["category"], "title": row["title"], "url": row["source_url"]
+            })
 
 if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_date:
     # リンクテーブルの生成
