@@ -357,96 +357,117 @@ if hist_data is not None:
     st.markdown("### 📈 テクニカル分析チャート")
     st.caption("💡 【直接描画機能】: チャート右上（Modebar）の「ライン描画アイコン（Draw line）」や「消しゴム（Erase active shape）」をクリックすると、チャート上で直接ドラッグしてトレンドラインを引くことができます。")
 
-    # 【デバッグ】X軸同期を完全に解除（shared_xaxes=False）してRSIの圧縮バグを解消
+    # プロ仕様の凡例表示パネルをチャート上部に設置（Plotly内での重なりを完全回避）
+    st.markdown(
+        "<div style='background-color: #111827; padding: 10px; border-radius: 6px; font-size: 12px; border: 1px solid #1F2937; margin-bottom: 10px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center;'>"
+        "<span style='color: #00FFCC;'>■ 現物株価</span>"
+        "<span style='color: #E2E8F0; border-bottom: 2px dashed rgba(0, 255, 204, 0.4);'>-- 1σ上昇/下落下限 (30日予測)</span>"
+        "<span style='color: #A855F7;'>■ RSI (14)</span>"
+        "<span style='color: #38BDF8;'>■ MACD</span>"
+        "<span style='color: #FF8C00;'>■ Signal</span>"
+        "<span style='color: #00FFCC;'>■ MACD Hist (強気)</span>"
+        "<span style='color: #FF007F;'>■ MACD Hist (弱気)</span>"
+        "</div>", 
+        unsafe_allow_html=True
+    )
+
+    # 【重要】X軸同期（shared_xaxes=True）を復活させ、不連続な日付グリッドを完全に統一
     if sub_indicator == "RSI + MACD":
         fig_tech = make_subplots(
-            rows=3, cols=1, shared_xaxes=False, vertical_spacing=0.06, row_width=[0.2, 0.2, 0.5]
+            rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_width=[0.2, 0.2, 0.6]
         )
     else:
         fig_tech = make_subplots(
-            rows=2, cols=1, shared_xaxes=False, vertical_spacing=0.08, row_width=[0.3, 0.6]
+            rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_width=[0.3, 0.7]
         )
     
-    future_dates = [hist_data.index[-1] + timedelta(days=i) for i in range(31)]
+    # 1段目のプロット用日付範囲（直近60営業日）を厳密に取得
+    plot_dates = hist_data.index[-60:]
+    start_date = plot_dates[0]
+    end_date = plot_dates[-1]
+    
+    future_dates = [end_date + timedelta(days=i) for i in range(31)]
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
     
     # メイン株価 (Row 1)
     if chart_type == "ローソク足":
         fig_tech.add_trace(gr.Candlestick(
-            x=hist_data.index[-60:], open=hist_data["Open"].iloc[-60:], high=hist_data["High"].iloc[-60:],
-            low=hist_data["Low"].iloc[-60:], close=hist_data["Close"].iloc[-60:], name="株価 (OHLC)"
+            x=plot_dates, open=hist_data["Open"].iloc[-60:], high=hist_data["High"].iloc[-60:],
+            low=hist_data["Low"].iloc[-60:], close=hist_data["Close"].iloc[-60:], name="株価"
         ), row=1, col=1)
     else:
         fig_tech.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["Close"].iloc[-60:],
-            mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
+            x=plot_dates, y=hist_data["Close"].iloc[-60:],
+            mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価"
         ), row=1, col=1)
         
     # 重ね合わせ指標 (Row 1)
+    # 【バグ修正】fill="tonexty" を完全に廃止し、下段サブプロットへの塗りつぶし侵入バグを根本解決
     if overlay_indicator == "ボリンジャーバンド" and "BB_Upper" in hist_data.columns:
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.45)", width=0.6), hoverinfo="skip", showlegend=False), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.45)", width=0.6), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.08)", hoverinfo="skip", showlegend=False), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.0, dash="dash"), name="20日移動平均", hoverinfo="skip"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.5)", width=1.0, dash="dash"), name="BB Upper"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.5)", width=1.0, dash="dash"), name="BB Lower"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.0, dash="dot"), name="20日移動平均"), row=1, col=1)
     elif overlay_indicator == "EMA (20/50)":
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["EMA20"].iloc[-60:], line=dict(color="#00C5FF", width=1.2), name="EMA 20"), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["EMA50"].iloc[-60:], line=dict(color="#FF8C00", width=1.2), name="EMA 50"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["EMA20"].iloc[-60:], line=dict(color="#00C5FF", width=1.2), name="EMA 20"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["EMA50"].iloc[-60:], line=dict(color="#FF8C00", width=1.2), name="EMA 50"), row=1, col=1)
     elif overlay_indicator == "一目均衡表 (Ichimoku)":
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["Senkou_Span_A"].iloc[-60:], line=dict(color="rgba(56, 189, 248, 0.4)", width=0.8), hoverinfo="skip", showlegend=False), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["Senkou_Span_B"].iloc[-60:], line=dict(color="rgba(244, 63, 94, 0.4)", width=0.8), fill="tonexty", fillcolor="rgba(56, 189, 248, 0.05)", hoverinfo="skip", showlegend=False), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["Tenkan_Sen"].iloc[-60:], line=dict(color="#38BDF8", width=1.0), name="転換線"), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["Kijun_Sen"].iloc[-60:], line=dict(color="#F43F5E", width=1.0), name="基準線"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["Senkou_Span_A"].iloc[-60:], line=dict(color="rgba(56, 189, 248, 0.4)", width=0.8, dash="dash"), name="先行スパンA"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["Senkou_Span_B"].iloc[-60:], line=dict(color="rgba(244, 63, 94, 0.4)", width=0.8, dash="dash"), name="先行スパンB"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["Tenkan_Sen"].iloc[-60:], line=dict(color="#38BDF8", width=1.0), name="転換線"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["Kijun_Sen"].iloc[-60:], line=dict(color="#F43F5E", width=1.0), name="基準線"), row=1, col=1)
 
     # 1σ予測レンジ (Row 1)
-    fig_tech.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(0, 255, 204, 0.25)", width=1, dash="dash"), name="1σ 上昇上限 (68%)"), row=1, col=1)
-    fig_tech.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.25)", width=1, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.01)", name="1σ 下落下限 (68%)"), row=1, col=1)
+    fig_tech.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(0, 255, 204, 0.4)", width=1.2, dash="dash"), name="1σ上限"), row=1, col=1)
+    fig_tech.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.4)", width=1.2, dash="dash"), name="1σ下限"), row=1, col=1)
 
     # 下段サブ指標の描画
     if sub_indicator == "RSI + MACD":
-        # RSI (Row 2) - 独立したX軸で過去60営業日分を端から端まで完全に描画
+        # RSI (Row 2) - 1段目と完全に同期したX軸（plot_dates）で一貫して描画
         fig_tech.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["RSI_14"].iloc[-60:], 
-            mode="lines", line=dict(color="#A855F7", width=1.8), name="RSI (14)"
+            x=plot_dates, y=hist_data["RSI_14"].iloc[-60:], 
+            mode="lines", line=dict(color="#A855F7", width=2.0), name="RSI"
         ), row=2, col=1)
-        fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.45)", row=2, col=1)
-        fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.45)", row=2, col=1)
+        fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.5)", row=2, col=1)
+        fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.5)", row=2, col=1)
 
         # MACD (Row 3)
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MACD"].iloc[-60:], mode="lines", line=dict(color="#38BDF8", width=1.2), name="MACD"), row=3, col=1)
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MACD_Signal"].iloc[-60:], mode="lines", line=dict(color="#FF8C00", width=1.2), name="Signal"), row=3, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["MACD"].iloc[-60:], mode="lines", line=dict(color="#38BDF8", width=1.5), name="MACD"), row=3, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["MACD_Signal"].iloc[-60:], mode="lines", line=dict(color="#FF8C00", width=1.5), name="Signal"), row=3, col=1)
         hist_colors = ["#00FFCC" if val >= 0 else "#FF007F" for val in hist_data["MACD_Hist"].iloc[-60:]]
-        fig_tech.add_trace(gr.Bar(x=hist_data.index[-60:], y=hist_data["MACD_Hist"].iloc[-60:], marker_color=hist_colors, name="Histogram"), row=3, col=1)
+        fig_tech.add_trace(gr.Bar(x=plot_dates, y=hist_data["MACD_Hist"].iloc[-60:], marker_color=hist_colors, name="Hist"), row=3, col=1)
     else:
         # ATR (Row 2)
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["ATR"].iloc[-60:], mode="lines", line=dict(color="#E2E8F0", width=1.5), name="ATR (値幅)"), row=2, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["ATR"].iloc[-60:], mode="lines", line=dict(color="#E2E8F0", width=1.8), name="ATR"), row=2, col=1)
 
-    # レイアウト調整（凡例を右側に縦並びで配置し、右上アイコンやX軸との被りを完全に回避）
+    # レイアウト調整（X軸表示範囲を過去実績期間にクリップし、凡例を非表示化）
     fig_tech.update_layout(
-        height=680, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-        margin=dict(l=10, r=130, t=20, b=10), # 右側に十分なマージンを確保
-        legend=dict(
-            orientation="v", 
-            y=1, 
-            x=1.02, # チャートエリアの右外側に配置
-            xanchor="left",
-            yanchor="top"
-        ),
-        xaxis=dict(showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-        yaxis=dict(title="株価 ($)", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-        hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace"),
+        height=650, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+        margin=dict(l=10, r=10, t=10, b=10),
+        showlegend=False, # 被りを防ぐため、チャート内蔵の凡例は非表示
+        hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.9)", font_size=11, font_family="Consolas, monospace"),
         dragmode="drawline", newshape=dict(line=dict(color="#00FFCC", width=1.5), opacity=0.8)
+    )
+
+    # 【重要】X軸の表示範囲を「実績データの存在する期間」に固定
+    # これにより、RSIやMACDが未来側に引きずられて圧縮されるバグを完全に解決します。
+    xaxis_range = [start_date, end_date]
+    
+    fig_tech.update_layout(
+        xaxis=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
+        yaxis=dict(title="株価 ($)", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)")
     )
 
     if sub_indicator == "RSI + MACD":
         fig_tech.update_layout(
-            xaxis2=dict(showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-            xaxis3=dict(title="日付", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
+            xaxis2=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
+            xaxis3=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
             yaxis2=dict(title="RSI", range=[10, 90]), 
             yaxis3=dict(title="MACD")
         )
     else:
         fig_tech.update_layout(
-            xaxis2=dict(title="日付", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
+            xaxis2=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
             yaxis2=dict(title="ATR")
         )
     
@@ -465,8 +486,8 @@ if hist_data is not None:
     hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
     hist_data["IV_Sim"] = hist_data["HV_20"] * (iv / (hv if hv > 0 else 1.0))
 
-    fig_vol.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["HV_20"].iloc[-60:], mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"))
-    fig_vol.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["IV_Sim"].iloc[-60:], mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"))
+    fig_vol.add_trace(gr.Scatter(x=plot_dates, y=hist_data["HV_20"].iloc[-60:], mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"))
+    fig_vol.add_trace(gr.Scatter(x=plot_dates, y=hist_data["IV_Sim"].iloc[-60:], mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"))
 
     df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
     df_insider_daily = df_ticker_raw.groupby(["buy_date", "insider"])["total_value"].sum().reset_index()
@@ -511,7 +532,7 @@ if hist_data is not None:
             xanchor="left",
             yanchor="top"
         ),
-        xaxis=dict(title="日付", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
+        xaxis=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         yaxis=dict(title="ボラティリティ (%)", range=[-25, 105], showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace")
     )
@@ -738,27 +759,3 @@ if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_
                 linked_sources_list.append({
                     "日付": date_str, "分類": "🟣 インサイダー [ I ]",
                     "イベント概要": f"{item['insider']} ({item['position']}) が 合計 ${item['value']:,.0f} を購入",
-                    "SEC開示 (Form 4)": item["url"], "Googleニュース": date_specific_news_url,
-                    "Finviz Chart": f"https://finviz.com/quote.ashx?t={current_ticker}"
-                })
-            else:
-                linked_sources_list.append({
-                    "日付": date_str, "分類": "🟡 カタリスト [ R ]",
-                    "イベント概要": f"【{item['category']}】 {item['title']}",
-                    "SEC開示 (Form 4)": f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
-                    "Googleニュース": item["url"], "Finviz Chart": f"https://finviz.com/quote.ashx?t={current_ticker}"
-                })
-                
-    if linked_sources_list:
-        df_sources = pd.DataFrame(linked_sources_list).drop_duplicates(subset=["日付", "イベント概要"])
-        st.dataframe(
-            df_sources,
-            column_config={
-                "SEC開示 (Form 4)": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
-                "Googleニュース": st.column_config.LinkColumn("Google News", display_text="News ↗"),
-                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
-            },
-            use_container_width=True, hide_index=True, height=250
-        )
-else:
-    st.info("💡 リンク可能なイベント履歴はありません。")
