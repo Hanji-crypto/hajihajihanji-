@@ -350,6 +350,12 @@ with st.spinner(f"【{current_ticker}】の市場データを解析中..."):
     hist_data, current_price, hv, available_expiries = fetch_market_data(current_ticker)
 
 if hist_data is not None:
+    # 【重要】ボリンジャーバンドの計算ロジック（描画前に確実にカラムを作成）
+    hist_data["MA20"] = hist_data["Close"].rolling(window=20).mean()
+    hist_data["STD20"] = hist_data["Close"].rolling(window=20).std()
+    hist_data["BB_Upper"] = hist_data["MA20"] + (hist_data["STD20"] * 2)
+    hist_data["BB_Lower"] = hist_data["MA20"] - (hist_data["STD20"] * 2)
+
     # 限月ドリルダウン機能の配置
     st.markdown("### 📅 オプション限月ドリルダウン（満期選択）")
     if available_expiries:
@@ -417,7 +423,8 @@ if hist_data is not None:
             mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
         ))
         
-    if show_bb:
+    # ボリンジャーバンドの描画（安全なガードレールロジック）
+    if show_bb and "BB_Upper" in hist_data.columns:
         fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", hoverinfo="skip", showlegend=False))
         fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", hoverinfo="skip", showlegend=False))
         fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均", hoverinfo="skip"))
