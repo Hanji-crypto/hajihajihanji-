@@ -25,10 +25,9 @@ st.html("""
     div[data-testid="stMetricLabel"] { color: #94A3B8 !important; font-size: 11px; }
     hr { border-color: #1E293B !important; }
     a { color: #00FFCC !important; text-decoration: none; font-weight: bold; }
-    a:hover { text-decoration: underline; }
-    .strategy-card { background-color: #111827; border: 1px solid #1F2937; border-left: 5px solid #00FFCC; padding: 20px; border-radius: 8px; margin-bottom: 18px; width: 100%; }
-    .strategy-card-secondary { background-color: #0F172A; border: 1px solid #1E293B; border-left: 5px solid #38BDF8; padding: 20px; border-radius: 8px; margin-bottom: 18px; width: 100%; }
-    .strategy-card-warning { background-color: #1E1B4B; border: 1px solid #312E81; border-left: 5px solid #A855F7; padding: 20px; border-radius: 8px; margin-bottom: 16px; width: 100%; }
+    .strategy-card { background-color: #111827; border: 1px solid #1F2937; border-left: 5px solid #00FFCC; padding: 20px; border-radius: 8px; margin-bottom: 18px; }
+    .strategy-card-secondary { background-color: #0F172A; border: 1px solid #1E293B; border-left: 5px solid #38BDF8; padding: 20px; border-radius: 8px; margin-bottom: 18px; }
+    .strategy-card-warning { background-color: #1E1B4B; border: 1px solid #312E81; border-left: 5px solid #A855F7; padding: 20px; border-radius: 8px; margin-bottom: 16px; }
     .guide-panel { background-color: #0F172A; border: 1px solid #1E293B; padding: 20px; border-radius: 8px; margin-bottom: 24px; border-top: 4px solid #38BDF8; }
     div[data-testid="stRadio"] > div { gap: 12px; }
     </style>
@@ -662,7 +661,7 @@ st.html("""
                     </tr>
                     <tr style="border-bottom: 1px solid #1E293B;">
                         <td style="padding: 6px; font-weight: bold; color: #00FFCC;">IV (予測ボラ)</td>
-                        <td style="padding: 6px;">将来の期待変動率 / <b>プレミアムの割高・割安</b></td>
+                        <td style="padding: 6px;">将来の期待変動率 / <b>プレミアム of 割高・割安</b></td>
                         <td style="padding: 6px; color: #FF007F;">割高 (オプション売り手に有利)</td>
                         <td style="padding: 6px; color: #38BDF8;">割安 (オプション買い手に有利)</td>
                     </tr>
@@ -723,15 +722,14 @@ st.markdown(f"### 🔗 【{current_ticker}】 適時開示＆ニュースター�
 if hist_data is not None:
     raw_events_by_date = {}
     df_catalysts = fetch_catalyst_events(current_ticker, hist_data, df_raw)
-    
+    df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
     df_insider_grouped = df_ticker_raw.groupby(["buy_date", "insider"]).agg({
         "total_value": "sum", "position": "first", "filing_url": "first"
     }).reset_index()
 
     for _, trade in df_insider_grouped.iterrows():
         t_date = trade["buy_date"]
-        if t_date not in raw_events_by_date:
-            raw_events_by_date[t_date] = []
+        if t_date not in raw_events_by_date: raw_events_by_date[t_date] = []
         raw_events_by_date[t_date].append({
             "type": "I", "insider": trade["insider"], "position": trade["position"],
             "value": trade["total_value"], "url": trade["filing_url"]
@@ -740,8 +738,7 @@ if hist_data is not None:
     if not df_catalysts.empty:
         for _, row in df_catalysts.iterrows():
             c_date = pd.to_datetime(row["date"])
-            if c_date not in raw_events_by_date:
-                raw_events_by_date[c_date] = []
+            if c_date not in raw_events_by_date: raw_events_by_date[c_date] = []
             raw_events_by_date[c_date].append({
                 "type": "C", "category": row["category"], "title": row["title"], "url": row["source_url"]
             })
@@ -756,6 +753,31 @@ if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_
         
         for item in raw_events_by_date[event_date]:
             if item["type"] == "I":
-                linked_sources_list.append({
-                    "日付": date_str, "分類": "🟣 インサイダー [ I ]",
-                    "イベント概要": f"{item['insider']} ({item['position']}) が 合計 ${item['value']:,.0f} を購入",
+                linked_sources_list.append([
+                    date_str, "🟣 インサイダー [ I ]",
+                    f"{item['insider']} ({item['position']}) が 合計 ${item['value']:,.0f} を購入",
+                    item["url"], date_specific_news_url,
+                    f"https://finviz.com/quote.ashx?t={current_ticker}"
+                ])
+            else:
+                linked_sources_list.append([
+                    date_str, "🟡 カタリスト [ R ]",
+                    f"【{item['category']}】 {item['title']}",
+                    f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
+                    item["url"],
+                    f"https://finviz.com/quote.ashx?t={current_ticker}"
+                ])
+                
+    if linked_sources_list:
+        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "分類", "イベント概要", "SEC Link", "Google News", "Finviz Chart"]).drop_duplicates(subset=["日付", "イベント概要"])
+        st.dataframe(
+            df_sources,
+            column_config={
+                "SEC Link": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
+                "Google News": st.column_config.LinkColumn("Google News", display_text="News ↗"),
+                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
+            },
+            use_container_width=True, hide_index=True, height=250
+        )
+else:
+    st.info("💡 リンク可能なイベント履歴はありません。")
