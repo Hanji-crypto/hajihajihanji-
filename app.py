@@ -3,7 +3,6 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as gr
-from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import yfinance as yf
 import math
@@ -394,75 +393,80 @@ if hist_data is not None:
 
     col_chart, col_strategy = st.columns([4, 3])
     
-    # LEFT: 統合チャート (上段: 株価&1σバンド, 下段: 純粋なボラティリティ推移&インサイダーシグナルのみ)
+    # LEFT: 統合チャート (2つの完全に独立したPlotlyオブジェクトに分離し、干渉を物理的に100%防ぐ)
     with col_chart:
-        # サブプロットの作成 (RSI段を完全に排除し、ROW 2に固定)
-        # 各ROWは独立した単一のY軸を持ち、重複描画を物理的に排除します
-        fig = make_subplots(
-            rows=2, cols=1, 
-            shared_xaxes=True, 
-            vertical_spacing=0.08, 
-            row_heights=[0.65, 0.35]
-        )
+        # ----------------------------------------------------------------------
+        # CHART 1: 現物株価チャート (上段・高さ 420px)
+        # ----------------------------------------------------------------------
+        fig_price = gr.Figure()
         
         # 1σ予測バンドの描画 (統計的確率約68%の推移予測)
         future_dates = [hist_data.index[-1] + timedelta(days=i) for i in range(31)]
         upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
         lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
         
-        # ----------------------------------------------------------------------
-        # ROW 1: 現物株価チャート (ボリンジャーバンド & 1σ予測バンド)
-        # ----------------------------------------------------------------------
         if chart_type == "ローソク足":
-            fig.add_trace(gr.Candlestick(
+            fig_price.add_trace(gr.Candlestick(
                 x=hist_data.index[-60:], open=hist_data["Open"].iloc[-60:], high=hist_data["High"].iloc[-60:],
                 low=hist_data["Low"].iloc[-60:], close=hist_data["Close"].iloc[-60:], name="株価 (OHLC)"
-            ), row=1, col=1)
+            ))
         else:
-            fig.add_trace(gr.Scatter(
+            fig_price.add_trace(gr.Scatter(
                 x=hist_data.index[-60:], y=hist_data["Close"].iloc[-60:],
                 mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
-            ), row=1, col=1)
+            ))
             
         # ボリンジャーバンドの描画
         if show_bb:
-            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", hoverinfo="skip", showlegend=False), row=1, col=1)
-            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", hoverinfo="skip", showlegend=False), row=1, col=1)
-            fig.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均", hoverinfo="skip"), row=1, col=1)
+            fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", hoverinfo="skip", showlegend=False))
+            fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", hoverinfo="skip", showlegend=False))
+            fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均", hoverinfo="skip"))
 
         # 1σ予測バンドの描画
-        fig.add_trace(gr.Scatter(
+        fig_price.add_trace(gr.Scatter(
             x=future_dates, y=upper_band_curve,
             mode="lines", line=dict(color="rgba(0, 255, 204, 0.3)", width=1, dash="dash"),
             name="1σ 上昇上限 (確率68%)", showlegend=True
-        ), row=1, col=1)
+        ))
         
-        fig.add_trace(gr.Scatter(
+        fig_price.add_trace(gr.Scatter(
             x=future_dates, y=lower_band_curve,
             mode="lines", line=dict(color="rgba(239, 68, 68, 0.3)", width=1, dash="dash"),
             fill="tonexty", fillcolor="rgba(0, 255, 204, 0.02)",
             name="1σ 下落下限 (確率68%)", showlegend=True
-        ), row=1, col=1)
+        ))
         
+        fig_price.update_layout(
+            height=420, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+            margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1, x=0),
+            xaxis=dict(title="", showticklabels=False), # 下段と時間軸を揃えるため上段の目盛りは非表示
+            yaxis=dict(title="株価 ($)"),
+            hovermode="x"
+        )
+        st.plotly_chart(fig_price, use_container_width=True)
+
         # ----------------------------------------------------------------------
-        # ROW 2: 純粋なボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング
+        # CHART 2: 純粋なボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング (下段・高さ 280px)
         # ----------------------------------------------------------------------
+        # 完全に独立した新しいFigureオブジェクトを生成（株価データは一切含まない）
+        fig_vol = gr.Figure()
+        
         # 過去のHV推移のシミュレーション（20日移動標準偏差から算出）
         hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
         # IV推移（ATMオプション価格から逆算した歴史的IV推移のシミュレーション）
         hist_data["IV_Sim"] = hist_data["HV_20"] * (iv / (hv if hv > 0 else 1.0))
 
         # HV推移の描画
-        fig.add_trace(gr.Scatter(
+        fig_vol.add_trace(gr.Scatter(
             x=hist_data.index[-60:], y=hist_data["HV_20"].iloc[-60:],
             mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"
-        ), row=2, col=1)
+        ))
 
         # IV推移の描画
-        fig.add_trace(gr.Scatter(
+        fig_vol.add_trace(gr.Scatter(
             x=hist_data.index[-60:], y=hist_data["IV_Sim"].iloc[-60:],
             mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"
-        ), row=2, col=1)
+        ))
 
         # インサイダー買いタイミング
         df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
@@ -470,7 +474,7 @@ if hist_data is not None:
         df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
         
         if not df_insider_daily.empty:
-            fig.add_trace(gr.Scatter(
+            fig_vol.add_trace(gr.Scatter(
                 x=df_insider_daily["buy_date"], 
                 y=[hist_data["HV_20"].mean()] * len(df_insider_daily),
                 mode="markers+text",
@@ -478,18 +482,16 @@ if hist_data is not None:
                 text=["🐋 Buy"] * len(df_insider_daily),
                 textposition="top center",
                 name="インサイダー買いタイミング"
-            ), row=2, col=1)
+            ))
             
-        fig.update_yaxes(title_text="株価 ($)", row=1, col=1)
-        fig.update_yaxes(title_text="ボラティリティ (%)", row=2, col=1)
-        
-        # チャート全体の高さを 700 に設定して視認性を最大化
-        fig.update_layout(
-            height=700, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-            margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.05, x=0),
+        fig_vol.update_layout(
+            height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+            margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1, x=0),
+            xaxis=dict(title="日付"),
+            yaxis=dict(title="ボラティリティ (%)"),
             hovermode="x"
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig_vol, use_container_width=True)
 
     # RIGHT: AI戦略 ＆ 統計的予想リターン（ペイオフ）シミュレーター
     with col_strategy:
