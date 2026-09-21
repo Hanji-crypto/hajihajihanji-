@@ -442,21 +442,22 @@ if hist_data is not None:
     st.markdown("### 📈 テクニカル分析チャート")
     st.caption("💡 【直接描画機能】: チャート右上（Modebar）の「ライン描画アイコン（Draw line）」や「消しゴム（Erase active shape）」をクリックすると、チャート上で直接ドラッグしてトレンドラインを引くことができます。")
 
-    # サブ指標の選択状態に応じてレイアウトを分岐
+    # 【重要】未来予測レンジ（1段目）と過去実績（2/3段目）のX軸同期を完全に解除（shared_xaxes=False）
+    # これにより、RSIやMACDのデータが未来側に引きずられて圧縮されるバグを根本解決します。
     if sub_indicator == "RSI + MACD":
         fig_tech = make_subplots(
-            rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_width=[0.2, 0.2, 0.6]
+            rows=3, cols=1, shared_xaxes=False, vertical_spacing=0.06, row_width=[0.2, 0.2, 0.5]
         )
     else:
         fig_tech = make_subplots(
-            rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_width=[0.3, 0.7]
+            rows=2, cols=1, shared_xaxes=False, vertical_spacing=0.08, row_width=[0.3, 0.6]
         )
     
     future_dates = [hist_data.index[-1] + timedelta(days=i) for i in range(31)]
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
     
-    # メイン株価
+    # メイン株価 (Row 1)
     if chart_type == "ローソク足":
         fig_tech.add_trace(gr.Candlestick(
             x=hist_data.index[-60:], open=hist_data["Open"].iloc[-60:], high=hist_data["High"].iloc[-60:],
@@ -468,7 +469,7 @@ if hist_data is not None:
             mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
         ), row=1, col=1)
         
-    # 重ね合わせ指標の動的描画
+    # 重ね合わせ指標の動的描画 (Row 1)
     if overlay_indicator == "ボリンジャーバンド" and "BB_Upper" in hist_data.columns:
         fig_tech.add_trace(gr.Scatter(
             x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], 
@@ -513,19 +514,19 @@ if hist_data is not None:
             line=dict(color="#F43F5E", width=1.0), name="基準線"
         ), row=1, col=1)
 
-    # 1σ予測レンジ
+    # 1σ予測レンジ (Row 1)
     fig_tech.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(0, 255, 204, 0.25)", width=1, dash="dash"), name="1σ 上昇上限 (68%)"), row=1, col=1)
     fig_tech.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.25)", width=1, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.01)", name="1σ 下落下限 (68%)"), row=1, col=1)
 
     # 下段サブ指標の描画
     if sub_indicator == "RSI + MACD":
-        # RSI (Row 2) - サブプロットの行指定を厳密に固定
+        # RSI (Row 2) - 独立したX軸で過去60営業日分を端から端まで完全に描画
         fig_tech.add_trace(gr.Scatter(
             x=hist_data.index[-60:], y=hist_data["RSI_14"].iloc[-60:], 
-            mode="lines", line=dict(color="#A855F7", width=1.5), name="RSI (14)"
+            mode="lines", line=dict(color="#A855F7", width=1.8), name="RSI (14)"
         ), row=2, col=1)
-        fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.4)", row=2, col=1)
-        fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.4)", row=2, col=1)
+        fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.45)", row=2, col=1)
+        fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.45)", row=2, col=1)
 
         # MACD (Row 3)
         fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MACD"].iloc[-60:], mode="lines", line=dict(color="#38BDF8", width=1.2), name="MACD"), row=3, col=1)
@@ -538,8 +539,8 @@ if hist_data is not None:
 
     # レイアウト調整（凡例を右側に縦並びで配置し、右上アイコンやX軸との被りを完全に回避）
     fig_tech.update_layout(
-        height=650, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-        margin=dict(l=10, r=120, t=20, b=10), # 右側に凡例用のマージンを確保
+        height=680, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+        margin=dict(l=10, r=130, t=20, b=10), # 右側に十分なマージンを確保
         legend=dict(
             orientation="v", 
             y=1, 
@@ -548,7 +549,6 @@ if hist_data is not None:
             yanchor="top"
         ),
         xaxis=dict(showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-        xaxis2=dict(showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         yaxis=dict(title="株価 ($)", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace"),
         dragmode="drawline", newshape=dict(line=dict(color="#00FFCC", width=1.5), opacity=0.8)
@@ -556,6 +556,7 @@ if hist_data is not None:
 
     if sub_indicator == "RSI + MACD":
         fig_tech.update_layout(
+            xaxis2=dict(showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
             xaxis3=dict(title="日付", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
             yaxis2=dict(title="RSI", range=[10, 90]), 
             yaxis3=dict(title="MACD")
@@ -619,7 +620,7 @@ if hist_data is not None:
             
     fig_vol.update_layout(
         height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-        margin=dict(l=10, r=120, t=50, b=10), 
+        margin=dict(l=10, r=130, t=50, b=10), 
         legend=dict(
             orientation="v", 
             y=1, 
@@ -872,9 +873,4 @@ if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_
             column_config={
                 "SEC開示 (Form 4)": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
                 "Googleニュース": st.column_config.LinkColumn("Google News", display_text="News ↗"),
-                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
-            },
-            use_container_width=True, hide_index=True, height=250
-        )
-else:
-    st.info("💡 リンク可能なイベント履歴はありません。")
+                "Finviz Chart
