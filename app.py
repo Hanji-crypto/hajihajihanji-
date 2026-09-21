@@ -173,28 +173,24 @@ if raw_hist is not None:
         unsafe_allow_html=True
     )
 
-    # shared_xaxes=Trueのサブプロット作成
-    # row_widthは下から順に指定するため、[0.2, 0.2, 0.6] は Row3=0.2, Row2=0.2, Row1=0.6 となり正しい比率になります。
+    # サブプロット作成 (下から順に比率を設定するため、[0.2, 0.2, 0.6] で Row1=60%, Row2=20%, Row3=20% に完全固定)
     if sub_indicator == "RSI + MACD":
         fig_tech = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_width=[0.2, 0.2, 0.6])
     else:
         fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_width=[0.3, 0.7])
     
-    df_recent_hist = hist_data.iloc[-60:].copy()
-    plot_dates = df_recent_hist.index
+    # 【超重要】実績データ（60日間）のみを厳密に切り出す
+    df_plot = hist_data.iloc[-60:].copy()
+    plot_dates = df_plot.index
     start_date = plot_dates[0]
     end_date = plot_dates[-1]
     
+    # 未来予測期間（30日間）の日付リスト（実績データとは完全に分離して管理）
     future_dates = [end_date + timedelta(days=i) for i in range(1, 31)]
-    df_future = pd.DataFrame(index=pd.DatetimeIndex(future_dates))
-    df_plot = pd.concat([df_recent_hist, df_future])
+    upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
+    lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
     
-    df_plot["Upper_1Sigma"] = np.nan
-    df_plot["Lower_1Sigma"] = np.nan
-    for i, f_date in enumerate(future_dates):
-        df_plot.loc[f_date, "Upper_1Sigma"] = current_price + (current_price * iv * np.sqrt((i+1) / 365.25))
-        df_plot.loc[f_date, "Lower_1Sigma"] = current_price - (current_price * iv * np.sqrt((i+1) / 365.25))
-    
+    # 1. メイン株価 (Row 1)
     if chart_type == "ローソク足":
         fig_tech.add_trace(gr.Candlestick(
             x=df_plot.index, open=df_plot["Open"], high=df_plot["High"], low=df_plot["Low"], close=df_plot["Close"], name="株価"
@@ -204,7 +200,7 @@ if raw_hist is not None:
             x=df_plot.index, y=df_plot["Close"], mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価"
         ), row=1, col=1)
         
-    # 重ね合わせ指標 (Row 1)
+    # 2. 重ね合わせ指標 (Row 1)
     # 【バグ修正】fill='none' (小文字の文字列) を明示し、Plotlyの自動塗りつぶしによる他領域汚染を100%防止。
     if overlay_indicator == "ボリンジャーバンド" and "BB_Upper" in df_plot.columns:
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.35)", width=1.0, dash="dash"), fill='none', name="BB Upper"), row=1, col=1)
@@ -219,12 +215,13 @@ if raw_hist is not None:
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Tenkan_Sen"], line=dict(color="#38BDF8", width=1.0), fill='none', name="転換線"), row=1, col=1)
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Kijun_Sen"], line=dict(color="#F43F5E", width=1.0), fill='none', name="基準線"), row=1, col=1)
 
-    fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Upper_1Sigma"], mode="lines", line=dict(color="rgba(56, 189, 248, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ上限"), row=1, col=1)
-    fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Lower_1Sigma"], mode="lines", line=dict(color="rgba(239, 68, 68, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ下限"), row=1, col=1)
+    # 3. 1σ予測レンジ (Row 1) - 未来期間のみを完全に重ね書き
+    fig_tech.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(56, 189, 248, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ上限"), row=1, col=1)
+    fig_tech.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ下限"), row=1, col=1)
 
-    # 下段サブ指標の描画
+    # 4. 下段サブ指標の描画 (Row 2 & Row 3) - 実績データのみを渡すため、インデックスが完璧に一致し100%表示されます
     if sub_indicator == "RSI + MACD":
-        # RSI (Row 2) - fill='none' を明示し、X軸同期による表示バグを完全解消
+        # RSI (Row 2)
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["RSI_14"], mode="lines", line=dict(color="#A855F7", width=2.0), fill='none', name="RSI"), row=2, col=1)
         fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.5)", row=2, col=1)
         fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.5)", row=2, col=1)
@@ -238,6 +235,7 @@ if raw_hist is not None:
         # ATR (Row 2)
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["ATR"], mode="lines", line=dict(color="#E2E8F0", width=1.8), fill='none', name="ATR"), row=2, col=1)
 
+    # レイアウト調整（表示範囲は「実績データの存在する期間」に厳密にクリップ）
     fig_tech.update_layout(
         height=650, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
         margin=dict(l=10, r=10, t=10, b=10), showlegend=False, hovermode="x unified",
@@ -245,6 +243,7 @@ if raw_hist is not None:
         dragmode="drawline", newshape=dict(line=dict(color="#00FFCC", width=1.5), opacity=0.8)
     )
 
+    # 表示範囲を「実績データの開始日〜終了日」に厳密に固定
     xaxis_range = [start_date, end_date]
     fig_tech.update_layout(
         xaxis=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
