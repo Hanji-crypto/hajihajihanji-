@@ -46,7 +46,7 @@ st.html("""
     a:hover {
         text-decoration: underline;
     }
-    /* AI・統計考察カードのスタイル */
+    /* AI・統計考察カード of 戦略 */
     .strategy-card {
         background-color: #111827;
         border: 1px solid #1F2937;
@@ -701,8 +701,9 @@ if hist_data is not None:
         )
         st.plotly_chart(fig_payoff, use_container_width=True)
         
-        # 安全に文字列フォーマットを構築してエラーを100%回避
-        st.markdown(f"<div style='font-size: 11px; color: #94A3B8; text-align: center;'>損益分岐点（Break-even）: 株価騰落率 <b>{breakeven_change:+.1f}%</b> (${breakeven_price:.2f}) 以上でプラス収支</div>", unsafe_html=True)
+        # 🚨 100%安全な文字列結合（f-stringのネストや改行による構文エラーを物理的に排除）
+        be_text = "損益分岐点（Break-even）: 株価騰落率 <b>" + f"{breakeven_change:+.1f}" + "%</b> ($" + f"{breakeven_price:.2f}" + ") 以上でプラス収支"
+        st.markdown("<div style='font-size: 11px; color: #94A3B8; text-align: center;'>" + be_text + "</div>", unsafe_html=True)
 
 else:
     st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
@@ -752,7 +753,6 @@ if hist_data is not None:
 
     if not df_catalysts.empty:
         for _, row in df_catalysts.iterrows():
-            c_date = pd.notna(row["date"])
             c_date = pd.to_datetime(row["date"])
             if c_date not in raw_events_by_date:
                 raw_events_by_date[c_date] = []
