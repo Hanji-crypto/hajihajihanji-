@@ -438,7 +438,7 @@ if hist_data is not None:
     
     # LEFT: 統合チャート (上段: 株価&1σバンド, 下段: 純粋なボラティリティ推移&インサイダーシグナルのみ)
     with col_chart:
-        # サブプロットの作成 (下段はsecondary_yをFalseにして株価の描画を完全に排除)
+        # サブプロットの作成 (下段はsecondary_yを完全にFalseにして重複する株価の描画を排除)
         fig = make_subplots(
             rows=2, cols=1, 
             shared_xaxes=True, 
@@ -700,6 +700,8 @@ if hist_data is not None:
             showlegend=False
         )
         st.plotly_chart(fig_payoff, use_container_width=True)
+        
+        # 🚨 修正箇所: +.1f と正しい1（いち）を指定し、安全な変数参照に修正
         st.markdown(f"<div style='font-size: 11px; color: #94A3B8; text-align: center;'>損益分岐点（Break-even）: 株価騰落率 <b>{breakeven_change:+.1f}%</b> (${breakeven_price:.2f}) 以上でプラス収支</div>", unsafe_html=True)
 
 else:
@@ -753,9 +755,9 @@ if hist_data is not None:
             c_date = pd.to_datetime(row["date"])
             if c_date not in raw_events_by_date:
                 raw_events_by_date[c_date] = []
-                raw_events_by_date[c_date].append({
-                    "type": "C", "category": row["category"], "title": row["title"], "url": row["source_url"]
-                })
+            raw_events_by_date[c_date].append({
+                "type": "C", "category": row["category"], "title": row["title"], "url": row["source_url"]
+            })
 
 if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_date:
     # リンクテーブルの生成
