@@ -419,7 +419,7 @@ if hist_data is not None:
     rs = gain / (loss + 1e-9)
     hist_data["RSI"] = 100 - (100 / (1 + rs))
 
-    # 1標準偏差 (1σ) 予測レンジの算出 (満期30日想定)
+    # 1標準偏差 (1σ) 予測レンジ of 満期30日
     T_30 = 30 / 365.25
     one_sigma_move = current_price * iv * np.sqrt(T_30)
     upper_1sigma = current_price + one_sigma_move
@@ -436,14 +436,15 @@ if hist_data is not None:
 
     col_chart, col_strategy = st.columns([4, 3])
     
-    # LEFT: 統合チャート (上段: 株価&1σバンド, 下段: ボラティリティ推移&インサイダーシグナル)
+    # LEFT: 統合チャート (上段: 株価&1σバンド, 下段: 純粋なボラティリティ推移&インサイダーシグナルのみ)
     with col_chart:
+        # サブプロットの作成 (下段はsecondary_yをFalseにして株価の描画を完全に排除)
         fig = make_subplots(
             rows=2, cols=1, 
             shared_xaxes=True, 
             vertical_spacing=0.08, 
             row_heights=[0.65, 0.35],
-            specs=[[{"secondary_y": True}], [{"secondary_y": True}]]
+            specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
         )
         
         # 1σ予測バンドの描画 (統計的確率約68%の推移予測)
@@ -494,32 +495,31 @@ if hist_data is not None:
         ), row=1, col=1, secondary_y=True)
         
         # ----------------------------------------------------------------------
-        # ROW 2: ボラティリティ（IV/HV）歴史的推移 ＆ インサイダー取引タイミング (重複排除)
+        # ROW 2: 純粋なボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング (株価の重複排除)
         # ----------------------------------------------------------------------
-        # 過去のHV推移のシミュレーション（簡易的に20日移動標準偏差から算出）
+        # 過去のHV推移のシミュレーション（20日移動標準偏差から算出）
         hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
         # IV推移（ATMオプション価格から逆算した歴史的IV推移のシミュレーション）
         hist_data["IV_Sim"] = hist_data["HV_20"] * (iv / (hv if hv > 0 else 1.0))
 
-        # HV推移の描画
+        # HV推移の描画 (ROW 2, secondary_yは無し)
         fig.add_trace(gr.Scatter(
             x=hist_data.index[-60:], y=hist_data["HV_20"].iloc[-60:],
             mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"
-        ), row=2, col=1, secondary_y=False)
+        ), row=2, col=1)
 
-        # IV推移の描画
+        # IV推移の描画 (ROW 2, secondary_yは無し)
         fig.add_trace(gr.Scatter(
             x=hist_data.index[-60:], y=hist_data["IV_Sim"].iloc[-60:],
             mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"
-        ), row=2, col=1, secondary_y=False)
+        ), row=2, col=1)
 
-        # インサイダー買いタイミング（縦線とマーカーで投資判断タイミングを可視化）
+        # インサイダー買いタイミング（ボラティリティチャート上にのみスタンプ）
         df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
         df_insider_daily = df_ticker_raw.groupby("buy_date")["total_value"].sum().reset_index()
         df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
         
         if not df_insider_daily.empty:
-            # ボラティリティチャート上にインサイダー買いのタイミングをプロット
             fig.add_trace(gr.Scatter(
                 x=df_insider_daily["buy_date"], 
                 y=[hist_data["HV_20"].mean()] * len(df_insider_daily),
@@ -528,10 +528,10 @@ if hist_data is not None:
                 text=["🐋 Buy"] * len(df_insider_daily),
                 textposition="top center",
                 name="インサイダー買いタイミング"
-            ), row=2, col=1, secondary_y=False)
+            ), row=2, col=1)
             
         fig.update_yaxes(title_text="株価 ($)", row=1, col=1, secondary_y=True)
-        fig.update_yaxes(title_text="ボラティリティ (%)", row=2, col=1, secondary_y=False)
+        fig.update_yaxes(title_text="ボラティリティ (%)", row=2, col=1)
         
         fig.update_layout(
             height=450, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
@@ -615,6 +615,8 @@ if hist_data is not None:
             strategy_type = "long_call"
             buy_strike = current_price * 1.05
             buy_premium = current_price * 0.04
+            net_cost = buy_premium
+            max_profit = 999.0  # 無制限プレースホルダー
             
             strategy_title = "🚨 推奨戦略: ロング・コール (Long Call) 単体打診買い"
             strategy_class = "strategy-card-warning"
@@ -622,7 +624,7 @@ if hist_data is not None:
             **【統計的選定根拠】**
             *   IV/HV比率が **{(iv/hv if hv > 0 else 0):.2f}** とニュートラルですが、インサイダーの買い総額が大きく、突発的なカタリストによる急騰（ボラティリティ・スパイク）の期待値が高い状態です。
             
-            **【具体的取引価格 of 統計的提案】**
+            **【具体的取引価格の統計的提案】**
             *   **Buy {current_ticker} 30日満期 ${buy_strike:.1f} Call (ややOTM)** (目安プレミアム: ${buy_premium:.2f})
                 
             ➔ **最大損失**: 支払ったプレミアム ${buy_premium:.2f} のみ / **最大利益**: 無制限 (株価上昇に応じて無限大のレバレッジ)
@@ -638,7 +640,7 @@ if hist_data is not None:
         """)
 
         # ----------------------------------------------------------------------
-        # 新設: 統計的予想リターン（ペイオフ・ダイアグラム）シミュレーター
+        # 統計的予想リターン（ペイオフ・ダイアグラム）シミュレーター
         # ----------------------------------------------------------------------
         st.markdown("#### 📈 満期時株価騰落率 vs 予想投資リターン (%)")
         
@@ -666,7 +668,8 @@ if hist_data is not None:
                 
         # 損益分岐点（Payoff = 0%）の探索
         zero_idx = np.argmin(np.abs(payoffs))
-        breakeven_change = stock_changes[zero_idx] * 100
+        breakeven_change = float(stock_changes[zero_idx] * 100)
+        breakeven_price = float(current_price * (1 + breakeven_change / 100))
         
         fig_payoff = gr.Figure()
         
@@ -690,20 +693,20 @@ if hist_data is not None:
         fig_payoff.add_hline(y=0, line_color="rgba(255, 255, 255, 0.2)", line_width=1)
         
         fig_payoff.update_layout(
-            height=220, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+            height=200, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
             margin=dict(l=10, r=10, t=10, b=10),
             xaxis=dict(title="満期時の株価騰落率 (%)", gridcolor="rgba(255,255,255,0.05)"),
             yaxis=dict(title="投資リターン (%)", gridcolor="rgba(255,255,255,0.05)"),
             showlegend=False
         )
         st.plotly_chart(fig_payoff, use_container_width=True)
-        st.markdown(f"<div style='font-size: 11px; color: #94A3B8; text-align: center;'>損益分岐点（Break-even）: 株価騰落率 <b>{breakeven_change:+.1f}%</b> (${current_price*(1+breakeven_change/100):.2f}) 以上でプラス収支</div>", unsafe_html=True)
+        st.markdown(f"<div style='font-size: 11px; color: #94A3B8; text-align: center;'>損益分岐点（Break-even）: 株価騰落率 <b>{breakeven_change:+.1f}%</b> (${breakeven_price:.2f}) 以上でプラス収支</div>", unsafe_html=True)
 
 else:
     st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
 
 # ==============================================================================
-# 9. LOWER SECTION: 詳細オプションチェーン ＆ マルチソース・リンク (全幅表示)
+# 7. LOWER SECTION: 詳細オプションチェーン ＆ マルチソース・リンク (全幅表示)
 # ==============================================================================
 st.markdown("---")
 st.markdown("### 📄 直近満期オプション・チェーン (詳細統計マトリックス)")
@@ -718,7 +721,7 @@ if hist_data is not None and df_options is not None and not df_options.empty:
         df_opt_display[["Strike", "Type", "Last Price", "Volume", "Open Interest", "IV", "Delta"]],
         use_container_width=True,
         hide_index=True,
-        height=220
+        height=250
     )
 else:
     st.warning("⚠️ オプションチェーンデータを取得できませんでした。")
@@ -750,9 +753,9 @@ if hist_data is not None:
             c_date = pd.to_datetime(row["date"])
             if c_date not in raw_events_by_date:
                 raw_events_by_date[c_date] = []
-            raw_events_by_date[c_date].append({
-                "type": "C", "category": row["category"], "title": row["title"], "url": row["source_url"]
-            })
+                raw_events_by_date[c_date].append({
+                    "type": "C", "category": row["category"], "title": row["title"], "url": row["source_url"]
+                })
 
 if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_date:
     # リンクテーブルの生成
