@@ -26,14 +26,14 @@ st.html("""
         color: #E2E8F0;
     }
     div[data-testid="stMetricValue"] {
-        font-size: 20px;
+        font-size: 22px;
         font-weight: bold;
         color: #00FFCC !important;
         font-family: 'Consolas', monospace;
     }
     div[data-testid="stMetricLabel"] {
         color: #94A3B8 !important;
-        font-size: 11px;
+        font-size: 12px;
     }
     hr {
         border-color: #1E293B !important;
@@ -51,55 +51,55 @@ st.html("""
         background-color: #111827;
         border: 1px solid #1F2937;
         border-left: 5px solid #00FFCC;
-        padding: 15px;
+        padding: 18px;
         border-radius: 8px;
-        margin-bottom: 12px;
+        margin-bottom: 15px;
     }
     .strategy-card-warning {
         background-color: #2D1A1A;
         border: 1px solid #4A2323;
         border-left: 5px solid #EF4444;
-        padding: 15px;
+        padding: 18px;
         border-radius: 8px;
-        margin-bottom: 12px;
+        margin-bottom: 15px;
     }
     /* リアルタイム・イベント・コンソールのスタイル */
     .event-console {
         background-color: #090D16;
         border: 1px solid #1E293B;
         border-radius: 6px;
-        padding: 10px;
-        max-height: 180px;
+        padding: 12px;
+        max-height: 200px;
         overflow-y: auto;
         font-family: 'Consolas', 'Courier New', monospace;
-        font-size: 11px;
-        line-height: 1.4;
-        margin-bottom: 12px;
+        font-size: 12px;
+        line-height: 1.5;
+        margin-bottom: 15px;
     }
     .console-row {
         border-bottom: 1px solid #1E293B;
-        padding: 4px 0;
+        padding: 5px 0;
         display: flex;
         align-items: flex-start;
     }
     .console-date {
         color: #64748B;
-        min-width: 80px;
+        min-width: 90px;
         font-weight: bold;
     }
     .console-badge {
         display: inline-block;
-        padding: 1px 4px;
+        padding: 1px 5px;
         border-radius: 3px;
-        font-size: 9px;
+        font-size: 10px;
         font-weight: bold;
-        margin-right: 6px;
-        min-width: 90px;
+        margin-right: 8px;
+        min-width: 100px;
         text-align: center;
     }
     /* ラジオボタンの横並び高密度化 */
     div[data-testid="stRadio"] > div {
-        gap: 6px;
+        gap: 8px;
     }
     </style>
 """)
@@ -326,44 +326,23 @@ def fetch_catalyst_events(ticker, df_prices, df_raw_trades):
     return pd.DataFrame(events).drop_duplicates(subset=["date", "category"]) if events else pd.DataFrame()
 
 # ==============================================================================
-# 6. MAIN TERMINAL LAYOUT (2-PANE GRID SYSTEM)
+# 6. MAIN TERMINAL LAYOUT (VERTICAL STACK SYSTEM)
 # ==============================================================================
 st.title("👁️ Whale-Eye: Institutional Option & Insider Intelligence")
 st.markdown("インサイダー現物買いの足跡と、オプション市場のボラティリティ・歪み（Skew）を統計学的に解析し、レバレッジ利益を最大化する戦略を自律提案するプロ仕様端末です。")
 st.markdown("---")
 
-# ⚡ 統計的最上位10銘柄の通常表示（クイック・セレクター）
-st.subheader("🎯 統計的期待値・最上位10銘柄セレクター")
-
-# ラジオボタンの選択肢を動的に構築（上位10銘柄に、現在選択中の銘柄がそれ以外なら追加）
-radio_options = list(top_10_tickers)
-if st.session_state.selected_ticker not in radio_options:
-    radio_options.append(st.session_state.selected_ticker)
-
-selected_by_radio = st.radio(
-    "銘柄選択 (キーボードの ← → 矢印キーを押すだけで、1ミリ秒でチャート・オプション分析が完全連動します):",
-    options=radio_options,
-    index=radio_options.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in radio_options else 0,
-    horizontal=True,
-    key="ticker_radio"
-)
-st.session_state.selected_ticker = selected_by_radio
-current_ticker = st.session_state.selected_ticker
-
-st.markdown("---")
-
-# 2ペインに分割 (左: 全銘柄多次元マトリックス, 右: 詳細解析・AI戦略)
-col_matrix, col_analysis = st.columns([5, 7])
-
 # --------------------------------------------------------------------------
-# LEFT PANE: 全銘柄多次元スクリーニング・マトリックス (一覧・インデックス)
+# SECTION 1: 全銘柄多次元スクリーニング・マトリックス (全幅表示)
 # --------------------------------------------------------------------------
-with col_matrix:
-    st.subheader("📊 全銘柄多次元スクリーニング・マトリックス")
-    
-    # 100%確実に動作する同期用ドロップダウンセレクター
+st.subheader("📊 全銘柄多次元スクリーニング・マトリックス")
+st.markdown("データベースに登録されている全銘柄のインサイダー取引実績と統計的確実性スコアの一覧です。")
+
+col_sel1, col_sel2 = st.columns([3, 5])
+with col_sel1:
+    # 100%確実に動作する銘柄同期用ドロップダウンセレクター
     selected_from_dropdown = st.selectbox(
-        "🔍 解析する銘柄を全銘柄リストから選択:",
+        "🔍 解析・表示する銘柄を全銘柄リストから選択:",
         options=all_available_tickers,
         index=all_available_tickers.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in all_available_tickers else 0
     )
@@ -371,72 +350,96 @@ with col_matrix:
         st.session_state.selected_ticker = selected_from_dropdown
         st.rerun()
 
-    # 表示用データの整形
-    df_screener_display = df_screener.copy()
-    df_screener_display = df_screener_display.rename(columns={
-        "ticker": "ティッカー",
-        "company": "企業名",
-        "total_value": "取引総額 ($)",
-        "avg_price": "平均取得単価 ($)",
-        "insider": "主なインサイダー",
-        "buy_date": "直近取引日",
-        "trade_count": "取引回数",
-        "Certainty (%)": "統計的確実性スコア (%)"
-    })
+with col_sel2:
+    # 統計的最上位10銘柄の通常表示（クイック・セレクター）
+    radio_options = list(top_10_tickers)
+    if st.session_state.selected_ticker not in radio_options:
+        radio_options.append(st.session_state.selected_ticker)
 
-    # フォーマット適用
-    df_screener_display["取引総額 ($)"] = df_screener_display["取引総額 ($)"].map(lambda x: f"${x:,.0f}")
-    df_screener_display["平均取得単価 ($)"] = df_screener_display["平均取得単価 ($)"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
-    df_screener_display["直近取引日"] = df_screener_display["直近取引日"].dt.strftime('%Y-%m-%d')
-    df_screener_display["統計的確実性スコア (%)"] = df_screener_display["統計的確実性スコア (%)"].map(lambda x: f"{x:.1f}%")
-
-    # 全銘柄マトリックスのテーブル表示
-    st.dataframe(
-        df_screener_display[["ティッカー", "企業名", "取引総額 ($)", "平均取得単価 ($)", "主なインサイダー", "直近取引日", "取引回数", "統計的確実性スコア (%)"]],
-        use_container_width=True,
-        hide_index=True,
-        height=580
+    selected_by_radio = st.radio(
+        "⚡ クイック選択 (矢印キーで1ミリ秒連動):",
+        options=radio_options,
+        index=radio_options.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in radio_options else 0,
+        horizontal=True,
+        key="ticker_radio"
     )
+    if selected_by_radio != st.session_state.selected_ticker:
+        st.session_state.selected_ticker = selected_by_radio
+        st.rerun()
+
+current_ticker = st.session_state.selected_ticker
+
+# 表示用データの整形
+df_screener_display = df_screener.copy()
+df_screener_display = df_screener_display.rename(columns={
+    "ticker": "ティッカー",
+    "company": "企業名",
+    "total_value": "直近取引額 ($)",  # ラベル変更
+    "avg_price": "平均取得単価 ($)",
+    "insider": "主なインサイダー",
+    "buy_date": "直近取引日",
+    "trade_count": "取引回数",
+    "Certainty (%)": "統計的確実性スコア (%)"
+})
+
+# フォーマット適用
+df_screener_display["直近取引額 ($)"] = df_screener_display["直近取引額 ($)"].map(lambda x: f"${x:,.0f}")
+df_screener_display["平均取得単価 ($)"] = df_screener_display["平均取得単価 ($)"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
+df_screener_display["直近取引日"] = df_screener_display["直近取引日"].dt.strftime('%Y-%m-%d')
+df_screener_display["統計的確実性スコア (%)"] = df_screener_display["統計的確実性スコア (%)"].map(lambda x: f"{x:.1f}%")
+
+# 企業名の右列に直近取引額を配置した全幅マトリックス
+st.dataframe(
+    df_screener_display[["ティッカー", "企業名", "直近取引額 ($)", "平均取得単価 ($)", "主なインサイダー", "直近取引日", "取引回数", "統計的確実性スコア (%)"]],
+    use_container_width=True,
+    hide_index=True,
+    height=320
+)
+
+st.markdown("---")
 
 # --------------------------------------------------------------------------
-# RIGHT PANE: 詳細解析、チャート、AIオプション戦略 ＆ 統計的価格提案
+# SECTION 2: 選択銘柄のリアルタイム詳細・オプション解析 (横並び2カラム)
 # --------------------------------------------------------------------------
-with col_analysis:
-    st.subheader(f"👁️ 【{current_ticker}】 リアルタイム詳細・オプション解析")
+st.subheader(f"👁️ 【{current_ticker}】 リアルタイム詳細・オプション解析")
+
+with st.spinner(f"【{current_ticker}】の市場データおよびオプションチェーンを解析中..."):
+    hist_data, df_options, expiry_date, iv, hv, pcr = fetch_market_and_option_data(current_ticker)
+
+if hist_data is not None:
+    current_price = hist_data["Close"].iloc[-1]
     
-    with st.spinner(f"【{current_ticker}】の市場データおよびオプションチェーンを解析中..."):
-        hist_data, df_options, expiry_date, iv, hv, pcr = fetch_market_and_option_data(current_ticker)
+    # テクニカル計算 (ボリンジャーバンド & RSI)
+    hist_data["MA20"] = hist_data["Close"].rolling(window=20).mean()
+    hist_data["STD20"] = hist_data["Close"].rolling(window=20).std()
+    hist_data["BB_Upper"] = hist_data["MA20"] + (hist_data["STD20"] * 2)
+    hist_data["BB_Lower"] = hist_data["MA20"] - (hist_data["STD20"] * 2)
+    
+    delta = hist_data["Close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / (loss + 1e-9)
+    hist_data["RSI"] = 100 - (100 / (1 + rs))
 
-    if hist_data is not None:
-        current_price = hist_data["Close"].iloc[-1]
-        
-        # テクニカル計算 (ボリンジャーバンド & RSI)
-        hist_data["MA20"] = hist_data["Close"].rolling(window=20).mean()
-        hist_data["STD20"] = hist_data["Close"].rolling(window=20).std()
-        hist_data["BB_Upper"] = hist_data["MA20"] + (hist_data["STD20"] * 2)
-        hist_data["BB_Lower"] = hist_data["MA20"] - (hist_data["STD20"] * 2)
-        
-        delta = hist_data["Close"].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / (loss + 1e-9)
-        hist_data["RSI"] = 100 - (100 / (1 + rs))
+    # 1標準偏差 (1σ) 予測レンジの算出 (満期30日想定)
+    T_30 = 30 / 365.25
+    one_sigma_move = current_price * iv * np.sqrt(T_30)
+    upper_1sigma = current_price + one_sigma_move
+    lower_1sigma = current_price - one_sigma_move
+    
+    # コントロールパネル
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 2, 3])
+    with ctrl_col1:
+        show_bb = st.checkbox("ボリンジャーバンドを表示", value=True)
+    with ctrl_col2:
+        show_rsi = st.checkbox("RSI (14) を表示", value=True)
+    with ctrl_col3:
+        chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
 
-        # 1標準偏差 (1σ) 予測レンジの算出 (満期30日想定)
-        T_30 = 30 / 365.25
-        one_sigma_move = current_price * iv * np.sqrt(T_30)
-        upper_1sigma = current_price + one_sigma_move
-        lower_1sigma = current_price - one_sigma_move
-        
-        # コントロールパネル
-        ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 2, 3])
-        with ctrl_col1:
-            show_bb = st.checkbox("ボリンジャーバンドを表示", value=True)
-        with ctrl_col2:
-            show_rsi = st.checkbox("RSI (14) を表示", value=True)
-        with ctrl_col3:
-            chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
-
+    col_chart, col_strategy = st.columns([4, 3])
+    
+    # LEFT: チャート描画
+    with col_chart:
         # 📊 統合テクニカル ＆ 予測バンドチャート
         fig = make_subplots(
             rows=2, cols=1, 
@@ -514,12 +517,14 @@ with col_analysis:
         fig.update_yaxes(title_text="インサイダー量 ($)", row=2, col=1, secondary_y=True, showgrid=False)
         
         fig.update_layout(
-            height=380, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+            height=420, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
             margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1, x=0),
             hovermode="x"
         )
         st.plotly_chart(fig, use_container_width=True)
 
+    # RIGHT: AI戦略 ＆ 統計価格提案
+    with col_strategy:
         # 統計スタッツメトリクス
         m_col1, m_col2, m_col3 = st.columns(3)
         with m_col1:
@@ -647,11 +652,11 @@ with col_analysis:
         else:
             st.info("💡 直近で検出された重大イベントはありません。")
 
-    else:
-        st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
+else:
+    st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
 
 # ==============================================================================
-# 8. LOWER SECTION: 詳細オプションチェーン ＆ マルチソース・リンク (全幅表示)
+# 7. LOWER SECTION: 詳細オプションチェーン ＆ マルチソース・リンク (全幅表示)
 # ==============================================================================
 st.markdown("---")
 st.markdown("### 📄 直近満期オプション・チェーン (詳細統計マトリックス)")
