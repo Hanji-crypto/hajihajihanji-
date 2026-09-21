@@ -5,7 +5,7 @@ import plotly.graph_objects as gr
 from datetime import datetime, timedelta
 import math
 
-# 独自モジュールからデータ処理関数をインポート
+# 独自モジュールから関数をインポート
 from data_loader import (
     load_and_process_data,
     generate_screener,
@@ -13,6 +13,10 @@ from data_loader import (
     compute_technical_indicators,
     fetch_option_chain_by_expiry,
     fetch_catalyst_events
+)
+from charts import (
+    draw_stock_chart,
+    draw_sub_indicators_chart
 )
 
 # ==============================================================================
@@ -155,7 +159,7 @@ if raw_hist is not None:
         sub_indicator = st.selectbox("下段サブ指標の選択:", ["RSI + MACD", "ATR (ボラティリティ値幅)"])
 
     # ----------------------------------------------------------------------
-    # CHART 1: メイン株価チャート (完全に独立したFigure)
+    # CHART 1 & 2: メイン株価チャート ＆ サブ指標（完全物理分離）
     # ----------------------------------------------------------------------
     st.markdown("### 📈 テクニカル分析チャート")
 
@@ -172,98 +176,31 @@ if raw_hist is not None:
         unsafe_allow_html=True
     )
 
-    # 直近60営業日
+    # 直近60営業日データの切り出し
     df_plot = hist_data.iloc[-60:].copy()
     plot_dates = df_plot.index
     start_date = plot_dates[0]
     end_date = plot_dates[-1]
     xaxis_range = [start_date, end_date]
 
-    # 未来予測30日
+    # 未来予測30日データの作成
     future_dates = [end_date + timedelta(days=i) for i in range(1, 31)]
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
 
-    # --- 1段目: 株価チャートの作成 ---
-    fig_stock = gr.Figure()
-
-    if chart_type == "ローソク足":
-        fig_stock.add_trace(gr.Candlestick(
-            x=df_plot.index, open=df_plot["Open"], high=df_plot["High"], low=df_plot["Low"], close=df_plot["Close"], name="株価"
-        ))
-    else:
-        fig_stock.add_trace(gr.Scatter(
-            x=df_plot.index, y=df_plot["Close"], mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価"
-        ))
-
-    # 重ね合わせ指標 (株価チャートのみに適用。fill='none'で塗りつぶしを完全排除)
-    if overlay_indicator == "ボリンジャーバンド" and "BB_Upper" in df_plot.columns:
-        fig_stock.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["BB_Upper"], line=dict(color="rgba(0, 255, 204, 0.35)", width=1.0, dash="dash"), fill='none', name="BB Upper"))
-        fig_stock.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["BB_Lower"], line=dict(color="rgba(0, 255, 204, 0.35)", width=1.0, dash="dash"), fill='none', name="BB Lower"))
-        fig_stock.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MA20"], line=dict(color="orange", width=1.0, dash="dot"), fill='none', name="20日移動平均"))
-    elif overlay_indicator == "EMA (20/50)":
-        fig_stock.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["EMA20"], line=dict(color="#00C5FF", width=1.2), fill='none', name="EMA 20"))
-        fig_stock.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["EMA50"], line=dict(color="#FF8C00", width=1.2), fill='none', name="EMA 50"))
-    elif overlay_indicator == "一目均衡表 (Ichimoku)":
-        fig_stock.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Senkou_Span_A"], line=dict(color="rgba(56, 189, 248, 0.4)", width=0.8, dash="dash"), fill='none', name="先行スパンA"))
-        fig_stock.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Senkou_Span_B"], line=dict(color="rgba(244, 63, 94, 0.4)", width=0.8, dash="dash"), fill='none', name="先行スパンB"))
-        fig_stock.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Tenkan_Sen"], line=dict(color="#38BDF8", width=1.0), fill='none', name="転換線"))
-        fig_stock.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Kijun_Sen"], line=dict(color="#F43F5E", width=1.0), fill='none', name="基準線"))
-
-    # 1σ予測レンジ (株価チャートのみに重ね書き)
-    fig_stock.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(56, 189, 248, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ上限"))
-    fig_stock.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ下限"))
-
-    fig_stock.update_layout(
-        height=400, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-        margin=dict(l=10, r=10, t=10, b=10), showlegend=False, hovermode="x unified",
-        dragmode="drawline", newshape=dict(line=dict(color="#00FFCC", width=1.5), opacity=0.8),
-        xaxis=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-        yaxis=dict(title="株価 ($)", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)")
+    # 1. 独立した株価チャートを呼び出して描画
+    fig_stock = draw_stock_chart(
+        df_plot, chart_type, overlay_indicator, current_price, iv, 
+        future_dates, upper_band_curve, lower_band_curve, xaxis_range
     )
-    st.plotly_chart(fig_stock, use_container_width=True, key="stock_chart_final")
+    st.plotly_chart(fig_stock, use_container_width=True, key="stock_chart_final_v2")
 
-    # --- 2段目: サブ指標チャートの作成 (完全に独立したFigureとして物理隔離) ---
-    fig_sub = gr.Figure()
-
-    if sub_indicator == "RSI + MACD":
-        # RSIとMACDを2段に分けたサブプロットにする (株価データが混入することは物理的に不可能)
-        fig_sub = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_width=[0.5, 0.5])
-        
-        # RSI (Row 1)
-        fig_sub.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["RSI_14"], mode="lines", line=dict(color="#A855F7", width=2.0), fill='none', name="RSI"), row=1, col=1)
-        fig_sub.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.5)", row=1, col=1)
-        fig_sub.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.5)", row=1, col=1)
-
-        # MACD (Row 2)
-        fig_sub.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MACD"], mode="lines", line=dict(color="#38BDF8", width=1.5), fill='none', name="MACD"), row=2, col=1)
-        fig_sub.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MACD_Signal"], mode="lines", line=dict(color="#FF8C00", width=1.5), fill='none', name="Signal"), row=2, col=1)
-        hist_colors = ["#00FFCC" if (not math.isnan(val) and val >= 0) else "#FF007F" for val in df_plot["MACD_Hist"]]
-        fig_sub.add_trace(gr.Bar(x=df_plot.index, y=df_plot["MACD_Hist"], marker_color=hist_colors, name="Hist"), row=2, col=1)
-        
-        fig_sub.update_layout(
-            height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-            margin=dict(l=10, r=10, t=10, b=10), showlegend=False, hovermode="x unified",
-            xaxis=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-            xaxis2=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-            yaxis=dict(title="RSI", range=[10, 90]),
-            yaxis2=dict(title="MACD")
-        )
-    else:
-        # ATR単体 (1つの独立したFigure)
-        fig_sub.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["ATR"], mode="lines", line=dict(color="#E2E8F0", width=1.8), fill='none', name="ATR"))
-        
-        fig_sub.update_layout(
-            height=180, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-            margin=dict(l=10, r=10, t=10, b=10), showlegend=False, hovermode="x unified",
-            xaxis=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-            yaxis=dict(title="ATR")
-        )
-
-    st.plotly_chart(fig_sub, use_container_width=True, key="sub_indicators_chart")
+    # 2. 独立したサブ指標チャートを呼び出して描画（ローソク足は物理的に混入不可能）
+    fig_sub = draw_sub_indicators_chart(df_plot, sub_indicator, xaxis_range)
+    st.plotly_chart(fig_sub, use_container_width=True, key="sub_indicators_chart_v2")
 
     # ----------------------------------------------------------------------
-    # CHART 2: ボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング
+    # CHART 3: ボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング
     # ----------------------------------------------------------------------
     fig_vol = gr.Figure()
     hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
