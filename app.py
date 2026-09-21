@@ -45,34 +45,37 @@ st.html("""
     a:hover {
         text-decoration: underline;
     }
-    /* 期待値ランキングカードのスタイル */
+    /* 全幅対応：期待値ランキングカードのスタイル */
     .strategy-card {
         background-color: #111827;
         border: 1px solid #1F2937;
         border-left: 5px solid #00FFCC;
-        padding: 18px;
+        padding: 20px;
         border-radius: 8px;
-        margin-bottom: 16px;
+        margin-bottom: 18px;
+        width: 100%;
     }
     .strategy-card-secondary {
         background-color: #0F172A;
         border: 1px solid #1E293B;
         border-left: 5px solid #38BDF8;
-        padding: 18px;
+        padding: 20px;
         border-radius: 8px;
-        margin-bottom: 16px;
+        margin-bottom: 18px;
+        width: 100%;
     }
     .strategy-card-warning {
         background-color: #1E1B4B;
         border: 1px solid #312E81;
         border-left: 5px solid #A855F7;
-        padding: 18px;
+        padding: 20px;
         border-radius: 8px;
-        margin-bottom: 16px;
+        margin-bottom: 18px;
+        width: 100%;
     }
     /* ラジオボタンの横並び高密度化 */
     div[data-testid="stRadio"] > div {
-        gap: 6px;
+        gap: 12px;
     }
     </style>
 """)
@@ -161,75 +164,44 @@ if "selected_ticker" not in st.session_state:
     st.session_state.selected_ticker = top_10_tickers[0] if top_10_tickers else ""
 
 # ==============================================================================
-# 5. STATISTICAL OPTION & MARKET DATA FETCHING
+# 5. STATISTICAL OPTION & MARKET DATA FETCHING (限月ドリルダウン対応)
 # ==============================================================================
 @st.cache_data(ttl=1800)
-def fetch_market_and_option_data(ticker):
+def fetch_market_data(ticker):
     stock = yf.Ticker(ticker)
     hist = stock.history(period="1y")
-    
     if hist.empty:
-        return None, None, None, 0.0, 0.0, 1.0
-        
+        return None, 0.0, 0.0, []
     hist.index = hist.index.tz_localize(None)
     current_price = hist["Close"].iloc[-1]
     
-    # 歴史的ボラティリティ (HV 180日) の算出
+    # 歴史的ボラティリティ (HV 180日)
     log_ret = np.log(hist["Close"] / hist["Close"].shift(1))
     hv = log_ret.iloc[-180:].std() * np.sqrt(252)
     
-    # オプションデータの取得
-    options_data = []
-    expirations = stock.options
-    implied_vol = 0.0
-    pcr_volume = 1.0  # デフォルト
-    target_exp = None
-    
-    if expirations:
-        try:
-            # 最も近い満期日（約30日前後）のオプションチェーンを取得
-            target_exp = expirations[0]
-            opt_chain = stock.option_chain(target_exp)
-            calls = opt_chain.calls
-            puts = opt_chain.puts
-            
-            total_call_vol = calls["volume"].sum() if "volume" in calls.columns else 1.0
-            total_put_vol = puts["volume"].sum() if "volume" in puts.columns else 1.0
-            pcr_volume = total_put_vol / (total_call_vol + 1e-9)
-            
-            # 代表的なアット・ザ・マネー(ATM)のIVを取得
-            calls["strike_diff"] = (calls["strike"] - current_price).abs()
-            atm_call = calls.sort_values(by="strike_diff").iloc[0]
-            implied_vol = atm_call["impliedVolatility"]
-            
-            # オプションチェーンの結合とDelta計算
-            for _, row in calls.iterrows():
-                strike = row["strike"]
-                # Deltaの統計的近似 (d1 = (ln(S/K) + (r + sigma^2/2)T) / (sigma * sqrt(T)))
-                # 満期 30日(T=30/365), 無リスク金利 r=0.04 と仮定
-                T = 30 / 365.25
-                r = 0.04
-                sigma = row["impliedVolatility"] if row["impliedVolatility"] > 0 else 0.3
-                if sigma > 0:
-                    d1 = (np.log(current_price / strike) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-                    delta = std_normal_cdf(d1)
-                else:
-                    delta = 0.5
-                    
-                options_data.append({
-                    "Type": "Call",
-                    "Strike": strike,
-                    "Last Price": row["lastPrice"],
-                    "Volume": row["volume"] if "volume" in row else 0,
-                    "Open Interest": row["openInterest"] if "openInterest" in row else 0,
-                    "IV": row["impliedVolatility"],
-                    "Delta": delta
-                })
-        except Exception as e:
-            pass
-            
-    df_opt = pd.DataFrame(options_data) if options_data else pd.DataFrame()
-    return hist, df_opt, target_exp, implied_vol, hv, pcr_volume
+    return hist, current_price, hv, stock.options
+
+@st.cache_data(ttl=600)
+def fetch_option_chain_by_expiry(ticker, expiry_date, current_price):
+    stock = yf.Ticker(ticker)
+    try:
+        opt_chain = stock.option_chain(expiry_date)
+        calls = opt_chain.calls
+        puts = opt_chain.puts
+        
+        # PCR計算用のボリューム
+        total_call_vol = calls["volume"].sum() if "volume" in calls.columns else 1.0
+        total_put_vol = puts["volume"].sum() if "volume" in puts.columns else 1.0
+        pcr_volume = total_put_vol / (total_call_vol + 1e-9)
+        
+        # 代表的なATMのIV
+        calls["strike_diff"] = (calls["strike"] - current_price).abs()
+        atm_call = calls.sort_values(by="strike_diff").iloc[0]
+        implied_vol = atm_call["impliedVolatility"]
+        
+        return calls, puts, implied_vol, pcr_volume
+    except:
+        return pd.DataFrame(), pd.DataFrame(), 0.3, 1.0
 
 # カタリスト取得ロジック
 @st.cache_data(ttl=7200)
@@ -370,21 +342,29 @@ st.dataframe(
 st.markdown("---")
 
 # --------------------------------------------------------------------------
-# SECTION 2: 選択銘柄のリアルタイム詳細・オプション解析 (横並び2カラム)
+# SECTION 2: 選択銘柄のリアルタイム詳細・オプション解析 (全幅100%スタックレイアウト)
 # --------------------------------------------------------------------------
 st.subheader(f"👁️ 【{current_ticker}】 リアルタイム詳細・オプション解析")
 
-with st.spinner(f"【{current_ticker}】の市場データおよびオプションチェーンを解析中..."):
-    hist_data, df_options, expiry_date, iv, hv, pcr = fetch_market_and_option_data(current_ticker)
+with st.spinner(f"【{current_ticker}】の市場データを解析中..."):
+    hist_data, current_price, hv, available_expiries = fetch_market_data(current_ticker)
 
 if hist_data is not None:
-    current_price = hist_data["Close"].iloc[-1]
-    
-    # テクニカル計算 (ボリンジャーバンド)
-    hist_data["MA20"] = hist_data["Close"].rolling(window=20).mean()
-    hist_data["STD20"] = hist_data["Close"].rolling(window=20).std()
-    hist_data["BB_Upper"] = hist_data["MA20"] + (hist_data["STD20"] * 2)
-    hist_data["BB_Lower"] = hist_data["MA20"] - (hist_data["STD20"] * 2)
+    # 限月ドリルダウン機能の配置
+    st.markdown("### 📅 オプション限月ドリルダウン（満期選択）")
+    if available_expiries:
+        selected_expiry = st.selectbox(
+            "表示するオプションチェーンの満期日（Expiration Date）を選択してください:",
+            options=available_expiries,
+            index=0
+        )
+    else:
+        selected_expiry = None
+        st.warning("⚠️ 選択された銘柄のアクティブなオプション満期日が見つかりません。")
+
+    # 選択された限月のオプションデータをフェッチ
+    with st.spinner(f"【{current_ticker}】 {selected_expiry} のオプションチェーンを解析中..."):
+        df_calls_raw, df_puts_raw, iv, pcr = fetch_option_chain_by_expiry(current_ticker, selected_expiry, current_price)
 
     # 1標準偏差 (1σ) 予測レンジ of 満期30日
     T_30 = 30 / 365.25
@@ -392,334 +372,396 @@ if hist_data is not None:
     upper_1sigma = current_price + one_sigma_move
     lower_1sigma = current_price - one_sigma_move
     
-    # コントロールパネル
+    # 統計スタッツメトリクス（全幅表示）
+    st.markdown("#### 📊 リアルタイム統計・ボラティリティ指標")
+    m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
+    with m_col1:
+        st.metric("インプライド・ボラティリティ (IV)", f"{iv*100:.1f}%")
+    with m_col2:
+        st.metric("歴史的ボラティリティ (HV)", f"{hv*100:.1f}%")
+    with m_col3:
+        st.metric("IV / HV 比率", f"{iv/hv:.2f}" if hv > 0 else "N/A", help="1.0未満はオプションが統計的に割安、1.5以上は割高")
+    with m_col4:
+        st.metric("Put-Call Ratio (PCR)", f"{pcr:.2f}", help="0.7以下はコールの出来高が圧倒的に多く、極めて強気")
+    with m_col5:
+        st.metric("1σ 上昇上限 (30日)", f"${upper_1sigma:.2f}")
+    with m_col6:
+        st.metric("1σ 下落下限 (30日)", f"${lower_1sigma:.2f}")
+
+    st.markdown("---")
+
+    # コントロールパネル（全幅）
     ctrl_col1, ctrl_col2 = st.columns([3, 5])
     with ctrl_col1:
         show_bb = st.checkbox("ボリンジャーバンドを表示", value=True)
     with ctrl_col2:
         chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
 
-    col_chart, col_strategy = st.columns([4, 3])
+    # ----------------------------------------------------------------------
+    # CHART 1: 現物株価チャート (全幅・高さ 440px)
+    # ----------------------------------------------------------------------
+    fig_price = gr.Figure()
     
-    # LEFT: 統合チャート (2つの完全に独立したPlotlyオブジェクトに分離し、干渉を物理的に100%防ぐ)
-    with col_chart:
-        # ----------------------------------------------------------------------
-        # CHART 1: 現物株価チャート (上段・高さ 420px)
-        # ----------------------------------------------------------------------
-        fig_price = gr.Figure()
-        
-        # 1σ予測バンドの描画 (統計的確率約68%の推移予測)
-        future_dates = [hist_data.index[-1] + timedelta(days=i) for i in range(31)]
-        upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
-        lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
-        
-        if chart_type == "ローソク足":
-            fig_price.add_trace(gr.Candlestick(
-                x=hist_data.index[-60:], open=hist_data["Open"].iloc[-60:], high=hist_data["High"].iloc[-60:],
-                low=hist_data["Low"].iloc[-60:], close=hist_data["Close"].iloc[-60:], name="株価 (OHLC)"
-            ))
-        else:
-            fig_price.add_trace(gr.Scatter(
-                x=hist_data.index[-60:], y=hist_data["Close"].iloc[-60:],
-                mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
-            ))
-            
-        # ボリンジャーバンドの描画
-        if show_bb:
-            fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", hoverinfo="skip", showlegend=False))
-            fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", hoverinfo="skip", showlegend=False))
-            fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均", hoverinfo="skip"))
-
-        # 1σ予測バンドの描画
+    future_dates = [hist_data.index[-1] + timedelta(days=i) for i in range(31)]
+    upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
+    lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
+    
+    if chart_type == "ローソク足":
+        fig_price.add_trace(gr.Candlestick(
+            x=hist_data.index[-60:], open=hist_data["Open"].iloc[-60:], high=hist_data["High"].iloc[-60:],
+            low=hist_data["Low"].iloc[-60:], close=hist_data["Close"].iloc[-60:], name="株価 (OHLC)"
+        ))
+    else:
         fig_price.add_trace(gr.Scatter(
-            x=future_dates, y=upper_band_curve,
-            mode="lines", line=dict(color="rgba(0, 255, 204, 0.3)", width=1, dash="dash"),
-            name="1σ 上昇上限 (確率68%)", showlegend=True
+            x=hist_data.index[-60:], y=hist_data["Close"].iloc[-60:],
+            mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
         ))
         
-        fig_price.add_trace(gr.Scatter(
-            x=future_dates, y=lower_band_curve,
-            mode="lines", line=dict(color="rgba(239, 68, 68, 0.3)", width=1, dash="dash"),
-            fill="tonexty", fillcolor="rgba(0, 255, 204, 0.02)",
-            name="1σ 下落下限 (確率68%)", showlegend=True
-        ))
-        
-        fig_price.update_layout(
-            height=420, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-            margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1, x=0),
-            xaxis=dict(title="", showticklabels=False), # 下段と時間軸を揃えるため上段の目盛りは非表示
-            yaxis=dict(title="株価 ($)"),
-            hovermode="x"
+    if show_bb:
+        fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", hoverinfo="skip", showlegend=False))
+        fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", hoverinfo="skip", showlegend=False))
+        fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均", hoverinfo="skip"))
+
+    fig_price.add_trace(gr.Scatter(
+        x=future_dates, y=upper_band_curve,
+        mode="lines", line=dict(color="rgba(0, 255, 204, 0.3)", width=1, dash="dash"),
+        name="1σ 上昇上限 (確率68%)", showlegend=True
+    ))
+    
+    fig_price.add_trace(gr.Scatter(
+        x=future_dates, y=lower_band_curve,
+        mode="lines", line=dict(color="rgba(239, 68, 68, 0.3)", width=1, dash="dash"),
+        fill="tonexty", fillcolor="rgba(0, 255, 204, 0.02)",
+        name="1σ 下落下限 (確率68%)", showlegend=True
+    ))
+    
+    fig_price.update_layout(
+        height=400, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+        margin=dict(l=10, r=10, t=50, b=10),
+        legend=dict(orientation="h", y=1.15, x=0),
+        xaxis=dict(
+            title="", 
+            showticklabels=False,
+            showspikes=True,
+            spikemode="across",
+            spikethickness=1,
+            spikedash="dash",
+            spikecolor="rgba(255, 255, 255, 0.4)"
+        ),
+        yaxis=dict(
+            title="株価 ($)",
+            showspikes=True,
+            spikemode="across",
+            spikethickness=1,
+            spikedash="dash",
+            spikecolor="rgba(255, 255, 255, 0.4)"
+        ),
+        hovermode="x unified",
+        hoverlabel=dict(
+            bgcolor="rgba(17, 24, 39, 0.85)",
+            font_size=11,
+            font_family="Consolas, monospace"
         )
-        st.plotly_chart(fig_price, use_container_width=True)
+    )
+    st.plotly_chart(fig_price, use_container_width=True)
 
-        # ----------------------------------------------------------------------
-        # CHART 2: 純粋なボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング (下段・高さ 280px)
-        # ----------------------------------------------------------------------
-        fig_vol = gr.Figure()
-        
-        # 過去のHV推移のシミュレーション（20日移動標準偏差から算出）
-        hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
-        # IV推移（ATMオプション価格から逆算した歴史的IV推移のシミュレーション）
-        hist_data["IV_Sim"] = hist_data["HV_20"] * (iv / (hv if hv > 0 else 1.0))
+    # ----------------------------------------------------------------------
+    # CHART 2: 純粋なボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング (全幅・高さ 280px)
+    # ----------------------------------------------------------------------
+    fig_vol = gr.Figure()
+    
+    hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
+    hist_data["IV_Sim"] = hist_data["HV_20"] * (iv / (hv if hv > 0 else 1.0))
 
-        # HV推移の描画
+    fig_vol.add_trace(gr.Scatter(
+        x=hist_data.index[-60:], y=hist_data["HV_20"].iloc[-60:],
+        mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"
+    ))
+
+    fig_vol.add_trace(gr.Scatter(
+        x=hist_data.index[-60:], y=hist_data["IV_Sim"].iloc[-60:],
+        mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"
+    ))
+
+    df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
+    df_insider_daily = df_ticker_raw.groupby("buy_date")["total_value"].sum().reset_index()
+    df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
+    
+    if not df_insider_daily.empty:
         fig_vol.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["HV_20"].iloc[-60:],
-            mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"
+            x=df_insider_daily["buy_date"], 
+            y=[hist_data["HV_20"].mean()] * len(df_insider_daily),
+            mode="markers+text",
+            marker=dict(symbol="star", size=12, color="#AA00FF", line=dict(color="#00FFCC", width=1)),
+            text=["🐋 Buy"] * len(df_insider_daily),
+            textposition="top center",
+            name="インサイダー買いタイミング"
         ))
-
-        # IV推移の描画
-        fig_vol.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["IV_Sim"].iloc[-60:],
-            mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"
-        ))
-
-        # インサイダー買いタイミング
-        df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
-        df_insider_daily = df_ticker_raw.groupby("buy_date")["total_value"].sum().reset_index()
-        df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
         
-        if not df_insider_daily.empty:
-            fig_vol.add_trace(gr.Scatter(
-                x=df_insider_daily["buy_date"], 
-                y=[hist_data["HV_20"].mean()] * len(df_insider_daily),
-                mode="markers+text",
-                marker=dict(symbol="star", size=12, color="#AA00FF", line=dict(color="#00FFCC", width=1)),
-                text=["🐋 Buy"] * len(df_insider_daily),
-                textposition="top center",
-                name="インサイダー買いタイミング"
-            ))
-            
-        fig_vol.update_layout(
-            height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-            margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1, x=0),
-            xaxis=dict(title="日付"),
-            yaxis=dict(title="ボラティリティ (%)"),
-            hovermode="x"
+    fig_vol.update_layout(
+        height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+        margin=dict(l=10, r=10, t=50, b=10),
+        legend=dict(orientation="h", y=1.18, x=0),
+        xaxis=dict(
+            title="日付",
+            showspikes=True,
+            spikemode="across",
+            spikethickness=1,
+            spikedash="dash",
+            spikecolor="rgba(255, 255, 255, 0.4)"
+        ),
+        yaxis=dict(
+            title="ボラティリティ (%)",
+            showspikes=True,
+            spikemode="across",
+            spikethickness=1,
+            spikedash="dash",
+            spikecolor="rgba(255, 255, 255, 0.4)"
+        ),
+        hovermode="x unified",
+        hoverlabel=dict(
+            bgcolor="rgba(17, 24, 39, 0.85)",
+            font_size=11,
+            font_family="Consolas, monospace"
         )
-        st.plotly_chart(fig_vol, use_container_width=True)
+    )
+    st.plotly_chart(fig_vol, use_container_width=True)
 
-    # RIGHT: AI戦略 ＆ 統計的予想リターン（ペイオフ）シミュレーター
-    with col_strategy:
-        # 統計スタッツメトリクス
-        m_col1, m_col2, m_col3 = st.columns(3)
-        with m_col1:
-            st.metric("インプライド・ボラティリティ (IV)", f"{iv*100:.1f}%")
-        with m_col2:
-            st.metric("歴史的ボラティリティ (HV)", f"{hv*100:.1f}%")
-        with m_col3:
-            st.metric("IV / HV 比率", f"{iv/hv:.2f}" if hv > 0 else "N/A", help="1.0未満はオプションが統計的に割安、1.5以上は割高")
+    st.markdown("---")
+
+    # ----------------------------------------------------------------------
+    # SECTION 3: 統計的オプション推奨戦略ランキング (全幅100%表示)
+    # ----------------------------------------------------------------------
+    st.subheader("🎯 統計的オプション推奨戦略ランキング (全幅表示)")
+    st.caption("※勝率（確率）50%以上の戦略をスクリーニングし、期待リターン(ROI)順に自動ソートして提示します。")
+
+    # 各戦略のパラメータ計算
+    bc_buy_strike = current_price * 0.95
+    bc_sell_strike = upper_1sigma
+    bc_buy_prem = current_price * 0.08
+    bc_sell_prem = current_price * 0.02
+    bc_net_cost = bc_buy_prem - bc_sell_prem
+    bc_max_profit = (bc_sell_strike - bc_buy_strike) - bc_net_cost
+    bc_roi = (bc_max_profit / bc_net_cost) * 100
+    bc_prob = 68.2
+
+    cc_buy_stock = current_price
+    cc_sell_strike = upper_1sigma
+    cc_sell_prem = current_price * 0.05
+    cc_net_cost = cc_buy_stock - cc_sell_prem
+    cc_max_profit = (cc_sell_strike - cc_buy_stock) + cc_sell_prem
+    cc_roi = (cc_max_profit / cc_net_cost) * 100
+    cc_prob = 84.1
+
+    lc_strike = current_price * 1.05
+    lc_prem = current_price * 0.04
+    lc_roi = 150.0
+    lc_prob = 50.0
+
+    strategies_pool = [
+        {
+            "id": "bull_call",
+            "title": "🟢 ブル・コール・スプレッド (Bull Call Spread)",
+            "class": "strategy-card",
+            "roi": bc_roi,
+            "prob": bc_prob,
+            "desc": f"""
+            <b>【統計的選定根拠】</b><br>
+            IV/HV比率が <b>{(iv/hv if hv > 0 else 1.0):.2f}</b> と低く、オプション買いのプレミアムが統計的に割安な状態です。
+            インサイダーの買いシグナルを背景に、上昇時のレバレッジ利益を最大化しつつ、下落リスクを限定します。<br><br>
             
-        m_col4, m_col5, m_col6 = st.columns(3)
-        with m_col4:
-            st.metric("Put-Call Ratio (PCR)", f"{pcr:.2f}", help="0.7以下はコールの出来高が圧倒的に多く、極めて強気")
-        with m_col5:
-            st.metric("1σ 上昇上限 (30日)", f"${upper_1sigma:.2f}")
-        with m_col6:
-            st.metric("1σ 下落下限 (30日)", f"${lower_1sigma:.2f}")
-
-        # ==============================================================================
-        # 統計的オプション戦略構築アルゴリズム (複数期待値ランキングシステム)
-        # ==============================================================================
-        st.markdown("---")
-        st.subheader("🎯 統計的オプション推奨戦略ランキング")
-        st.caption("※勝率（確率）50%以上の戦略をスクリーニングし、期待リターン(ROI)順に自動ソートして提示します。")
-
-        # 各戦略のパラメータ計算
-        # 1. ブル・コール・スプレッド (Bull Call)
-        bc_buy_strike = current_price * 0.95
-        bc_sell_strike = upper_1sigma
-        bc_buy_prem = current_price * 0.08
-        bc_sell_prem = current_price * 0.02
-        bc_net_cost = bc_buy_prem - bc_sell_prem
-        bc_max_profit = (bc_sell_strike - bc_buy_strike) - bc_net_cost
-        bc_roi = (bc_max_profit / bc_net_cost) * 100
-        bc_prob = 68.2 # 1σ範囲内に収まる統計的確率
-
-        # 2. カバード・コール (Covered Call)
-        cc_buy_stock = current_price
-        cc_sell_strike = upper_1sigma
-        cc_sell_prem = current_price * 0.05
-        cc_net_cost = cc_buy_stock - cc_sell_prem
-        cc_max_profit = (cc_sell_strike - cc_buy_stock) + cc_sell_prem
-        cc_roi = (cc_max_profit / cc_net_cost) * 100
-        cc_prob = 84.1 # 満期時に権利行使価格以下、または利益になる累積統計確率
-
-        # 3. ロング・コール (Long Call)
-        lc_strike = current_price * 1.05
-        lc_prem = current_price * 0.04
-        lc_roi = 150.0 # 想定レバレッジROI
-        lc_prob = 50.0 # ニュートラル確率
-
-        # 戦略データベース構築
-        strategies_pool = [
-            {
-                "id": "bull_call",
-                "title": "🟢 ブル・コール・スプレッド (Bull Call Spread)",
-                "class": "strategy-card",
-                "roi": bc_roi,
-                "prob": bc_prob,
-                "desc": f"""
-                <b>【統計的選定根拠】</b><br>
-                IV/HV比率が <b>{(iv/hv if hv > 0 else 1.0):.2f}</b> と低く、オプション買いのプレミアムが統計的に割安な状態です。
-                インサイダーの買いシグナルを背景に、上昇時のレバレッジ利益を最大化しつつ、下落リスクを限定します。<br><br>
-                
-                <b>【具体的取引価格の統計的提案】</b><br>
-                1. <b>Buy {current_ticker} 30日満期 ${bc_buy_strike:.1f} Call (ITM)</b> (目安プレミアム: ${bc_buy_prem:.2f})<br>
-                2. <b>Sell {current_ticker} 30日満期 ${bc_sell_strike:.1f} Call (OTM)</b> (目安プレミアム: ${bc_sell_prem:.2f})<br><br>
-                
-                <b>【リスク・リターン特性】</b><br>
-                * <b>実質コスト（最大損失）</b>: ${bc_net_cost:.2f}<br>
-                * <b>最大利益</b>: ${bc_max_profit:.2f} (想定最大リターン: <b>+{bc_roi:.1f}%</b>)<br>
-                * <b>統計的勝率</b>: <b>{bc_prob:.1f}%</b>
+            <b>【具体的取引価格の統計的提案】</b><br>
+            1. <b>Buy {current_ticker} 30日満期 ${bc_buy_strike:.1f} Call (ITM)</b> (目安プレミアム: ${bc_buy_prem:.2f})<br>
+            2. <b>Sell {current_ticker} 30日満期 ${bc_sell_strike:.1f} Call (OTM)</b> (目安プレミアム: ${bc_sell_prem:.2f})<br><br>
+            
+            <b>【リスク・リターン特性】</b><br>
+            * <b>実質コスト（最大損失）</b>: ${bc_net_cost:.2f}<br>
+            * <b>最大利益</b>: ${bc_max_profit:.2f} (想定最大リターン: <b>+{bc_roi:.1f}%</b>)<br>
+            * <b>統計的勝率</b>: <b>{bc_prob:.1f}%</b>
+            """
+        },
+        {
+            "id": "covered_call",
+            "title": "🟡 カバード・コール (Covered Call)",
+            "class": "strategy-card-secondary",
+            "roi": cc_roi,
+            "prob": cc_prob,
+            "desc": f"""
+            <b>【統計的選定根拠】</b><br>
+            ボラティリティが過熱傾向（IV/HV比率 <b>{(iv/hv if hv > 0 else 1.0):.2f}</b>）にあるため、コールオプションの売り（ショート）プレミアムを回収するインカムゲイン戦略が極めて有利です。<br><br>
+            
+            <b>【具体的取引価格の統計的提案】</b><br>
+            1. <b>現物株式を ${current_price:.2f} で購入</b><br>
+            2. <b>Sell {current_ticker} 30日満期 ${cc_sell_strike:.1f} Call (OTM)</b> (目安プレミアム受取: ${cc_sell_prem:.2f})<br><br>
+            
+            <b>【リスク・リターン特性】</b><br>
+            * <b>実質コスト</b>: ${cc_net_cost:.2f}<br>
+            * <b>最大利益</b>: ${cc_max_profit:.2f} (想定最大リターン: <b>+{cc_roi:.1f}%</b>)<br>
+            * <b>統計的勝率</b>: <b>{cc_prob:.1f}%</b> (プレミアム受取による高い下値クッション)
                 """
-            },
-            {
-                "id": "covered_call",
-                "title": "🟡 カバード・コール (Covered Call)",
-                "class": "strategy-card-secondary",
-                "roi": cc_roi,
-                "prob": cc_prob,
-                "desc": f"""
-                <b>【統計的選定根拠】</b><br>
-                ボラティリティが過熱傾向（IV/HV比率 <b>{(iv/hv if hv > 0 else 1.0):.2f}</b>）にあるため、コールオプションの売り（ショート）プレミアムを回収するインカムゲイン戦略が極めて有利です。<br><br>
-                
-                <b>【具体的取引価格の統計的提案】</b><br>
-                1. <b>現物株式を ${current_price:.2f} で購入</b><br>
-                2. <b>Sell {current_ticker} 30日満期 ${cc_sell_strike:.1f} Call (OTM)</b> (目安プレミアム受取: ${cc_sell_prem:.2f})<br><br>
-                
-                <b>【リスク・リターン特性】</b><br>
-                * <b>実質コスト</b>: ${cc_net_cost:.2f}<br>
-                * <b>最大利益</b>: ${cc_max_profit:.2f} (想定最大リターン: <b>+{cc_roi:.1f}%</b>)<br>
-                * <b>統計的勝率</b>: <b>{cc_prob:.1f}%</b> (プレミアム受取による高い下値クッション)
-                """
-            },
-            {
-                "id": "long_call",
-                "title": "🟣 ロング・コール (Long Call) 単体打診買い",
-                "class": "strategy-card-warning",
-                "roi": lc_roi,
-                "prob": lc_prob,
-                "desc": f"""
-                <b>【統計的選定根拠】</b><br>
-                ボラティリティは中立ですが、インサイダーの超大口買いが直近で集中しており、突発的な好材料（カタリスト）発表による株価急騰（ボラティリティ・スパイク）を狙う高レバレッジ戦略です。<br><br>
-                
-                <b>【具体的取引価格の統計的提案】</b><br>
-                * <b>Buy {current_ticker} 30日満期 ${lc_strike:.1f} Call (ややOTM)</b> (目安プレミアム: ${lc_prem:.2f})<br><br>
-                
-                <b>【リスク・リターン特性】</b><br>
-                * <b>最大損失</b>: 支払ったプレミアム ${lc_prem:.2f} のみ<br>
-                * <b>最大利益</b>: 無制限 (株価上昇に応じて無限大のレバレッジ)<br>
-                * <b>統計的勝率</b>: <b>{lc_prob:.1f}%</b>
-                """
-            }
-        ]
+        },
+        {
+            "id": "long_call",
+            "title": "🟣 ロング・コール (Long Call) 単体打診買い",
+            "class": "strategy-card-warning",
+            "roi": lc_roi,
+            "prob": lc_prob,
+            "desc": f"""
+            <b>【統計的選定根拠】</b><br>
+            ボラティリティは中立ですが、インサイダーの超大口買いが直近で集中しており、突発的な好材料（カタリスト）発表による株価急騰（ボラティリティ・スパイク）を狙う高レバレッジ戦略です。<br><br>
+            
+            <b>【具体的取引価格の統計的提案】</b><br>
+            * <b>Buy {current_ticker} 30日満期 ${lc_strike:.1f} Call (ややOTM)</b> (目安プレミアム: ${lc_prem:.2f})<br><br>
+            
+            <b>【リスク・リターン特性】</b><br>
+            * <b>最大損失</b>: 支払ったプレミアム ${lc_prem:.2f} のみ<br>
+            * <b>最大利益</b>: 無制限 (株価上昇に応じて無限大のレバレッジ)<br>
+            * <b>統計的勝率</b>: <b>{lc_prob:.1f}%</b>
+            """
+        }
+    ]
 
-        # 確率50%以上の戦略をフィルタリングし、期待リターン(roi)の大きい順にソート
-        filtered_strategies = [s for s in strategies_pool if s["prob"] >= 50.0]
-        ranked_strategies = sorted(filtered_strategies, key=lambda x: x["roi"], reverse=True)
+    filtered_strategies = [s for s in strategies_pool if s["prob"] >= 50.0]
+    ranked_strategies = sorted(filtered_strategies, key=lambda x: x["roi"], reverse=True)
 
-        # ランキングカードの描画
-        rank_medals = ["🥇 1st Active Strategy", "🥈 2nd Alternative Strategy", "🥉 3rd Tactical Strategy"]
-        for idx, strat in enumerate(ranked_strategies[:3]):
-            st.html(f"""
-                <div class="{strat['class']}">
-                    <div style="font-size: 11px; font-weight: bold; color: #94A3B8; margin-bottom: 4px;">{rank_medals[idx]}</div>
-                    <h4 style="color: #00FFCC; margin-top: 0; margin-bottom: 12px;">{strat['title']}</h4>
-                    <div style="font-size: 12px; line-height: 1.6; color: #E2E8F0;">
-                        {strat['desc']}
-                    </div>
+    # ランキングカードの描画（全幅で縦に美しく並べる）
+    rank_medals = ["🥇 1st Active Strategy", "🥈 2nd Alternative Strategy", "🥉 3rd Tactical Strategy"]
+    for idx, strat in enumerate(ranked_strategies[:3]):
+        st.html(f"""
+            <div class="{strat['class']}">
+                <div style="font-size: 11px; font-weight: bold; color: #94A3B8; margin-bottom: 4px;">{rank_medals[idx]}</div>
+                <h3 style="color: #00FFCC; margin-top: 0; margin-bottom: 12px;">{strat['title']}</h3>
+                <div style="font-size: 13px; line-height: 1.7; color: #E2E8F0;">
+                    {strat['desc']}
                 </div>
-            """)
+            </div>
+        """)
 
-        # ----------------------------------------------------------------------
-        # 統計的予想リターン（最優位戦略のペイオフ・ダイアグラム）
-        # ----------------------------------------------------------------------
-        best_strat = ranked_strategies[0]["id"]
-        st.markdown("#### 📈 1st推奨戦略の満期時株価騰落率 vs 予想投資リターン (%)")
-        
-        # 株価変動レンジ of 生成 (-20% から +20%)
-        stock_changes = np.linspace(-0.20, 0.20, 100)
-        underlying_prices = current_price * (1 + stock_changes)
-        payoffs = []
-        
-        if best_strat == "bull_call":
-            for S in underlying_prices:
-                p_buy = max(0, S - bc_buy_strike) - bc_buy_prem
-                p_sell = bc_sell_prem - max(0, S - bc_sell_strike)
-                net_payoff = (p_buy + p_sell) / bc_net_cost * 100
-                payoffs.append(net_payoff)
-            breakeven_price = bc_buy_strike + bc_net_cost
-        elif best_strat == "covered_call":
-            for S in underlying_prices:
-                stock_profit = S - current_price
-                call_profit = cc_sell_prem - max(0, S - cc_sell_strike)
-                net_payoff = (stock_profit + call_profit) / cc_net_cost * 100
-                payoffs.append(net_payoff)
-            breakeven_price = cc_buy_stock - cc_sell_prem
-        else:  # long_call
-            for S in underlying_prices:
-                net_payoff = (max(0, S - lc_strike) - lc_prem) / lc_prem * 100
-                payoffs.append(net_payoff)
-            breakeven_price = lc_strike + lc_prem
-                
-        breakeven_change = ((breakeven_price / current_price) - 1) * 100
-        
-        fig_payoff = gr.Figure()
-        
-        # 1σ変動範囲の背景シェーディング
-        fig_payoff.add_vrect(
-            x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100,
-            fillcolor="rgba(0, 255, 204, 0.05)", line_width=0,
-            annotation_text="1σ 確率範囲 (68%)", annotation_position="top left",
-            annotation_font=dict(size=10, color="rgba(0, 255, 204, 0.5)")
-        )
-        
-        # ペイオフ曲線の描画
-        fig_payoff.add_trace(gr.Scatter(
-            x=stock_changes * 100, y=payoffs,
-            mode="lines", line=dict(color="#00FFCC", width=3),
-            name="予想リターン (%)"
-        ))
-        
-        # 損益分岐点ライン
-        fig_payoff.add_vline(x=breakeven_change, line_dash="dash", line_color="#FF007F", name="損益分岐点")
-        fig_payoff.add_hline(y=0, line_color="rgba(255, 255, 255, 0.2)", line_width=1)
-        
-        fig_payoff.update_layout(
-            height=200, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-            margin=dict(l=10, r=10, t=10, b=10),
-            xaxis=dict(title="満期時の株価騰落率 (%)", gridcolor="rgba(255,255,255,0.05)"),
-            yaxis=dict(title="投資リターン (%)", gridcolor="rgba(255,255,255,0.05)"),
-            showlegend=False
-        )
-        st.plotly_chart(fig_payoff, use_container_width=True)
-        
-        # 安全なテキスト表示
-        be_text = f"損益分岐点（Break-even）: 株価騰落率 {breakeven_change:+.1f}% (${breakeven_price:.2f}) 以上でプラス収支"
-        st.caption(be_text)
+    # ----------------------------------------------------------------------
+    # 統計的予想リターン（最優位戦略のペイオフ・ダイアグラム - 全幅表示）
+    # ----------------------------------------------------------------------
+    best_strat = ranked_strategies[0]["id"]
+    st.markdown("#### 📈 1st推奨戦略の満期時株価騰落率 vs 予想投資リターン (%)")
+    
+    stock_changes = np.linspace(-0.20, 0.20, 100)
+    underlying_prices = current_price * (1 + stock_changes)
+    payoffs = []
+    
+    if best_strat == "bull_call":
+        for S in underlying_prices:
+            p_buy = max(0, S - bc_buy_strike) - bc_buy_prem
+            p_sell = bc_sell_prem - max(0, S - bc_sell_strike)
+            net_payoff = (p_buy + p_sell) / bc_net_cost * 100
+            payoffs.append(net_payoff)
+        breakeven_price = bc_buy_strike + bc_net_cost
+    elif best_strat == "covered_call":
+        for S in underlying_prices:
+            stock_profit = S - current_price
+            call_profit = cc_sell_prem - max(0, S - cc_sell_strike)
+            net_payoff = (stock_profit + call_profit) / cc_net_cost * 100
+            payoffs.append(net_payoff)
+        breakeven_price = cc_buy_stock - cc_sell_prem
+    else:  # long_call
+        for S in underlying_prices:
+            net_payoff = (max(0, S - lc_strike) - lc_prem) / lc_prem * 100
+            payoffs.append(net_payoff)
+        breakeven_price = lc_strike + lc_prem
+            
+    breakeven_change = ((breakeven_price / current_price) - 1) * 100
+    
+    fig_payoff = gr.Figure()
+    
+    fig_payoff.add_vrect(
+        x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100,
+        fillcolor="rgba(0, 255, 204, 0.05)", line_width=0,
+        annotation_text="1σ 確率範囲 (68%)", annotation_position="top left",
+        annotation_font=dict(size=10, color="rgba(0, 255, 204, 0.5)")
+    )
+    
+    fig_payoff.add_trace(gr.Scatter(
+        x=stock_changes * 100, y=payoffs,
+        mode="lines", line=dict(color="#00FFCC", width=3),
+        name="予想リターン (%)"
+    ))
+    
+    fig_payoff.add_vline(x=breakeven_change, line_dash="dash", line_color="#FF007F", name="損益分岐点")
+    fig_payoff.add_hline(y=0, line_color="rgba(255, 255, 255, 0.2)", line_width=1)
+    
+    fig_payoff.update_layout(
+        height=240, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+        margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(title="満期時の株価騰落率 (%)", gridcolor="rgba(255,255,255,0.05)"),
+        yaxis=dict(title="投資リターン (%)", gridcolor="rgba(255,255,255,0.05)"),
+        showlegend=False
+    )
+    st.plotly_chart(fig_payoff, use_container_width=True)
+    
+    be_text = f"損益分岐点（Break-even）: 株価騰落率 {breakeven_change:+.1f}% (${breakeven_price:.2f}) 以上でプラス収支"
+    st.caption(be_text)
 
 else:
     st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
 
 # ==============================================================================
-# 7. LOWER SECTION: 詳細オプションチェーン ＆ マルチソース・リンク (全幅表示)
+# 7. LOWER SECTION: T-Shape 超詳細オプションチェーン・マトリックス (全幅表示)
 # ==============================================================================
 st.markdown("---")
-st.markdown("### 📄 直近満期オプション・チェーン (詳細統計マトリックス)")
+st.markdown(f"### 📄 【{current_ticker}】 {selected_expiry} 満期オプション・チェーン (T-Shape プロ仕様マトリックス)")
+st.caption("※Strike（権利行使価格）を中心に、左側にCall（コール）、右側にPut（プット）を対称配置した機関投資家仕様のレイアウトです。")
 
-if hist_data is not None and df_options is not None and not df_options.empty:
-    df_opt_display = df_options.sort_values(by="Strike").copy()
-    df_opt_display["IV"] = df_opt_display["IV"].map(lambda x: f"{x*100:.1f}%")
-    df_opt_display["Delta"] = df_opt_display["Delta"].map(lambda x: f"{x:.2f}")
-    df_opt_display["Last Price"] = df_opt_display["Last Price"].map(lambda x: f"${x:.2f}")
+if hist_data is not None and not df_calls_raw.empty:
+    # CallとPutをStrikeでマージしてT-Shapeに整形
+    df_c = df_calls_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
+    df_p = df_puts_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility"]].copy()
     
+    # PutのDeltaを簡易計算 (Put Delta ≈ Call Delta - 1)
+    df_c["Delta_p"] = df_c["Delta"] - 1.0
+    
+    df_t_shape = pd.merge(df_c, df_p, on="strike", suffixes=("_call", "_put"))
+    df_t_shape = df_t_shape.sort_values(by="strike").reset_index(drop=True)
+    
+    # 表示用にフォーマット
+    df_t_shape_display = pd.DataFrame()
+    df_t_shape_display["C_Delta"] = df_t_shape["Delta"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
+    df_t_shape_display["C_IV"] = df_t_shape["impliedVolatility_call"].map(lambda x: f"{x*100:.1f}%")
+    df_t_shape_display["C_OI"] = df_t_shape["openInterest_call"].fillna(0).astype(int)
+    df_t_shape_display["C_Vol"] = df_t_shape["volume_call"].fillna(0).astype(int)
+    df_t_shape_display["C_Price"] = df_t_shape["lastPrice_call"].map(lambda x: f"${x:.2f}")
+    
+    # 中央のStrike
+    df_t_shape_display["STRIKE"] = df_t_shape["strike"].map(lambda x: f"${x:.1f}")
+    
+    df_t_shape_display["P_Price"] = df_t_shape["lastPrice_put"].map(lambda x: f"${x:.2f}")
+    df_t_shape_display["P_Vol"] = df_t_shape["volume_put"].fillna(0).astype(int)
+    df_t_shape_display["P_OI"] = df_t_shape["openInterest_put"].fillna(0).astype(int)
+    df_t_shape_display["P_IV"] = df_t_shape["impliedVolatility_put"].map(lambda x: f"{x*100:.1f}%")
+    df_t_shape_display["P_Delta"] = df_t_shape["Delta_p"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
+    
+    # カラム名の変更
+    df_t_shape_display = df_t_shape_display.rename(columns={
+        "C_Delta": "Call Delta",
+        "C_IV": "Call IV",
+        "C_OI": "Call OI",
+        "C_Vol": "Call Vol",
+        "C_Price": "Call Price",
+        "STRIKE": "権利行使価格 (Strike)",
+        "P_Price": "Put Price",
+        "P_Vol": "Put Vol",
+        "P_OI": "Put OI",
+        "P_IV": "Put IV",
+        "P_Delta": "Put Delta"
+    })
+    
+    # 列幅を最小限に最適化した全幅データフレーム
     st.dataframe(
-        df_opt_display[["Strike", "Type", "Last Price", "Volume", "Open Interest", "IV", "Delta"]],
+        df_t_shape_display[[
+            "Call Delta", "Call IV", "Call OI", "Call Vol", "Call Price", 
+            "権利行使価格 (Strike)", 
+            "Put Price", "Put Vol", "Put OI", "Put IV", "Put Delta"
+        ]],
         use_container_width=True,
         hide_index=True,
-        height=250
+        height=320
     )
 else:
     st.warning("⚠️ オプションチェーンデータを取得できませんでした。")
