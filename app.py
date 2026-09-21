@@ -519,8 +519,11 @@ if hist_data is not None:
 
     # 下段サブ指標の描画
     if sub_indicator == "RSI + MACD":
-        # RSI (Row 2)
-        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["RSI_14"].iloc[-60:], mode="lines", line=dict(color="#A855F7", width=1.5), name="RSI (14)"), row=2, col=1)
+        # RSI (Row 2) - サブプロットの行指定を厳密に固定
+        fig_tech.add_trace(gr.Scatter(
+            x=hist_data.index[-60:], y=hist_data["RSI_14"].iloc[-60:], 
+            mode="lines", line=dict(color="#A855F7", width=1.5), name="RSI (14)"
+        ), row=2, col=1)
         fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.4)", row=2, col=1)
         fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.4)", row=2, col=1)
 
@@ -533,15 +536,16 @@ if hist_data is not None:
         # ATR (Row 2)
         fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["ATR"].iloc[-60:], mode="lines", line=dict(color="#E2E8F0", width=1.5), name="ATR (値幅)"), row=2, col=1)
 
-    # レイアウト調整（凡例を最下部に移動して右上アイコンとの重なりを完全回避）
+    # レイアウト調整（凡例を右側に縦並びで配置し、右上アイコンやX軸との被りを完全に回避）
     fig_tech.update_layout(
         height=650, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-        margin=dict(l=10, r=10, t=20, b=10),
+        margin=dict(l=10, r=120, t=20, b=10), # 右側に凡例用のマージンを確保
         legend=dict(
-            orientation="h", 
-            y=-0.08, 
-            x=0.5,
-            xanchor="center"
+            orientation="v", 
+            y=1, 
+            x=1.02, # チャートエリアの右外側に配置
+            xanchor="left",
+            yanchor="top"
         ),
         xaxis=dict(showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         xaxis2=dict(showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
@@ -615,7 +619,14 @@ if hist_data is not None:
             
     fig_vol.update_layout(
         height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-        margin=dict(l=10, r=10, t=50, b=10), legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center"),
+        margin=dict(l=10, r=120, t=50, b=10), 
+        legend=dict(
+            orientation="v", 
+            y=1, 
+            x=1.02, 
+            xanchor="left",
+            yanchor="top"
+        ),
         xaxis=dict(title="日付", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         yaxis=dict(title="ボラティリティ (%)", range=[-25, 105], showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace")
@@ -752,7 +763,7 @@ st.html("""
                     </tr>
                     <tr style="border-bottom: 1px solid #1E293B;">
                         <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (取組高)</td>
-                        <td style="padding: 6px;">未決済 of 契約残高 / <b>機関投資家の本気度・壁</b></td>
+                        <td style="padding: 6px;">未決済の契約残高 / <b>機関投資家の本気度・壁</b></td>
                         <td style="padding: 6px; color: #38BDF8;">強力な支持・抵抗帯 (磁石効果)</td>
                         <td style="padding: 6px;">市場の関与が極めて薄い</td>
                     </tr>
