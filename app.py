@@ -87,7 +87,6 @@ st.html("""
     </style>
 """)
 
-# 統計学累積標準正規分布関数
 def std_normal_cdf(x):
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
@@ -205,7 +204,6 @@ def fetch_option_chain_by_expiry(ticker, expiry_date, current_price):
         T = 30 / 365.25
         r = 0.04
         
-        # Call Delta
         call_deltas = []
         for _, row in calls.iterrows():
             strike = row["strike"]
@@ -214,7 +212,6 @@ def fetch_option_chain_by_expiry(ticker, expiry_date, current_price):
             call_deltas.append(std_normal_cdf(d1))
         calls["Delta"] = call_deltas
         
-        # Put Delta
         put_deltas = []
         for _, row in puts.iterrows():
             strike = row["strike"]
@@ -293,7 +290,6 @@ def fetch_catalyst_events(ticker, df_prices, df_raw_trades):
 # 5. MAIN TERMINAL LAYOUT
 # ==============================================================================
 st.title("👁️ Whale-Eye: Institutional Option & Insider Intelligence")
-st.markdown("インサイダー現物買いの足跡と、オプション市場のボラティリティ・歪み（Skew）を統計学的に解析し、レバレッジ利益を最大化する戦略を自律提案するプロ仕様端末です。")
 st.markdown("---")
 
 # SECTION 1: 全銘柄多次元スクリーニング・マトリックス
@@ -327,7 +323,6 @@ with col_sel2:
 
 current_ticker = st.session_state.selected_ticker
 
-# 表示用データの整形
 df_screener_display = df_screener.copy()
 df_screener_display = df_screener_display.rename(columns={
     "ticker": "ティッカー", "company": "企業名", "total_value": "直近取引額 ($)",
@@ -353,23 +348,52 @@ with st.spinner(f"【{current_ticker}】の市場データを解析中..."):
     hist_data, current_price, hv, available_expiries = fetch_market_data(current_ticker)
 
 if hist_data is not None:
-    # テクニカル指標計算
+    # --- 網羅的テクニカル指標の計算 ---
+    # 1. ボリンジャーバンド
     hist_data["MA20"] = hist_data["Close"].rolling(window=20).mean()
     hist_data["STD20"] = hist_data["Close"].rolling(window=20).std()
     hist_data["BB_Upper"] = hist_data["MA20"] + (hist_data["STD20"] * 2)
     hist_data["BB_Lower"] = hist_data["MA20"] - (hist_data["STD20"] * 2)
 
+    # 2. EMA 20 / 50
+    hist_data["EMA20"] = hist_data["Close"].ewm(span=20, adjust=False).mean()
+    hist_data["EMA50"] = hist_data["Close"].ewm(span=50, adjust=False).mean()
+
+    # 3. 一目均衡表 (Ichimoku Cloud)
+    high_9 = hist_data["High"].rolling(window=9).max()
+    low_9 = hist_data["Low"].rolling(window=9).min()
+    hist_data["Tenkan_Sen"] = (high_9 + low_9) / 2
+
+    high_26 = hist_data["High"].rolling(window=26).max()
+    low_26 = hist_data["Low"].rolling(window=26).min()
+    hist_data["Kijun_Sen"] = (high_26 + low_26) / 2
+
+    hist_data["Senkou_Span_A"] = ((hist_data["Tenkan_Sen"] + hist_data["Kijun_Sen"]) / 2).shift(26)
+    high_52 = hist_data["High"].rolling(window=52).max()
+    low_52 = hist_data["Low"].rolling(window=52).min()
+    hist_data["Senkou_Span_B"] = ((high_52 + low_52) / 2).shift(26)
+
+    # 4. RSI (14)
     delta_close = hist_data["Close"].diff()
     gain = (delta_close.where(delta_close > 0, 0)).rolling(window=14).mean()
     loss = (-delta_close.where(delta_close < 0, 0)).rolling(window=14).mean()
     rs = gain / (loss + 1e-9)
     hist_data["RSI_14"] = 100 - (100 / (1 + rs))
 
+    # 5. MACD
     ema_12 = hist_data["Close"].ewm(span=12, adjust=False).mean()
     ema_26 = hist_data["Close"].ewm(span=26, adjust=False).mean()
     hist_data["MACD"] = ema_12 - ema_26
     hist_data["MACD_Signal"] = hist_data["MACD"].ewm(span=9, adjust=False).mean()
     hist_data["MACD_Hist"] = hist_data["MACD"] - hist_data["MACD_Signal"]
+
+    # 6. ATR (Average True Range)
+    high_low = hist_data["High"] - hist_data["Low"]
+    high_close = (hist_data["High"] - hist_data["Close"].shift()).abs()
+    low_close = (hist_data["Low"] - hist_data["Close"].shift()).abs()
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = ranges.max(axis=1)
+    hist_data["ATR"] = true_range.rolling(14).mean()
 
     # 限月選択
     if available_expiries:
@@ -403,28 +427,36 @@ if hist_data is not None:
 
     st.markdown("---")
 
-    # コントロール
-    ctrl_col1, ctrl_col2 = st.columns([3, 5])
+    # コントロールパネル
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([3, 3, 4])
     with ctrl_col1:
-        show_bb = st.checkbox("ボリンジャーバンドを表示", value=True)
-    with ctrl_col2:
         chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
+    with ctrl_col2:
+        overlay_indicator = st.selectbox("重ね合わせ指標の選択:", ["ボリンジャーバンド", "EMA (20/50)", "一目均衡表 (Ichimoku)", "なし"])
+    with ctrl_col3:
+        sub_indicator = st.selectbox("下段サブ指標の選択:", ["RSI + MACD", "ATR (ボラティリティ値幅)"])
 
     # ----------------------------------------------------------------------
-    # CHART 1: 多段テクニカルチャート (株価/BB/インサイダー + RSI + MACD)
+    # CHART 1: 多段テクニカルチャート (株価 + 各種選択指標)
     # ----------------------------------------------------------------------
     st.markdown("### 📈 テクニカル分析チャート")
-    st.caption("💡 【直接描画機能】: チャート右上（Modebar）の「ライン描画アイコン（Draw line）」や「消しゴム（Erase active shape）」をクリックすると、チャート上をクリック＆ドラッグして自由にサポートライン等を引くことができます。")
+    st.caption("💡 【直接描画機能】: チャート右上（Modebar）の「ライン描画アイコン（Draw line）」や「消しゴム（Erase active shape）」をクリックすると、チャート上で直接ドラッグしてトレンドラインを引くことができます。")
 
-    fig_tech = make_subplots(
-        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_width=[0.2, 0.2, 0.6]
-    )
+    # サブ指標の選択状態に応じてレイアウトを分岐
+    if sub_indicator == "RSI + MACD":
+        fig_tech = make_subplots(
+            rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_width=[0.2, 0.2, 0.6]
+        )
+    else:
+        fig_tech = make_subplots(
+            rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_width=[0.3, 0.7]
+        )
     
     future_dates = [hist_data.index[-1] + timedelta(days=i) for i in range(31)]
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
     
-    # 株価
+    # メイン株価
     if chart_type == "ローソク足":
         fig_tech.add_trace(gr.Candlestick(
             x=hist_data.index[-60:], open=hist_data["Open"].iloc[-60:], high=hist_data["High"].iloc[-60:],
@@ -436,8 +468,8 @@ if hist_data is not None:
             mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
         ), row=1, col=1)
         
-    # ボリンジャーバンド
-    if show_bb and "BB_Upper" in hist_data.columns:
+    # 重ね合わせ指標の動的描画
+    if overlay_indicator == "ボリンジャーバンド" and "BB_Upper" in hist_data.columns:
         fig_tech.add_trace(gr.Scatter(
             x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], 
             line=dict(color="rgba(0, 255, 204, 0.45)", width=0.6), hoverinfo="skip", showlegend=False
@@ -452,46 +484,83 @@ if hist_data is not None:
             line=dict(color="orange", width=1.0, dash="dash"), name="20日移動平均", hoverinfo="skip"
         ), row=1, col=1)
 
-    # 1σ予測
-    fig_tech.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(0, 255, 204, 0.3)", width=1, dash="dash"), name="1σ 上昇上限 (68%)"), row=1, col=1)
-    fig_tech.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.3)", width=1, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.02)", name="1σ 下落下限 (68%)"), row=1, col=1)
-
-    # インサイダー買いマーク (株価上)
-    df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
-    df_insider_daily = df_ticker_raw.groupby(["buy_date", "insider"])["total_value"].sum().reset_index()
-    df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
-    
-    if not df_insider_daily.empty:
-        df_insider_plot = df_insider_daily.merge(hist_data[["Close"]], left_on="buy_date", right_index=True)
+    elif overlay_indicator == "EMA (20/50)":
         fig_tech.add_trace(gr.Scatter(
-            x=df_insider_plot["buy_date"], y=df_insider_plot["Close"] * 1.02,
-            mode="markers+text", marker=dict(symbol="triangle-down", size=12, color="#00FFCC", line=dict(color="#FFFFFF", width=1)),
-            text=["🐋"] * len(df_insider_plot), textposition="top center", name="インサイダー買い (株価上)",
-            hovertext=[f"{row['insider']}: ${row['total_value']:,.0f} 購入" for _, row in df_insider_plot.iterrows()]
+            x=hist_data.index[-60:], y=hist_data["EMA20"].iloc[-60:],
+            line=dict(color="#00C5FF", width=1.2), name="EMA 20"
+        ), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(
+            x=hist_data.index[-60:], y=hist_data["EMA50"].iloc[-60:],
+            line=dict(color="#FF8C00", width=1.2), name="EMA 50"
         ), row=1, col=1)
 
-    # RSI (Row 2)
-    fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["RSI_14"].iloc[-60:], mode="lines", line=dict(color="#A855F7", width=1.5), name="RSI (14)"), row=2, col=1)
-    fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.4)", row=2, col=1)
-    fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.4)", row=2, col=1)
+    elif overlay_indicator == "一目均衡表 (Ichimoku)":
+        fig_tech.add_trace(gr.Scatter(
+            x=hist_data.index[-60:], y=hist_data["Senkou_Span_A"].iloc[-60:],
+            line=dict(color="rgba(56, 189, 248, 0.4)", width=0.8), hoverinfo="skip", showlegend=False
+        ), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(
+            x=hist_data.index[-60:], y=hist_data["Senkou_Span_B"].iloc[-60:],
+            line=dict(color="rgba(244, 63, 94, 0.4)", width=0.8),
+            fill="tonexty", fillcolor="rgba(56, 189, 248, 0.05)", hoverinfo="skip", showlegend=False
+        ), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(
+            x=hist_data.index[-60:], y=hist_data["Tenkan_Sen"].iloc[-60:],
+            line=dict(color="#38BDF8", width=1.0), name="転換線"
+        ), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(
+            x=hist_data.index[-60:], y=hist_data["Kijun_Sen"].iloc[-60:],
+            line=dict(color="#F43F5E", width=1.0), name="基準線"
+        ), row=1, col=1)
 
-    # MACD (Row 3)
-    fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MACD"].iloc[-60:], mode="lines", line=dict(color="#38BDF8", width=1.2), name="MACD"), row=3, col=1)
-    fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MACD_Signal"].iloc[-60:], mode="lines", line=dict(color="#FF8C00", width=1.2), name="Signal"), row=3, col=1)
-    hist_colors = ["#00FFCC" if val >= 0 else "#FF007F" for val in hist_data["MACD_Hist"].iloc[-60:]]
-    fig_tech.add_trace(gr.Bar(x=hist_data.index[-60:], y=hist_data["MACD_Hist"].iloc[-60:], marker_color=hist_colors, name="Histogram"), row=3, col=1)
+    # 1σ予測レンジ
+    fig_tech.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(0, 255, 204, 0.25)", width=1, dash="dash"), name="1σ 上昇上限 (68%)"), row=1, col=1)
+    fig_tech.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.25)", width=1, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.01)", name="1σ 下落下限 (68%)"), row=1, col=1)
 
+    # 下段サブ指標の描画
+    if sub_indicator == "RSI + MACD":
+        # RSI (Row 2)
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["RSI_14"].iloc[-60:], mode="lines", line=dict(color="#A855F7", width=1.5), name="RSI (14)"), row=2, col=1)
+        fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.4)", row=2, col=1)
+        fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.4)", row=2, col=1)
+
+        # MACD (Row 3)
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MACD"].iloc[-60:], mode="lines", line=dict(color="#38BDF8", width=1.2), name="MACD"), row=3, col=1)
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MACD_Signal"].iloc[-60:], mode="lines", line=dict(color="#FF8C00", width=1.2), name="Signal"), row=3, col=1)
+        hist_colors = ["#00FFCC" if val >= 0 else "#FF007F" for val in hist_data["MACD_Hist"].iloc[-60:]]
+        fig_tech.add_trace(gr.Bar(x=hist_data.index[-60:], y=hist_data["MACD_Hist"].iloc[-60:], marker_color=hist_colors, name="Histogram"), row=3, col=1)
+    else:
+        # ATR (Row 2)
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["ATR"].iloc[-60:], mode="lines", line=dict(color="#E2E8F0", width=1.5), name="ATR (値幅)"), row=2, col=1)
+
+    # レイアウト調整（凡例を最下部に移動して右上アイコンとの重なりを完全回避）
     fig_tech.update_layout(
         height=650, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-        margin=dict(l=10, r=10, t=50, b=10), legend=dict(orientation="h", y=1.08, x=0),
+        margin=dict(l=10, r=10, t=20, b=10),
+        legend=dict(
+            orientation="h", 
+            y=-0.08, 
+            x=0.5,
+            xanchor="center"
+        ),
         xaxis=dict(showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         xaxis2=dict(showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-        xaxis3=dict(title="日付", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         yaxis=dict(title="株価 ($)", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-        yaxis2=dict(title="RSI", range=[10, 90]), yaxis3=dict(title="MACD"),
         hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace"),
         dragmode="drawline", newshape=dict(line=dict(color="#00FFCC", width=1.5), opacity=0.8)
     )
+
+    if sub_indicator == "RSI + MACD":
+        fig_tech.update_layout(
+            xaxis3=dict(title="日付", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
+            yaxis2=dict(title="RSI", range=[10, 90]), 
+            yaxis3=dict(title="MACD")
+        )
+    else:
+        fig_tech.update_layout(
+            xaxis2=dict(title="日付", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
+            yaxis2=dict(title="ATR")
+        )
     
     st.plotly_chart(
         fig_tech, use_container_width=True,
@@ -510,6 +579,10 @@ if hist_data is not None:
 
     fig_vol.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["HV_20"].iloc[-60:], mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"))
     fig_vol.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["IV_Sim"].iloc[-60:], mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"))
+
+    df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
+    df_insider_daily = df_ticker_raw.groupby(["buy_date", "insider"])["total_value"].sum().reset_index()
+    df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
 
     if not df_insider_daily.empty:
         unique_insiders = df_insider_daily["insider"].unique().tolist()
@@ -542,7 +615,7 @@ if hist_data is not None:
             
     fig_vol.update_layout(
         height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-        margin=dict(l=10, r=10, t=50, b=10), legend=dict(orientation="h", y=1.18, x=0),
+        margin=dict(l=10, r=10, t=50, b=10), legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center"),
         xaxis=dict(title="日付", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         yaxis=dict(title="ボラティリティ (%)", range=[-25, 105], showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace")
@@ -679,7 +752,7 @@ st.html("""
                     </tr>
                     <tr style="border-bottom: 1px solid #1E293B;">
                         <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (取組高)</td>
-                        <td style="padding: 6px;">未決済の契約残高 / <b>機関投資家の本気度・壁</b></td>
+                        <td style="padding: 6px;">未決済 of 契約残高 / <b>機関投資家の本気度・壁</b></td>
                         <td style="padding: 6px; color: #38BDF8;">強力な支持・抵抗帯 (磁石効果)</td>
                         <td style="padding: 6px;">市場の関与が極めて薄い</td>
                     </tr>
@@ -691,17 +764,9 @@ st.html("""
                     </tr>
                 </tbody>
             </table>
-            <p style="margin: 0; font-weight: bold; color: #E2E8F0;">💡 組み合わせ分析手順:</p>
-            <ol style="margin-top: 4px; margin-bottom: 0; padding-left: 20px;">
-                <li><b>PCR (Put-Call Ratio)</b> で市場全体の強気・弱気バイアスを検知（0.7以下は極めて強気）。</li>
-                <li>特定のStrikeで <b>VolとOIが同時にスパイク（突出）</b> している箇所を探索（そこがクジラの仕込み位置）。</li>
-                <li>インサイダー買いの後に <b>OTM CallのIVが急上昇</b> し始めたら、数日〜数週間以内の急騰（ボラティリティ・スクイーズ）を狙い撃ちします。</li>
-            </ol>
         </div>
     </div>
 """)
-
-st.caption("※Strike（権利行使価格）を中心に、左側にCall（コール）、右側にPut（プット）を対称配置した機関投資家仕様のレイアウトです。")
 
 if hist_data is not None and not df_calls_raw.empty:
     df_c = df_calls_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
