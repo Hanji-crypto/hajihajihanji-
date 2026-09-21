@@ -360,7 +360,7 @@ if hist_data is not None:
     st.markdown(
         "<div style='background-color: #111827; padding: 10px; border-radius: 6px; font-size: 12px; border: 1px solid #1F2937; margin-bottom: 10px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center;'>"
         "<span style='color: #00FFCC;'>■ 現物株価</span>"
-        "<span style='color: #E2E8F0; border-bottom: 2px dashed rgba(0, 255, 204, 0.4);'>-- 1σ上昇/下落下限 (30日予測)</span>"
+        "<span style='color: #38BDF8; border-bottom: 2px dashed rgba(56, 189, 248, 0.6);'>-- 1σ上昇/下落下限 (30日予測)</span>"
         "<span style='color: #A855F7;'>■ RSI (14)</span>"
         "<span style='color: #38BDF8;'>■ MACD</span>"
         "<span style='color: #FF8C00;'>■ Signal</span>"
@@ -370,7 +370,7 @@ if hist_data is not None:
         unsafe_allow_html=True
     )
 
-    # 【重要】X軸同期（shared_xaxes=True）を復活させ、不連続な日付グリッドを完全に統一
+    # 【重要】X軸同期（shared_xaxes=True）を適用
     if sub_indicator == "RSI + MACD":
         fig_tech = make_subplots(
             rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_width=[0.2, 0.2, 0.6]
@@ -380,16 +380,25 @@ if hist_data is not None:
             rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_width=[0.3, 0.7]
         )
     
-    # 1段目のプロット用日付範囲（直近60営業日）を厳密に取得
+    # 1段目のプロット用日付範囲（直近60営業日）を取得
     plot_dates = hist_data.index[-60:]
     start_date = plot_dates[0]
     end_date = plot_dates[-1]
     
+    # 未来予測期間（30日間）の日付リスト
     future_dates = [end_date + timedelta(days=i) for i in range(31)]
+    
+    # 【超重要】RSIやMACDのX軸データを、株価チャートの未来予測期間（future_dates）と完全に一致させるため、
+    # 未来期間に対応するNaN（空データ）を結合した「フルタイムライン」を作成します。
+    full_timeline = list(plot_dates) + future_dates
+    nan_padding = [np.nan] * len(future_dates)
+    
+    # 未来予測カーブ
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
     
     # メイン株価 (Row 1)
+    # 過去実績部分をプロット（未来部分は自動的に空白になります）
     if chart_type == "ローソク足":
         fig_tech.add_trace(gr.Candlestick(
             x=plot_dates, open=hist_data["Open"].iloc[-60:], high=hist_data["High"].iloc[-60:],
@@ -402,10 +411,11 @@ if hist_data is not None:
         ), row=1, col=1)
         
     # 重ね合わせ指標 (Row 1)
-    # 【バグ修正】fill="tonexty" を完全に廃止し、下段サブプロットへの塗りつぶし侵入バグを根本解決
+    # 【バグ修正】RSI領域を汚染する fill="tonexty" は完全に排除。
+    # 配色を「極細の半透明な水色（rgba(0, 255, 204, 0.3)）の破線」に完全固定。
     if overlay_indicator == "ボリンジャーバンド" and "BB_Upper" in hist_data.columns:
-        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.5)", width=1.0, dash="dash"), name="BB Upper"), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.5)", width=1.0, dash="dash"), name="BB Lower"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.35)", width=1.0, dash="dash"), name="BB Upper"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.35)", width=1.0, dash="dash"), name="BB Lower"), row=1, col=1)
         fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.0, dash="dot"), name="20日移動平均"), row=1, col=1)
     elif overlay_indicator == "EMA (20/50)":
         fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["EMA20"].iloc[-60:], line=dict(color="#00C5FF", width=1.2), name="EMA 20"), row=1, col=1)
@@ -417,39 +427,44 @@ if hist_data is not None:
         fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["Kijun_Sen"].iloc[-60:], line=dict(color="#F43F5E", width=1.0), name="基準線"), row=1, col=1)
 
     # 1σ予測レンジ (Row 1)
-    fig_tech.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(0, 255, 204, 0.4)", width=1.2, dash="dash"), name="1σ上限"), row=1, col=1)
-    fig_tech.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.4)", width=1.2, dash="dash"), name="1σ下限"), row=1, col=1)
+    fig_tech.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(56, 189, 248, 0.5)", width=1.2, dash="dash"), name="1σ上限"), row=1, col=1)
+    fig_tech.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.5)", width=1.2, dash="dash"), name="1σ下限"), row=1, col=1)
 
     # 下段サブ指標の描画
     if sub_indicator == "RSI + MACD":
-        # RSI (Row 2) - 1段目と完全に同期したX軸（plot_dates）で一貫して描画
+        # RSI (Row 2) - 未来期間をNaNで埋めた「フルタイムライン」を渡すことで、X軸同期による圧縮バグを完全解消！
+        rsi_padded = list(hist_data["RSI_14"].iloc[-60:]) + nan_padding
         fig_tech.add_trace(gr.Scatter(
-            x=plot_dates, y=hist_data["RSI_14"].iloc[-60:], 
+            x=full_timeline, y=rsi_padded, 
             mode="lines", line=dict(color="#A855F7", width=2.0), name="RSI"
         ), row=2, col=1)
         fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.5)", row=2, col=1)
         fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.5)", row=2, col=1)
 
-        # MACD (Row 3)
-        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["MACD"].iloc[-60:], mode="lines", line=dict(color="#38BDF8", width=1.5), name="MACD"), row=3, col=1)
-        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["MACD_Signal"].iloc[-60:], mode="lines", line=dict(color="#FF8C00", width=1.5), name="Signal"), row=3, col=1)
-        hist_colors = ["#00FFCC" if val >= 0 else "#FF007F" for val in hist_data["MACD_Hist"].iloc[-60:]]
-        fig_tech.add_trace(gr.Bar(x=plot_dates, y=hist_data["MACD_Hist"].iloc[-60:], marker_color=hist_colors, name="Hist"), row=3, col=1)
+        # MACD (Row 3) - 同様に未来期間をNaNパディング
+        macd_padded = list(hist_data["MACD"].iloc[-60:]) + nan_padding
+        signal_padded = list(hist_data["MACD_Signal"].iloc[-60:]) + nan_padding
+        hist_padded = list(hist_data["MACD_Hist"].iloc[-60:]) + nan_padding
+        
+        fig_tech.add_trace(gr.Scatter(x=full_timeline, y=macd_padded, mode="lines", line=dict(color="#38BDF8", width=1.5), name="MACD"), row=3, col=1)
+        fig_tech.add_trace(gr.Scatter(x=full_timeline, y=signal_padded, mode="lines", line=dict(color="#FF8C00", width=1.5), name="Signal"), row=3, col=1)
+        hist_colors = ["#00FFCC" if (not math.isnan(val) and val >= 0) else "#FF007F" for val in hist_padded]
+        fig_tech.add_trace(gr.Bar(x=full_timeline, y=hist_padded, marker_color=hist_colors, name="Hist"), row=3, col=1)
     else:
         # ATR (Row 2)
-        fig_tech.add_trace(gr.Scatter(x=plot_dates, y=hist_data["ATR"].iloc[-60:], mode="lines", line=dict(color="#E2E8F0", width=1.8), name="ATR"), row=2, col=1)
+        atr_padded = list(hist_data["ATR"].iloc[-60:]) + nan_padding
+        fig_tech.add_trace(gr.Scatter(x=full_timeline, y=atr_padded, mode="lines", line=dict(color="#E2E8F0", width=1.8), name="ATR"), row=2, col=1)
 
-    # レイアウト調整（X軸表示範囲を過去実績期間にクリップし、凡例を非表示化）
+    # レイアウト調整（X軸表示範囲を「実績データの存在する期間」に厳密にクリップ）
     fig_tech.update_layout(
         height=650, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
         margin=dict(l=10, r=10, t=10, b=10),
-        showlegend=False, # 被りを防ぐため、チャート内蔵の凡例は非表示
+        showlegend=False, # 凡例は上部HTMLパネルに完全集約
         hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.9)", font_size=11, font_family="Consolas, monospace"),
         dragmode="drawline", newshape=dict(line=dict(color="#00FFCC", width=1.5), opacity=0.8)
     )
 
-    # 【重要】X軸の表示範囲を「実績データの存在する期間」に固定
-    # これにより、RSIやMACDが未来側に引きずられて圧縮されるバグを完全に解決します。
+    # 表示範囲を「Jun 28 〜 Sep 20（実績データの期間）」に固定
     xaxis_range = [start_date, end_date]
     
     fig_tech.update_layout(
@@ -765,19 +780,4 @@ if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_
                     f"【{item['category']}】 {item['title']}",
                     f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
                     item["url"],
-                    f"https://finviz.com/quote.ashx?t={current_ticker}"
-                ])
-                
-    if linked_sources_list:
-        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "分類", "イベント概要", "SEC Link", "Google News", "Finviz Chart"]).drop_duplicates(subset=["日付", "イベント概要"])
-        st.dataframe(
-            df_sources,
-            column_config={
-                "SEC Link": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
-                "Google News": st.column_config.LinkColumn("Google News", display_text="News ↗"),
-                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
-            },
-            use_container_width=True, hide_index=True, height=250
-        )
-else:
-    st.info("💡 リンク可能なイベント履歴はありません。")
+                    f"https://finviz.com/quote.ash
