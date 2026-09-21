@@ -556,12 +556,14 @@ if hist_data is not None:
         
         # 日付ごとの出現回数をカウントしてオフセット（ずらし）を動的計算
         date_counts = {}
+        # 凡例への登録状況を管理するセット（購入者名でのグループ化凡例用）
+        registered_legends = set()
         
         for _, row in df_insider_daily.iterrows():
             b_date = row["buy_date"]
             insider = row["insider"]
             
-            # その日付で何人目のインサイダーかをカウント
+            # その日付で何人目のインサイダー取引かをカウント
             if b_date not in date_counts:
                 date_counts[b_date] = 0
             else:
@@ -570,15 +572,21 @@ if hist_data is not None:
             idx_for_color = unique_insiders.index(insider)
             color = color_palette[idx_for_color % len(color_palette)]
             
-            # 重複人数に応じてY軸最下部（0%付近）から下方向へオフセット（ずらし）をかける
-            # 1人目: 2.0%, 2人目: -2.0%, 3人目: -6.0% (4%刻みで下にずらす)
-            offset_y = 2.0 - (date_counts[b_date] * 4.0)
+            # 重複人数に応じてY軸最下部（0%付近）から下方向へ大幅にオフセット（ずらし幅を12%に拡大）
+            # 1人目: 6.0%, 2人目: -6.0%, 3人目: -18.0% (12%刻みで下にずらす)
+            offset_y = 6.0 - (date_counts[b_date] * 12.0)
             
             hover_text = (
                 f"インサイダー: {row['insider']}<br>"
                 f"役職: {row['position']}<br>"
                 f"購入総額: ${row['total_value']:,.0f}"
             )
+            
+            # 凡例（Legend）に登録するかどうかの判定（購入者ごとに1つだけ表示）
+            show_in_legend = False
+            if insider not in registered_legends:
+                show_in_legend = True
+                registered_legends.add(insider)
             
             fig_vol.add_trace(gr.Scatter(
                 x=[b_date], 
@@ -592,8 +600,9 @@ if hist_data is not None:
                 ),
                 text=[hover_text],
                 hoverinfo="text",
+                legendgroup=insider, # 購入者名でグループ化
                 name=f"🐋 {insider} (購入)",
-                showlegend=True if date_counts[b_date] == 0 else False # 凡例の重複防止
+                showlegend=show_in_legend
             ))
             
     fig_vol.update_layout(
@@ -610,7 +619,7 @@ if hist_data is not None:
         ),
         yaxis=dict(
             title="ボラティリティ (%)",
-            range=[-10, 105], # 星マークが最下部にきれいに収まるように下限を調整
+            range=[-25, 105], # 星マークが最下部にきれいに収まるように下限を調整
             showspikes=True,
             spikemode="across",
             spikethickness=1,
@@ -807,7 +816,7 @@ else:
 st.markdown("---")
 st.markdown(f"### 📄 【{current_ticker}】 {selected_expiry} 満期オプション・チェーン (T-Shape プロ仕様マトリックス)")
 
-# アカデミック解説パネル（マトリックスの直上に配置）
+# アカデシック解説パネル（マトリックスの直上に配置）
 st.html("""
     <div class="guide-panel">
         <h4 style="color: #38BDF8; margin-top: 0; margin-bottom: 12px;">👁️ オプション統計指標の完全解読マニュアル</h4>
