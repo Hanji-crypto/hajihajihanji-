@@ -463,11 +463,24 @@ if hist_data is not None:
             mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
         ))
         
-    # ボリンジャーバンドの描画（安全なガードレールロジック）
+    # ボリンジャーバンドの描画（ネオングリーンの実線 ＆ 半透明の塗りつぶしに最適化）
     if show_bb and "BB_Upper" in hist_data.columns:
-        fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), name="BB Upper", hoverinfo="skip", showlegend=False))
-        fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.12)", width=0.8, dash="dash"), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.015)", name="BB Lower", hoverinfo="skip", showlegend=False))
-        fig_price.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.2, dash="dash"), name="20日移動平均", hoverinfo="skip"))
+        fig_price.add_trace(gr.Scatter(
+            x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], 
+            line=dict(color="#00FFCC", width=1.0), 
+            name="BB Upper (+2σ)", hoverinfo="skip", showlegend=False
+        ))
+        fig_price.add_trace(gr.Scatter(
+            x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], 
+            line=dict(color="#00FFCC", width=1.0), 
+            fill="tonexty", fillcolor="rgba(0, 255, 204, 0.08)", 
+            name="BB Lower (-2σ)", hoverinfo="skip", showlegend=False
+        ))
+        fig_price.add_trace(gr.Scatter(
+            x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], 
+            line=dict(color="orange", width=1.2, dash="dash"), 
+            name="20日移動平均", hoverinfo="skip"
+        ))
 
     fig_price.add_trace(gr.Scatter(
         x=future_dates, y=upper_band_curve,
@@ -530,21 +543,45 @@ if hist_data is not None:
         mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"
     ))
 
+    # インサイダー買いタイミング（購入者ごとの色分け ＆ Y軸最下部配置）
     df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
-    df_insider_daily = df_ticker_raw.groupby("buy_date")["total_value"].sum().reset_index()
+    df_insider_daily = df_ticker_raw.groupby(["buy_date", "insider", "position"])["total_value"].sum().reset_index()
     df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
     
     if not df_insider_daily.empty:
-        fig_vol.add_trace(gr.Scatter(
-            x=df_insider_daily["buy_date"], 
-            y=[hist_data["HV_20"].mean()] * len(df_insider_daily),
-            mode="markers+text",
-            marker=dict(symbol="star", size=12, color="#AA00FF", line=dict(color="#00FFCC", width=1)),
-            text=["🐋 Buy"] * len(df_insider_daily),
-            textposition="top center",
-            name="インサイダー買いタイミング"
-        ))
+        # 購入者（Insider）のユニークリストを作成してカラーパレットをマッピング
+        unique_insiders = df_insider_daily["insider"].unique().tolist()
+        # プロ仕様のネオンカラーパレット
+        color_palette = ["#AA00FF", "#00FFCC", "#38BDF8", "#FFD700", "#FF007F", "#FF8C00"]
         
+        # インサイダーごとにプロットを追加
+        for idx, insider in enumerate(unique_insiders):
+            df_sub = df_insider_daily[df_insider_daily["insider"] == insider]
+            color = color_palette[idx % len(color_palette)]
+            
+            # マーカーをY軸最下部（ボラティリティ0%のライン上）に配置
+            y_positions = [2.0] * len(df_sub) 
+            
+            hover_texts = [
+                f"インサイダー: {row['insider']}<br>役職: {row['position']}<br>購入総額: ${row['total_value']:,.0f}"
+                for _, row in df_sub.iterrows()
+            ]
+            
+            fig_vol.add_trace(gr.Scatter(
+                x=df_sub["buy_date"], 
+                y=y_positions,
+                mode="markers",
+                marker=dict(
+                    symbol="star", 
+                    size=14, 
+                    color=color, 
+                    line=dict(color="#FFFFFF", width=1.2)
+                ),
+                text=hover_texts,
+                hoverinfo="text",
+                name=f"🐋 {insider} (購入)"
+            ))
+            
     fig_vol.update_layout(
         height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
         margin=dict(l=10, r=10, t=50, b=10),
@@ -559,6 +596,7 @@ if hist_data is not None:
         ),
         yaxis=dict(
             title="ボラティリティ (%)",
+            range=[-5, 105], # 星マークが最下部にきれいに収まるように下限を調整
             showspikes=True,
             spikemode="across",
             spikethickness=1,
@@ -755,12 +793,10 @@ else:
 st.markdown("---")
 st.markdown(f"### 📄 【{current_ticker}】 {selected_expiry} 満期オプション・チェーン (T-Shape プロ仕様マトリックス)")
 
-# --------------------------------------------------------------------------
 # アカデミック解説パネル（マトリックスの直上に配置）
-# --------------------------------------------------------------------------
 st.html("""
     <div class="guide-panel">
-        <h4 style="color: #38BDF8; margin-top: 0; margin-bottom: 12px;">👁️ 機関投資家仕様：オプション統計指標の完全解読マニュアル</h4>
+        <h4 style="color: #38BDF8; margin-top: 0; margin-bottom: 12px;">👁️ オプション統計指標の完全解読マニュアル</h4>
         <div style="font-size: 12px; line-height: 1.6; color: #94A3B8;">
             <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; color: #E2E8F0;">
                 <thead>
@@ -802,7 +838,7 @@ st.html("""
             <ol style="margin-top: 4px; margin-bottom: 0; padding-left: 20px;">
                 <li><b>PCR (Put-Call Ratio)</b> で市場全体の強気・弱気バイアスを検知（0.7以下は極めて強気）。</li>
                 <li>特定のStrikeで <b>VolとOIが同時にスパイク（突出）</b> している箇所を探索（そこがクジラの仕込み位置）。</li>
-                <li>インサイダー買いの後に <b>OTM CallのIVが急上昇</b> し始めたら、数日〜数週間以内の急騰（ボラティリティ・スクイーズ）を狙い撃ちします。</li>
+                <li>インサイダー買いの後に <b>OTM Call of IVが急上昇</b> し始めたら、数日〜数週間以内の急騰（ボラティリティ・スクイーズ）を狙い撃ちします。</li>
             </ol>
         </div>
     </div>
