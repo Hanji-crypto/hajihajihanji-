@@ -1,12 +1,20 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as gr
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
-import yfinance as yf
 import math
+
+# 独自モジュールからデータ処理関数をインポート
+from data_loader import (
+    load_and_process_data,
+    generate_screener,
+    fetch_market_data,
+    compute_technical_indicators,
+    fetch_option_chain_by_expiry,
+    fetch_catalyst_events
+)
 
 # ==============================================================================
 # 1. PAGE CONFIG & DARK THEME STYLE
@@ -33,73 +41,14 @@ st.html("""
     </style>
 """)
 
-def std_normal_cdf(x):
-    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
-
 # ==============================================================================
-# 2. DATA LOADING & CLEANING
+# 2. DATA INITIALIZATION
 # ==============================================================================
-@st.cache_data(ttl=600)
-def load_and_process_data():
-    conn = sqlite3.connect("insider.db")
-    try:
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(insider_trades)")
-        columns = [col[1] for col in cursor.fetchall()]
-        has_sector = "sector" in columns
-    except:
-        has_sector = False
-
-    sector_select = "sector" if has_sector else "'Other' as sector"
-    query = f"""
-        SELECT filing_date, insider, position, ticker, company, avg_price, buy_date,
-               total_shares as shares, total_value, filing_url, {sector_select}
-        FROM insider_trades WHERE ticker IS NOT NULL AND ticker != '' 
-    """
-    df = pd.read_sql_query(query, conn)
-    conn.close()
-    
-    df["filing_date"] = pd.to_datetime(df["filing_date"])
-    df["buy_date"] = pd.to_datetime(df["buy_date"])
-    df["total_value"] = pd.to_numeric(df["total_value"], errors='coerce')
-    df["avg_price"] = pd.to_numeric(df["avg_price"], errors='coerce')
-    df["shares"] = pd.to_numeric(df["shares"], errors='coerce')
-    df["ticker"] = df["ticker"].str.strip().str.upper()
-    
-    exclude_words = {"NONE", "N/A", "NA", "NULL", "DIRECTOR", "OFFICER", "PRESIDENT", "CEO", "CFO"}
-    df = df[~df["ticker"].isin(exclude_words)]
-    df = df[df["ticker"].str.match(r'^[A-Z0-9\.\-]{1,5}$', na=False)]
-    df = df[df["total_value"] < 500000000]
-    return df
-
 try:
     df_raw = load_and_process_data()
 except Exception as e:
     st.error(f"Database Error: {e}")
     st.stop()
-
-# ==============================================================================
-# 3. STATISTICAL SCORES
-# ==============================================================================
-def generate_screener(df):
-    one_year_ago = datetime.now() - timedelta(days=365)
-    df_recent = df[df["buy_date"] >= one_year_ago]
-    if df_recent.empty:
-        df_recent = df
-        
-    summary = df_recent.groupby("ticker").agg({
-        "total_value": "sum",
-        "avg_price": "mean",
-        "insider": lambda x: ", ".join(x.unique()[:2]),
-        "company": "first",
-        "buy_date": "max",
-        "ticker": "count",
-        "shares": "sum"
-    }).rename(columns={"ticker": "trade_count"}).reset_index()
-    
-    size_score = np.minimum(100.0, 30.0 + (np.log10(summary["total_value"] + 1) * 10.0))
-    summary["Certainty (%)"] = np.minimum(98.5, np.maximum(10.0, size_score))
-    return summary.sort_values(by="Certainty (%)", ascending=False)
 
 df_screener = generate_screener(df_raw)
 top_10_tickers = df_screener["ticker"].head(10).tolist()
@@ -109,116 +58,7 @@ if "selected_ticker" not in st.session_state:
     st.session_state.selected_ticker = top_10_tickers[0] if top_10_tickers else ""
 
 # ==============================================================================
-# 4. MARKET & OPTION DATA FETCHING
-# ==============================================================================
-@st.cache_data(ttl=1800)
-def fetch_market_data(ticker):
-    stock = yf.Ticker(ticker)
-    hist = stock.history(period="1y")
-    if hist.empty:
-        return None, 0.0, 0.0, []
-    hist.index = hist.index.tz_localize(None)
-    current_price = hist["Close"].iloc[-1]
-    log_ret = np.log(hist["Close"] / hist["Close"].shift(1))
-    hv = log_ret.iloc[-180:].std() * np.sqrt(252)
-    return hist, current_price, hv, stock.options
-
-@st.cache_data(ttl=600)
-def fetch_option_chain_by_expiry(ticker, expiry_date, current_price):
-    stock = yf.Ticker(ticker)
-    try:
-        opt_chain = stock.option_chain(expiry_date)
-        calls = opt_chain.calls.copy()
-        puts = opt_chain.puts.copy()
-        
-        for df in [calls, puts]:
-            for col in ["volume", "openInterest", "impliedVolatility", "lastPrice"]:
-                if col not in df.columns:
-                    df[col] = 0.0 if col in ["impliedVolatility", "lastPrice"] else 0
-                    
-        total_call_vol = calls["volume"].sum() if "volume" in calls.columns else 1.0
-        total_put_vol = puts["volume"].sum() if "volume" in puts.columns else 1.0
-        pcr_volume = total_put_vol / (total_call_vol + 1e-9)
-        
-        calls["strike_diff"] = (calls["strike"] - current_price).abs()
-        atm_call = calls.sort_values(by="strike_diff").iloc[0]
-        implied_vol = atm_call["impliedVolatility"]
-        
-        T = 30 / 365.25
-        r = 0.04
-        
-        call_deltas = []
-        for _, row in calls.iterrows():
-            strike = row["strike"]
-            sigma = row["impliedVolatility"] if row["impliedVolatility"] > 0 else 0.3
-            d1 = (np.log(current_price / strike) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-            call_deltas.append(std_normal_cdf(d1))
-        calls["Delta"] = call_deltas
-        
-        put_deltas = []
-        for _, row in puts.iterrows():
-            strike = row["strike"]
-            sigma = row["impliedVolatility"] if row["impliedVolatility"] > 0 else 0.3
-            d1 = (np.log(current_price / strike) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-            put_deltas.append(std_normal_cdf(d1) - 1.0)
-        puts["Delta"] = put_deltas
-        
-        return calls, puts, implied_vol, pcr_volume
-    except:
-        empty_calls = pd.DataFrame(columns=["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"])
-        empty_puts = pd.DataFrame(columns=["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"])
-        return empty_calls, empty_puts, 0.3, 1.0
-
-@st.cache_data(ttl=7200)
-def fetch_catalyst_events(ticker, df_prices, df_raw_trades):
-    events = []
-    try:
-        stock = yf.Ticker(ticker)
-        news = stock.news
-        if news:
-            for item in news:
-                title = item.get("title", "")
-                pub_time = item.get("providerPublishTime", 0)
-                link_url = item.get("link", f"https://finance.yahoo.com/quote/{ticker}")
-                if pub_time == 0: continue
-                event_date = datetime.fromtimestamp(pub_time).strftime('%Y-%m-%d')
-                title_lower = title.lower()
-                category = None
-                if any(x in title_lower for x in ["fda", "approval", "approve", "clearance"]):
-                    category = "💊 FDA承認/申請"
-                elif any(x in title_lower for x in ["phase", "clinical", "trial", "results", "cohort", "efficacy"]):
-                    category = "🔬 治験結果(Phase)"
-                elif any(x in title_lower for x in ["earnings", "q1", "q2", "q3", "q4", "revenue", "eps", "financial"]):
-                    category = "📊 決算発表"
-                elif any(x in title_lower for x in ["merger", "acquisition", "buyout", "takeover", "partnership", "agreement"]):
-                    category = "🤝 M&A/提携"
-                elif any(x in title_lower for x in ["offering", "dilution", "fundraising", "debt", "shares", "capital"]):
-                    category = "💸 資金調達/希薄化"
-                    
-                if category:
-                    events.append({"date": event_date, "title": title, "category": category, "source_url": link_url})
-    except:
-        pass
-
-    try:
-        df_ticker_trades = df_raw_trades[df_raw_trades["ticker"] == ticker]
-        for _, trade in df_ticker_trades.iterrows():
-            val = trade["total_value"]
-            insider_name = trade["insider"]
-            pos = trade["position"]
-            t_date = trade["buy_date"].strftime('%Y-%m-%d')
-            f_url = trade["filing_url"] if pd.notna(trade["filing_url"]) else f"https://www.sec.gov/edgar/browse/?CIK={ticker}"
-            
-            if val >= 1000000:
-                events.append({"date": t_date, "title": f"超大口インサイダー買い: {insider_name} ({pos}) が ${val:,.0f} を市場から購入", "category": "🐋 超大口インサイダー", "source_url": f_url})
-            elif any(x in str(pos).lower() for x in ["ceo", "chief executive officer", "cfo", "chief financial officer"]):
-                events.append({"date": t_date, "title": f"経営トップ(CEO/CFO)による買い: {insider_name} が ${val:,.0f} を購入", "category": "👑 経営陣インサイダー", "source_url": f_url})
-    except:
-        pass
-    return pd.DataFrame(events).drop_duplicates(subset=["date", "category"]) if events else pd.DataFrame()
-
-# ==============================================================================
-# 5. MAIN TERMINAL LAYOUT
+# 3. MAIN TERMINAL LAYOUT
 # ==============================================================================
 st.title("👁️ Whale-Eye: Institutional Option & Insider Intelligence")
 st.markdown("---")
@@ -252,6 +92,7 @@ with col_sel2:
 
 current_ticker = st.session_state.selected_ticker
 
+# スクリーナー表示
 df_screener_display = df_screener.copy()
 df_screener_display = df_screener_display.rename(columns={
     "ticker": "ティッカー", "company": "企業名", "total_value": "直近取引額 ($)",
@@ -270,51 +111,16 @@ st.dataframe(
 
 st.markdown("---")
 
-# SECTION 2: 選択銘柄のリアルタイム詳細・オプション解析
+# ==============================================================================
+# 4. REALTIME ANALYSIS & CHARTS
+# ==============================================================================
 st.subheader(f"👁️ 【{current_ticker}】 リアルタイム詳細・オプション解析")
 
 with st.spinner(f"【{current_ticker}】の市場データを解析中..."):
-    hist_data, current_price, hv, available_expiries = fetch_market_data(current_ticker)
+    raw_hist, current_price, hv, available_expiries = fetch_market_data(current_ticker)
 
-if hist_data is not None:
-    # --- テクニカル指標の計算 ---
-    hist_data["MA20"] = hist_data["Close"].rolling(window=20).mean()
-    hist_data["STD20"] = hist_data["Close"].rolling(window=20).std()
-    hist_data["BB_Upper"] = hist_data["MA20"] + (hist_data["STD20"] * 2)
-    hist_data["BB_Lower"] = hist_data["MA20"] - (hist_data["STD20"] * 2)
-
-    hist_data["EMA20"] = hist_data["Close"].ewm(span=20, adjust=False).mean()
-    hist_data["EMA50"] = hist_data["Close"].ewm(span=50, adjust=False).mean()
-
-    high_9 = hist_data["High"].rolling(window=9).max()
-    low_9 = hist_data["Low"].rolling(window=9).min()
-    hist_data["Tenkan_Sen"] = (high_9 + low_9) / 2
-    high_26 = hist_data["High"].rolling(window=26).max()
-    low_26 = hist_data["Low"].rolling(window=26).min()
-    hist_data["Kijun_Sen"] = (high_26 + low_26) / 2
-    hist_data["Senkou_Span_A"] = ((hist_data["Tenkan_Sen"] + hist_data["Kijun_Sen"]) / 2).shift(26)
-    high_52 = hist_data["High"].rolling(window=52).max()
-    low_52 = hist_data["Low"].rolling(window=52).min()
-    hist_data["Senkou_Span_B"] = ((high_52 + low_52) / 2).shift(26)
-
-    delta_close = hist_data["Close"].diff()
-    gain = (delta_close.where(delta_close > 0, 0)).rolling(window=14).mean()
-    loss = (-delta_close.where(delta_close < 0, 0)).rolling(window=14).mean()
-    rs = gain / (loss + 1e-9)
-    hist_data["RSI_14"] = 100 - (100 / (1 + rs))
-
-    ema_12 = hist_data["Close"].ewm(span=12, adjust=False).mean()
-    ema_26 = hist_data["Close"].ewm(span=26, adjust=False).mean()
-    hist_data["MACD"] = ema_12 - ema_26
-    hist_data["MACD_Signal"] = hist_data["MACD"].ewm(span=9, adjust=False).mean()
-    hist_data["MACD_Hist"] = hist_data["MACD"] - hist_data["MACD_Signal"]
-
-    high_low = hist_data["High"] - hist_data["Low"]
-    high_close = (hist_data["High"] - hist_data["Close"].shift()).abs()
-    low_close = (hist_data["Low"] - hist_data["Close"].shift()).abs()
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = ranges.max(axis=1)
-    hist_data["ATR"] = true_range.rolling(14).mean()
+if raw_hist is not None:
+    hist_data = compute_technical_indicators(raw_hist)
 
     if available_expiries:
         selected_expiry = st.selectbox("表示するオプションチェーンの満期日を選択してください:", options=available_expiries, index=0)
@@ -350,11 +156,10 @@ if hist_data is not None:
         sub_indicator = st.selectbox("下段サブ指標の選択:", ["RSI + MACD", "ATR (ボラティリティ値幅)"])
 
     # ----------------------------------------------------------------------
-    # CHART 1: 多段テクニカルチャート (株価 + 各種選択指標)
+    # CHART 1: 多段テクニカルチャート
     # ----------------------------------------------------------------------
     st.markdown("### 📈 テクニカル分析チャート")
 
-    # プロ仕様の凡例表示パネルをチャート上部に設置（Plotly内での重なりを完全回避）
     st.markdown(
         "<div style='background-color: #111827; padding: 10px; border-radius: 6px; font-size: 12px; border: 1px solid #1F2937; margin-bottom: 10px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center;'>"
         "<span style='color: #00FFCC;'>■ 現物株価</span>"
@@ -368,47 +173,33 @@ if hist_data is not None:
         unsafe_allow_html=True
     )
 
-    # 【重要】X軸同期（shared_xaxes=True）を適用
     if sub_indicator == "RSI + MACD":
-        fig_tech = make_subplots(
-            rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_width=[0.2, 0.2, 0.6]
-        )
+        fig_tech = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_width=[0.2, 0.2, 0.6])
     else:
-        fig_tech = make_subplots(
-            rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_width=[0.3, 0.7]
-        )
+        fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_width=[0.3, 0.7])
     
-    # 1段目のプロット用日付範囲（直近60営業日）を取得
     df_recent_hist = hist_data.iloc[-60:].copy()
     plot_dates = df_recent_hist.index
     start_date = plot_dates[0]
     end_date = plot_dates[-1]
     
-    # 未来予測期間（30日間）の日付リスト
     future_dates = [end_date + timedelta(days=i) for i in range(1, 31)]
-    
-    # 【超・根本解決】すべての指標を1つのPandas DataFrameに統合し、未来期間を明示的に結合（Concat）します。
-    # これにより、X軸のデータ型（DatetimeIndex）と長さがすべてのサブプロットで完全に一致し、RSIが100%表示されます。
     df_future = pd.DataFrame(index=pd.DatetimeIndex(future_dates))
     df_plot = pd.concat([df_recent_hist, df_future])
     
-    # 未来予測カーブの計算（結合したDataFrameに直接格納）
     df_plot["Upper_1Sigma"] = np.nan
     df_plot["Lower_1Sigma"] = np.nan
     for i, f_date in enumerate(future_dates):
         df_plot.loc[f_date, "Upper_1Sigma"] = current_price + (current_price * iv * np.sqrt((i+1) / 365.25))
         df_plot.loc[f_date, "Lower_1Sigma"] = current_price - (current_price * iv * np.sqrt((i+1) / 365.25))
     
-    # メイン株価 (Row 1)
     if chart_type == "ローソク足":
         fig_tech.add_trace(gr.Candlestick(
-            x=df_plot.index, open=df_plot["Open"], high=df_plot["High"],
-            low=df_plot["Low"], close=df_plot["Close"], name="株価"
+            x=df_plot.index, open=df_plot["Open"], high=df_plot["High"], low=df_plot["Low"], close=df_plot["Close"], name="株価"
         ), row=1, col=1)
     else:
         fig_tech.add_trace(gr.Scatter(
-            x=df_plot.index, y=df_plot["Close"],
-            mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価"
+            x=df_plot.index, y=df_plot["Close"], mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価"
         ), row=1, col=1)
         
     # 重ね合わせ指標 (Row 1)
@@ -426,41 +217,29 @@ if hist_data is not None:
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Tenkan_Sen"], line=dict(color="#38BDF8", width=1.0), fill=None, name="転換線"), row=1, col=1)
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Kijun_Sen"], line=dict(color="#F43F5E", width=1.0), fill=None, name="基準線"), row=1, col=1)
 
-    # 1σ予測レンジ (Row 1)
     fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Upper_1Sigma"], mode="lines", line=dict(color="rgba(56, 189, 248, 0.6)", width=1.2, dash="dash"), fill=None, name="1σ上限"), row=1, col=1)
     fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Lower_1Sigma"], mode="lines", line=dict(color="rgba(239, 68, 68, 0.6)", width=1.2, dash="dash"), fill=None, name="1σ下限"), row=1, col=1)
 
-    # 下段サブ指標の描画
     if sub_indicator == "RSI + MACD":
-        # RSI (Row 2) - 同一DataFrame（df_plot）から描画するため、X軸が完全に同期し、100%表示されます！
-        fig_tech.add_trace(gr.Scatter(
-            x=df_plot.index, y=df_plot["RSI_14"], 
-            mode="lines", line=dict(color="#A855F7", width=2.0), fill=None, name="RSI"
-        ), row=2, col=1)
+        fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["RSI_14"], mode="lines", line=dict(color="#A855F7", width=2.0), fill=None, name="RSI"), row=2, col=1)
         fig_tech.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.5)", row=2, col=1)
         fig_tech.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.5)", row=2, col=1)
 
-        # MACD (Row 3)
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MACD"], mode="lines", line=dict(color="#38BDF8", width=1.5), fill=None, name="MACD"), row=3, col=1)
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MACD_Signal"], mode="lines", line=dict(color="#FF8C00", width=1.5), fill=None, name="Signal"), row=3, col=1)
         hist_colors = ["#00FFCC" if (not math.isnan(val) and val >= 0) else "#FF007F" for val in df_plot["MACD_Hist"]]
         fig_tech.add_trace(gr.Bar(x=df_plot.index, y=df_plot["MACD_Hist"], marker_color=hist_colors, name="Hist"), row=3, col=1)
     else:
-        # ATR (Row 2)
         fig_tech.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["ATR"], mode="lines", line=dict(color="#E2E8F0", width=1.8), fill=None, name="ATR"), row=2, col=1)
 
-    # レイアウト調整（X軸表示範囲を「実績データの存在する期間」に厳密にクリップ）
     fig_tech.update_layout(
         height=650, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-        margin=dict(l=10, r=10, t=10, b=10),
-        showlegend=False, # 凡例は上部HTMLパネルに完全集約
-        hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.9)", font_size=11, font_family="Consolas, monospace"),
+        margin=dict(l=10, r=10, t=10, b=10), showlegend=False, hovermode="x unified",
+        hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.9)", font_size=11, font_family="Consolas, monospace"),
         dragmode="drawline", newshape=dict(line=dict(color="#00FFCC", width=1.5), opacity=0.8)
     )
 
-    # 表示範囲を「Jun 28 〜 Sep 20（実績データの期間）」に固定
     xaxis_range = [start_date, end_date]
-    
     fig_tech.update_layout(
         xaxis=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         yaxis=dict(title="株価 ($)", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)")
@@ -470,8 +249,7 @@ if hist_data is not None:
         fig_tech.update_layout(
             xaxis2=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
             xaxis3=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-            yaxis2=dict(title="RSI", range=[10, 90]), 
-            yaxis3=dict(title="MACD")
+            yaxis2=dict(title="RSI", range=[10, 90]), yaxis3=dict(title="MACD")
         )
     else:
         fig_tech.update_layout(
@@ -488,7 +266,7 @@ if hist_data is not None:
     )
 
     # ----------------------------------------------------------------------
-    # CHART 2: ボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング (全幅)
+    # CHART 2: ボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング
     # ----------------------------------------------------------------------
     fig_vol = gr.Figure()
     hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
@@ -533,13 +311,7 @@ if hist_data is not None:
     fig_vol.update_layout(
         height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
         margin=dict(l=10, r=130, t=50, b=10), 
-        legend=dict(
-            orientation="v", 
-            y=1, 
-            x=1.02, 
-            xanchor="left",
-            yanchor="top"
-        ),
+        legend=dict(orientation="v", y=1, x=1.02, xanchor="left", yanchor="top"),
         xaxis=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         yaxis=dict(title="ボラティリティ (%)", range=[-25, 105], showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace")
@@ -551,9 +323,8 @@ if hist_data is not None:
     # ----------------------------------------------------------------------
     # SECTION 3: 統計的オプション推奨戦略ランキング
     # ----------------------------------------------------------------------
-    st.subheader("🎯 統計的オプション推奨戦略ランキング (全幅表示)")
-    st.caption("※勝率（確率）50%以上の戦略をスクリーニングし、期待リターン(ROI)順に自動ソートして提示します。")
-
+    st.subheader("🎯 統計的オプション推奨戦略ランキング")
+    
     bc_buy_strike = current_price * 0.95
     bc_sell_strike = upper_1sigma
     bc_buy_prem = current_price * 0.08
@@ -579,21 +350,19 @@ if hist_data is not None:
     strategies_pool = [
         {
             "id": "bull_call", "title": "🟢 ブル・コール・スプレッド (Bull Call Spread)", "class": "strategy-card", "roi": bc_roi, "prob": bc_prob,
-            "desc": f"<b>【統計的選定根拠】</b><br>IV/HV比率が <b>{(iv/hv if hv > 0 else 1.0):.2f}</b> と低く、オプション買いのプレミアムが統計的に割安な状態です。上昇時のレバレッジ利益を最大化しつつ、下落リスクを限定します。<br><br><b>【具体的取引価格の統計的提案】</b><br>1. <b>Buy {current_ticker} 30日満期 ${bc_buy_strike:.1f} Call (ITM)</b> (目安: ${bc_buy_prem:.2f})<br>2. <b>Sell {current_ticker} 30日満期 ${bc_sell_strike:.1f} Call (OTM)</b> (目安: ${bc_sell_prem:.2f})<br><br><b>【リスク・リターン特性】</b><br>* <b>実質コスト（最大損失）</b>: ${bc_net_cost:.2f}<br>* <b>最大利益</b>: ${bc_max_profit:.2f} (想定最大リターン: <b>+{bc_roi:.1f}%</b>)<br>* <b>統計的勝率</b>: <b>{bc_prob:.1f}%</b>"
+            "desc": f"<b>【統計的選定根拠】</b><br>IV/HV比率が <b>{(iv/hv if hv > 0 else 1.0):.2f}</b> と低く、オプション買いのプレミアムが統計的に割安な状態です。<br><br><b>【具体的取引価格の統計的提案】</b><br>1. <b>Buy {current_ticker} 30日満期 ${bc_buy_strike:.1f} Call (ITM)</b> (目安: ${bc_buy_prem:.2f})<br>2. <b>Sell {current_ticker} 30日満期 ${bc_sell_strike:.1f} Call (OTM)</b> (目安: ${bc_sell_prem:.2f})<br><br><b>【リスク・リターン特性】</b><br>* <b>最大損失</b>: ${bc_net_cost:.2f}<br>* <b>最大利益</b>: ${bc_max_profit:.2f} (想定最大リターン: <b>+{bc_roi:.1f}%</b>)<br>* <b>統計的勝率</b>: <b>{bc_prob:.1f}%</b>"
         },
         {
             "id": "covered_call", "title": "🟡 カバード・コール (Covered Call)", "class": "strategy-card-secondary", "roi": cc_roi, "prob": cc_prob,
-            "desc": f"<b>【統計的選定根拠】</b><br>ボラティリティが過熱傾向（IV/HV比率 <b>{(iv/hv if hv > 0 else 1.0):.2f}</b>）にあるため、コール売りプレミアムを回収するインカムゲイン戦略が極めて有利です。<br><br><b>【具体的取引価格の統計的提案】</b><br>1. <b>現物株式を ${current_price:.2f} で購入</b><br>2. <b>Sell {current_ticker} 30日満期 ${cc_sell_strike:.1f} Call (OTM)</b> (目安プレミアム受取: ${cc_sell_prem:.2f})<br><br><b>【リスク・リターン特性】</b><br>* <b>実質コスト</b>: ${cc_net_cost:.2f}<br>* <b>最大利益</b>: ${cc_max_profit:.2f} (想定最大リターン: <b>+{cc_roi:.1f}%</b>)<br>* <b>統計的勝率</b>: <b>{cc_prob:.1f}%</b>"
+            "desc": f"<b>【統計的選定根拠】</b><br>ボラティリティが過熱傾向（IV/HV比率 <b>{(iv/hv if hv > 0 else 1.0):.2f}</b>）にあるため、コール売りプレミアムを回収するインカムゲイン戦略が極めて有利です。<br><br><b>【具体的取引価格 of 統計的提案】</b><br>1. <b>現物株式を ${current_price:.2f} で購入</b><br>2. <b>Sell {current_ticker} 30日満期 ${cc_sell_strike:.1f} Call (OTM)</b> (目安プレミアム受取: ${cc_sell_prem:.2f})<br><br><b>【リスク・リターン特性】</b><br>* <b>実質コスト</b>: ${cc_net_cost:.2f}<br>* <b>最大利益</b>: ${cc_max_profit:.2f} (想定最大リターン: <b>+{cc_roi:.1f}%</b>)<br>* <b>統計的勝率</b>: <b>{cc_prob:.1f}%</b>"
         },
         {
             "id": "long_call", "title": "🟣 ロング・コール (Long Call) 単体打診買い", "class": "strategy-card-warning", "roi": lc_roi, "prob": lc_prob,
-            "desc": f"<b>【統計的選定根拠】</b><br>ボラティリティは中立ですが、インサイダーの超大口買いが直近で集中しており、突発的な好材料（カタリスト）発表による株価急騰（ボラティリティ・スパイク）を狙う高レバレッジ戦略です。<br><br><b>【具体的取引価格の統計的提案】</b><br>* <b>Buy {current_ticker} 30日満期 ${lc_strike:.1f} Call (ややOTM)</b> (目安: ${lc_prem:.2f})<br><br><b>【リスク・リターン特性】</b><br>* <b>最大損失</b>: 支払ったプレミアム ${lc_prem:.2f} のみ<br>* <b>最大利益</b>: 無制限<br>* <b>統計的勝率</b>: <b>{lc_prob:.1f}%</b>"
+            "desc": f"<b>【統計的選定根拠】</b><br>インサイダーの超大口買いが直近で集中しており、突発的な好材料（カタリスト）発表による株価急騰を狙う高レバレッジ戦略です。<br><br><b>【具体的取引価格の統計的提案】</b><br>* <b>Buy {current_ticker} 30日満期 ${lc_strike:.1f} Call (ややOTM)</b> (目安: ${lc_prem:.2f})<br><br><b>【リスク・リターン特性】</b><br>* <b>最大損失</b>: 支払ったプレミアム ${lc_prem:.2f} のみ<br>* <b>最大利益</b>: 無制限<br>* <b>統計的勝率</b>: <b>{lc_prob:.1f}%</b>"
         }
     ]
 
-    filtered_strategies = [s for s in strategies_pool if s["prob"] >= 50.0]
-    ranked_strategies = sorted(filtered_strategies, key=lambda x: x["roi"], reverse=True)
-
+    ranked_strategies = sorted(strategies_pool, key=lambda x: x["roi"], reverse=True)
     rank_medals = ["🥇 1st Active Strategy", "🥈 2nd Alternative Strategy", "🥉 3rd Tactical Strategy"]
     for idx, strat in enumerate(ranked_strategies[:3]):
         st.html(f"""
@@ -631,7 +400,7 @@ if hist_data is not None:
     breakeven_change = ((breakeven_price / current_price) - 1) * 100
     
     fig_payoff = gr.Figure()
-    fig_payoff.add_vrect(x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100, fillcolor="rgba(0, 255, 204, 0.05)", line_width=0, annotation_text="1σ 確率範囲 (68%)", annotation_position="top left", annotation_font=dict(size=10, color="rgba(0, 255, 204, 0.5)"))
+    fig_payoff.add_vrect(x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100, fillcolor="rgba(0, 255, 204, 0.05)", line_width=0, annotation_text="1σ 確率範囲", annotation_position="top left", annotation_font=dict(size=10, color="rgba(0, 255, 204, 0.5)"))
     fig_payoff.add_trace(gr.Scatter(x=stock_changes * 100, y=payoffs, mode="lines", line=dict(color="#00FFCC", width=3)))
     fig_payoff.add_vline(x=breakeven_change, line_dash="dash", line_color="#FF007F")
     fig_payoff.add_hline(y=0, line_color="rgba(255, 255, 255, 0.2)", line_width=1)
@@ -643,7 +412,7 @@ else:
     st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
 
 # ==============================================================================
-# 7. LOWER SECTION: T-Shape 超詳細オプションチェーン・マトリックス (全幅表示)
+# 5. T-SHAPE OPTION CHAIN MATRIX
 # ==============================================================================
 st.markdown("---")
 st.markdown(f"### 📄 【{current_ticker}】 {selected_expiry} 満期オプション・チェーン (T-Shape プロ仕様マトリックス)")
@@ -652,7 +421,7 @@ st.html("""
     <div class="guide-panel">
         <h4 style="color: #38BDF8; margin-top: 0; margin-bottom: 12px;">👁️ オプション統計指標の完全解読マニュアル</h4>
         <div style="font-size: 12px; line-height: 1.6; color: #94A3B8;">
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; color: #E2E8F0;">
+            <table style="width: 100%; border-collapse: collapse; color: #E2E8F0;">
                 <thead>
                     <tr style="border-bottom: 1px solid #1E293B; text-align: left;">
                         <th style="padding: 6px;">指標名</th>
@@ -679,12 +448,6 @@ st.html("""
                         <td style="padding: 6px;">未決済 of 契約残高 / <b>機関投資家の本気度・壁</b></td>
                         <td style="padding: 6px; color: #38BDF8;">強力な支持・抵抗帯 (磁石効果)</td>
                         <td style="padding: 6px;">市場の関与が極めて薄い</td>
-                    </tr>
-                    <tr style="border-bottom: 1px solid #1E293B;">
-                        <td style="padding: 6px; font-weight: bold; color: #00FFCC;">Vol (出来高)</td>
-                        <td style="padding: 6px;">当日売買された契約数 / <b>クジラの仕込み検知</b></td>
-                        <td style="padding: 6px; color: #00FFCC;">大口の売買が活発（急騰の予兆）</td>
-                        <td style="padding: 6px;">流動性不足（スプレッド拡大）</td>
                     </tr>
                 </tbody>
             </table>
@@ -725,12 +488,15 @@ if hist_data is not None and not df_calls_raw.empty:
 else:
     st.warning("⚠️ オプションチェーンデータを取得できませんでした。")
 
+# ==============================================================================
+# 6. NEWS TERMINAL
+# ==============================================================================
 st.markdown("---")
 st.markdown(f"### 🔗 【{current_ticker}】 適時開示＆ニュースターミナル")
 
 if hist_data is not None:
     raw_events_by_date = {}
-    df_catalysts = fetch_catalyst_events(current_ticker, hist_data, df_raw)
+    df_catalysts = fetch_catalyst_events(current_ticker, df_raw)
     df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
     df_insider_grouped = df_ticker_raw.groupby(["buy_date", "insider"]).agg({
         "total_value": "sum", "position": "first", "filing_url": "first"
@@ -775,4 +541,18 @@ if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_
                     f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
                     item["url"],
                     f"https://finviz.com/quote.ashx?t={current_ticker}"
+                ])
                 
+    if linked_sources_list:
+        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "分類", "イベント概要", "SEC Link", "Google News", "Finviz Chart"])
+        st.dataframe(
+            df_sources,
+            column_config={
+                "SEC Link": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
+                "Google News": st.column_config.LinkColumn("Google News", display_text="News ↗"),
+                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
+            },
+            use_container_width=True, hide_index=True, height=250
+        )
+else:
+    st.info("💡 リンク可能なイベント履歴はありません。")
