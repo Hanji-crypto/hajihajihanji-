@@ -90,10 +90,6 @@ def generate_screener(df):
     """
     【大幅強化された多次元スクリーニング・アルゴリズム】
     単なる購入金額順ではなく、以下のプロ仕様フィルターと統計スコアリングを適用します。
-    
-    1. 最底取引金額フィルター: 合計取引額が $50,000 未満のノイズ取引を排除。
-    2. 役職(Relationship)の重み付け: CEO/CFOは1.5倍、役員/取締役は1.2倍、大株主は1.0倍。
-    3. クラスター買い(Cluster Buying)検知: 30日以内に異なる複数インサイダーが購入していればスコア大幅加算。
     """
     # 1. 最低取引金額フィルター ($50,000以上のみを対象)
     df_filtered = df[df["total_value"] >= 50000].copy()
@@ -140,11 +136,9 @@ def generate_screener(df):
         elif unique_insiders == 2:
             cluster_bonus = 1.4
 
-        # 統計的確実性スコアの算出 (対数スケールで金額の偏りを均しつつ、役職とクラスター効果を乗算)
-        base_score = np.log10(weighted_sum) * 10  # 例: $100k -> 50点, $1M -> 60点, $10M -> 70点
+        # 統計的確実性スコアの算出
+        base_score = np.log10(weighted_sum) * 10
         certainty_score = min(100.0, base_score * cluster_bonus)
-        
-        # 100点満点に正規化
         certainty_score = max(10.0, certainty_score)
 
         screener_rows.append({
@@ -166,13 +160,14 @@ def generate_screener(df):
     
     return df_screener
 
-def fetch_market_data(ticker):
+def fetch_market_data(ticker, period="6mo"):
     """
     yfinanceからリアルタイム株価、HV、および満期日リストを取得する関数。
+    【機能拡張】: 取得期間を動的に指定できるように引数 `period` を追加。
     """
     try:
         stock = yf.Ticker(ticker)
-        hist = stock.history(period="6mo")
+        hist = stock.history(period=period)
         if hist.empty:
             return None, 0.0, 0.0, []
         
