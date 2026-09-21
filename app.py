@@ -70,7 +70,7 @@ st.html("""
         border-left: 5px solid #A855F7;
         padding: 20px;
         border-radius: 8px;
-        margin-bottom: 18px;
+        margin-bottom: 16px;
         width: 100%;
     }
     /* ラジオボタンの横並び高密度化 */
@@ -186,22 +186,53 @@ def fetch_option_chain_by_expiry(ticker, expiry_date, current_price):
     stock = yf.Ticker(ticker)
     try:
         opt_chain = stock.option_chain(expiry_date)
-        calls = opt_chain.calls
-        puts = opt_chain.puts
+        calls = opt_chain.calls.copy()
+        puts = opt_chain.puts.copy()
         
-        # PCR計算用のボリューム
+        # 1. 必須カラムの存在チェックとデフォルト値の補完（KeyErrorの完全予防）
+        for df in [calls, puts]:
+            for col in ["volume", "openInterest", "impliedVolatility", "lastPrice"]:
+                if col not in df.columns:
+                    df[col] = 0.0 if col in ["impliedVolatility", "lastPrice"] else 0
+                    
+        # 2. PCR計算用のボリューム
         total_call_vol = calls["volume"].sum() if "volume" in calls.columns else 1.0
         total_put_vol = puts["volume"].sum() if "volume" in puts.columns else 1.0
         pcr_volume = total_put_vol / (total_call_vol + 1e-9)
         
-        # 代表的なATMのIV
+        # 3. 代表的なATMのIV
         calls["strike_diff"] = (calls["strike"] - current_price).abs()
         atm_call = calls.sort_values(by="strike_diff").iloc[0]
         implied_vol = atm_call["impliedVolatility"]
         
+        # 4. Deltaの統計的近似計算をここで確実に行う
+        T = 30 / 365.25
+        r = 0.04
+        
+        # Call Deltaの計算
+        call_deltas = []
+        for _, row in calls.iterrows():
+            strike = row["strike"]
+            sigma = row["impliedVolatility"] if row["impliedVolatility"] > 0 else 0.3
+            d1 = (np.log(current_price / strike) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+            call_deltas.append(std_normal_cdf(d1))
+        calls["Delta"] = call_deltas
+        
+        # Put Deltaの計算 (Put Delta ≈ Call Delta - 1)
+        put_deltas = []
+        for _, row in puts.iterrows():
+            strike = row["strike"]
+            sigma = row["impliedVolatility"] if row["impliedVolatility"] > 0 else 0.3
+            d1 = (np.log(current_price / strike) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+            put_deltas.append(std_normal_cdf(d1) - 1.0)
+        puts["Delta"] = put_deltas
+        
         return calls, puts, implied_vol, pcr_volume
-    except:
-        return pd.DataFrame(), pd.DataFrame(), 0.3, 1.0
+    except Exception as e:
+        # 万が一失敗した場合の空のフォールバックデータ生成
+        empty_calls = pd.DataFrame(columns=["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"])
+        empty_puts = pd.DataFrame(columns=["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"])
+        return empty_calls, empty_puts, 0.3, 1.0
 
 # カタリスト取得ロジック
 @st.cache_data(ttl=7200)
@@ -350,7 +381,7 @@ with st.spinner(f"【{current_ticker}】の市場データを解析中..."):
     hist_data, current_price, hv, available_expiries = fetch_market_data(current_ticker)
 
 if hist_data is not None:
-    # 【重要】ボリンジャーバンドの計算ロジック（描画前に確実にカラムを作成）
+    # ボリンジャーバンドの計算ロジック（描画前に確実にカラムを作成）
     hist_data["MA20"] = hist_data["Close"].rolling(window=20).mean()
     hist_data["STD20"] = hist_data["Close"].rolling(window=20).std()
     hist_data["BB_Upper"] = hist_data["MA20"] + (hist_data["STD20"] * 2)
@@ -631,7 +662,7 @@ if hist_data is not None:
     filtered_strategies = [s for s in strategies_pool if s["prob"] >= 50.0]
     ranked_strategies = sorted(filtered_strategies, key=lambda x: x["roi"], reverse=True)
 
-    # ランキングカードの描画（全幅で縦に美しく並べる）
+    # ランキングカードの描画
     rank_medals = ["🥇 1st Active Strategy", "🥈 2nd Alternative Strategy", "🥉 3rd Tactical Strategy"]
     for idx, strat in enumerate(ranked_strategies[:3]):
         st.html(f"""
@@ -671,8 +702,8 @@ if hist_data is not None:
     else:  # long_call
         for S in underlying_prices:
             net_payoff = (max(0, S - lc_strike) - lc_prem) / lc_prem * 100
-            payoffs.append(net_payoff)
-        breakeven_price = lc_strike + lc_prem
+                payoffs.append(net_payoff)
+            breakeven_price = lc_strike + lc_prem
             
     breakeven_change = ((breakeven_price / current_price) - 1) * 100
     
@@ -717,47 +748,29 @@ st.markdown(f"### 📄 【{current_ticker}】 {selected_expiry} 満期オプシ�
 st.caption("※Strike（権利行使価格）を中心に、左側にCall（コール）、右側にPut（プット）を対称配置した機関投資家仕様のレイアウトです。")
 
 if hist_data is not None and not df_calls_raw.empty:
-    # CallとPutをStrikeでマージしてT-Shapeに整形
+    # 確実に存在するカラムのみを抽出し、KeyErrorを100%防止する
     df_c = df_calls_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
-    df_p = df_puts_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility"]].copy()
-    
-    # PutのDeltaを簡易計算 (Put Delta ≈ Call Delta - 1)
-    df_c["Delta_p"] = df_c["Delta"] - 1.0
+    df_p = df_puts_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
     
     df_t_shape = pd.merge(df_c, df_p, on="strike", suffixes=("_call", "_put"))
     df_t_shape = df_t_shape.sort_values(by="strike").reset_index(drop=True)
     
     # 表示用にフォーマット
     df_t_shape_display = pd.DataFrame()
-    df_t_shape_display["C_Delta"] = df_t_shape["Delta"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
-    df_t_shape_display["C_IV"] = df_t_shape["impliedVolatility_call"].map(lambda x: f"{x*100:.1f}%")
-    df_t_shape_display["C_OI"] = df_t_shape["openInterest_call"].fillna(0).astype(int)
-    df_t_shape_display["C_Vol"] = df_t_shape["volume_call"].fillna(0).astype(int)
-    df_t_shape_display["C_Price"] = df_t_shape["lastPrice_call"].map(lambda x: f"${x:.2f}")
+    df_t_shape_display["Call Delta"] = df_t_shape["Delta_call"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
+    df_t_shape_display["Call IV"] = df_t_shape["impliedVolatility_call"].map(lambda x: f"{x*100:.1f}%")
+    df_t_shape_display["Call OI"] = df_t_shape["openInterest_call"].fillna(0).astype(int)
+    df_t_shape_display["Call Vol"] = df_t_shape["volume_call"].fillna(0).astype(int)
+    df_t_shape_display["Call Price"] = df_t_shape["lastPrice_call"].map(lambda x: f"${x:.2f}")
     
     # 中央のStrike
-    df_t_shape_display["STRIKE"] = df_t_shape["strike"].map(lambda x: f"${x:.1f}")
+    df_t_shape_display["権利行使価格 (Strike)"] = df_t_shape["strike"].map(lambda x: f"${x:.1f}")
     
-    df_t_shape_display["P_Price"] = df_t_shape["lastPrice_put"].map(lambda x: f"${x:.2f}")
-    df_t_shape_display["P_Vol"] = df_t_shape["volume_put"].fillna(0).astype(int)
-    df_t_shape_display["P_OI"] = df_t_shape["openInterest_put"].fillna(0).astype(int)
-    df_t_shape_display["P_IV"] = df_t_shape["impliedVolatility_put"].map(lambda x: f"{x*100:.1f}%")
-    df_t_shape_display["P_Delta"] = df_t_shape["Delta_p"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
-    
-    # カラム名の変更
-    df_t_shape_display = df_t_shape_display.rename(columns={
-        "C_Delta": "Call Delta",
-        "C_IV": "Call IV",
-        "C_OI": "Call OI",
-        "C_Vol": "Call Vol",
-        "C_Price": "Call Price",
-        "STRIKE": "権利行使価格 (Strike)",
-        "P_Price": "Put Price",
-        "P_Vol": "Put Vol",
-        "P_OI": "Put OI",
-        "P_IV": "Put IV",
-        "P_Delta": "Put Delta"
-    })
+    df_t_shape_display["Put Price"] = df_t_shape["lastPrice_put"].map(lambda x: f"${x:.2f}")
+    df_t_shape_display["Put Vol"] = df_t_shape["volume_put"].fillna(0).astype(int)
+    df_t_shape_display["Put OI"] = df_t_shape["openInterest_put"].fillna(0).astype(int)
+    df_t_shape_display["Put IV"] = df_t_shape["impliedVolatility_put"].map(lambda x: f"{x*100:.1f}%")
+    df_t_shape_display["Put Delta"] = df_t_shape["Delta_put"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
     
     # 列幅を最小限に最適化した全幅データフレーム
     st.dataframe(
