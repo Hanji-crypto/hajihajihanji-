@@ -119,8 +119,20 @@ st.markdown("---")
 # ==============================================================================
 st.subheader(f"👁️ 【{current_ticker}】 リアルタイム詳細・オプション解析")
 
+# 【機能拡張】: 期間選択コントロールをサイドバーまたはメイン上部に配置
+# ここでは、データ取得前に期間を決定するため、解析セクションの直前にセレクトボックスを配置します。
+period_col1, period_col2 = st.columns([4, 8])
+with period_col1:
+    selected_period = st.selectbox(
+        "📅 データ取得（ヒストリカル）期間:",
+        options=["3mo", "6mo", "1y", "2y"],
+        index=1, # デフォルトは6ヶ月 (6mo)
+        format_func=lambda x: {"3mo": "3ヶ月 (短期)", "6mo": "6ヶ月 (中期・標準)", "1y": "1年間 (長期)", "2y": "2年間 (超長期)"}[x]
+    )
+
 with st.spinner(f"【{current_ticker}】の市場データを解析中..."):
-    raw_hist, current_price, hv, available_expiries = fetch_market_data(current_ticker)
+    # 選択された期間（selected_period）をデータローダーに渡す
+    raw_hist, current_price, hv, available_expiries = fetch_market_data(current_ticker, period=selected_period)
 
 if raw_hist is not None:
     hist_data = compute_technical_indicators(raw_hist)
@@ -132,13 +144,13 @@ if raw_hist is not None:
     else:
         st.warning("⚠️ この銘柄には現在、有効なオプションチェーン（満期日）が存在しないか、取得できません。オプション解析は簡易シミュレーションモードで動作します。")
 
-    # オプションチェーンデータの取得（満期日がない場合は空のDataFrameを返す）
+    # オプションチェーンデータの取得
     with st.spinner(f"オプションチェーンを解析中..."):
         if selected_expiry:
             df_calls_raw, df_puts_raw, iv, pcr = fetch_option_chain_by_expiry(current_ticker, selected_expiry, current_price)
         else:
             df_calls_raw, df_puts_raw = pd.DataFrame(), pd.DataFrame()
-            iv = hv if hv > 0 else 0.30  # オプションがない場合はHVまたはデフォルト30%をIVとして代用
+            iv = hv if hv > 0 else 0.30
             pcr = 1.0
 
     T_30 = 30 / 365.25
@@ -183,8 +195,13 @@ if raw_hist is not None:
         unsafe_allow_html=True
     )
 
-    # 直近60営業日データの切り出し
-    df_plot = hist_data.iloc[-60:].copy()
+    # 【描画スライスロジック】: 
+    # 選択された期間（3mo, 6mo, 1y, 2y）に応じて、チャート上に描画するローソク足の数を動的に調整します。
+    # これにより、長期データを取得してもチャートが潰れず、常にサクサクと快適に閲覧できます。
+    slice_windows = {"3mo": 60, "6mo": 120, "1y": 250, "2y": 500}
+    display_window = slice_windows.get(selected_period, 120)
+    
+    df_plot = hist_data.iloc[-display_window:].copy()
     plot_dates = df_plot.index
     start_date = plot_dates[0]
     end_date = plot_dates[-1]
@@ -213,8 +230,8 @@ if raw_hist is not None:
     hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
     hist_data["IV_Sim"] = hist_data["HV_20"] * (iv / (hv if hv > 0 else 1.0))
 
-    fig_vol.add_trace(gr.Scatter(x=plot_dates, y=hist_data["HV_20"].iloc[-60:], mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"))
-    fig_vol.add_trace(gr.Scatter(x=plot_dates, y=hist_data["IV_Sim"].iloc[-60:], mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"))
+    fig_vol.add_trace(gr.Scatter(x=plot_dates, y=hist_data["HV_20"].iloc[-display_window:], mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"))
+    fig_vol.add_trace(gr.Scatter(x=plot_dates, y=hist_data["IV_Sim"].iloc[-display_window:], mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"))
 
     df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
     df_insider_daily = df_ticker_raw.groupby(["buy_date", "insider"])["total_value"].sum().reset_index()
@@ -560,38 +577,4 @@ if hist_data is not None:
 if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_date:
     linked_sources_list = []
     for event_date in sorted(raw_events_by_date.keys(), reverse=True):
-        date_str = event_date.strftime('%Y-%m-%d')
-        prev_day = (event_date - timedelta(days=1)).strftime('%Y-%m-%d')
-        next_day = (event_date + timedelta(days=1)).strftime('%Y-%m-%d')
-        date_specific_news_url = f"https://www.google.com/search?q={current_ticker}+stock+news+after:{prev_day}+before:{next_day}&tbm=nws"
-        
-        for item in raw_events_by_date[event_date]:
-            if item["type"] == "I":
-                linked_sources_list.append([
-                    date_str, "🟣 インサイダー [ I ]",
-                    f"{item['insider']} ({item['position']}) が 合計 ${item['value']:,.0f} を購入",
-                    item["url"], date_specific_news_url,
-                    f"https://finviz.com/quote.ashx?t={current_ticker}"
-                ])
-            else:
-                linked_sources_list.append([
-                    date_str, "🟡 カタリスト [ R ]",
-                    f"【{item['category']}】 {item['title']}",
-                    f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
-                    item["url"],
-                    f"https://finviz.com/quote.ashx?t={current_ticker}"
-                ])
-                
-    if linked_sources_list:
-        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "分類", "イベント概要", "SEC Link", "Google News", "Finviz Chart"])
-        st.dataframe(
-            df_sources,
-            column_config={
-                "SEC Link": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
-                "Google News": st.column_config.LinkColumn("Google News", display_text="News ↗"),
-                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
-            },
-            use_container_width=True, hide_index=True, height=250
-        )
-else:
-    st.info("💡 リンク可能なイベント履歴はありません。")
+        date_str = event_date.strftime('%
