@@ -22,23 +22,28 @@ def draw_stock_chart(df_plot, chart_type, overlay_indicator, current_price, iv, 
         ))
 
     # テクニカル指標の重ね合わせ
-    # 【ボリンジャーバンドの視認性大幅向上修正】
-    # - 境界線を破線から「クッキリとした実線(solid)」へ変更。
-    # - 配色を薄い半透明から「不透明度85%の鮮やかなエメラルドグリーン(rgba(0, 255, 204, 0.85))」へ強化。
+    # 【ボリンジャーバンドの完全仕様修正】
+    # - 境界線(Upper/Lower)は、目立たないよう「極細(width=1.0)・極薄(不透明度15%)の実線(solid)」に設定。
+    # - バンド内部を、視認性の高い「濃いエメラルドグリーン(不透明度18%: rgba(0, 255, 204, 0.18))」で美しく面塗りつぶし。
     if overlay_indicator == "ボリンジャーバンド" and "BB_Upper" in df_plot.columns:
-        fig.add_trace(gr.Scatter(
-            x=df_plot.index, y=df_plot["BB_Upper"], 
-            line=dict(color="rgba(0, 255, 204, 0.85)", width=1.5, shape="linear"), 
-            fill='none', name="BB Upper"
-        ))
+        # 先に下限（Lower）を定義（塗りつぶしなし）
         fig.add_trace(gr.Scatter(
             x=df_plot.index, y=df_plot["BB_Lower"], 
-            line=dict(color="rgba(0, 255, 204, 0.85)", width=1.5, shape="linear"), 
+            line=dict(color="rgba(0, 255, 204, 0.15)", width=1.0), 
             fill='none', name="BB Lower"
         ))
+        # 次に上限（Upper）を定義し、下限との間（tonexty）を濃いめの半透明緑で塗りつぶす
+        fig.add_trace(gr.Scatter(
+            x=df_plot.index, y=df_plot["BB_Upper"], 
+            line=dict(color="rgba(0, 255, 204, 0.15)", width=1.0), 
+            fill='tonexty', 
+            fillcolor="rgba(0, 255, 204, 0.18)", 
+            name="BB Upper"
+        ))
+        # 20日移動平均線
         fig.add_trace(gr.Scatter(
             x=df_plot.index, y=df_plot["MA20"], 
-            line=dict(color="rgba(255, 165, 0, 0.85)", width=1.2, dash="dash"), 
+            line=dict(color="rgba(255, 165, 0, 0.7)", width=1.0, dash="dash"), 
             fill='none', name="20日移動平均"
         ))
     elif overlay_indicator == "EMA (20/50)":
@@ -50,7 +55,7 @@ def draw_stock_chart(df_plot, chart_type, overlay_indicator, current_price, iv, 
         fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Tenkan_Sen"], line=dict(color="#38BDF8", width=1.2), fill='none', name="転換線"))
         fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Kijun_Sen"], line=dict(color="#F43F5E", width=1.2), fill='none', name="基準線"))
 
-    # 1σ予測レンジ (30日予測の未来バンドは、実績バンドと区別するため破線のまま維持します)
+    # 1σ予測レンジ (30日予測の未来バンド)
     fig.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(56, 189, 248, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ上限"))
     fig.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ下限"))
 
