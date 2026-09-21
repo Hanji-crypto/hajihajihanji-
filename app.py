@@ -223,7 +223,6 @@ def fetch_catalyst_events(ticker, df_prices, df_raw_trades):
 st.title("👁️ Whale-Eye: Institutional Option & Insider Intelligence")
 st.markdown("---")
 
-# SECTION 1: 全銘柄多次元スクリーニング・マトリックス
 st.subheader("📊 全銘柄多次元スクリーニング・マトリックス")
 col_sel1, col_sel2 = st.columns([3, 5])
 with col_sel1:
@@ -398,7 +397,6 @@ if hist_data is not None:
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(31)]
     
     # メイン株価 (Row 1)
-    # 過去実績部分をプロット（未来部分は自動的に空白になります）
     if chart_type == "ローソク足":
         fig_tech.add_trace(gr.Candlestick(
             x=plot_dates, open=hist_data["Open"].iloc[-60:], high=hist_data["High"].iloc[-60:],
@@ -780,4 +778,19 @@ if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_
                     f"【{item['category']}】 {item['title']}",
                     f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
                     item["url"],
-                    f"https://finviz.com/quote.ash
+                    f"https://finviz.com/quote.ashx?t={current_ticker}"
+                ])
+                
+    if linked_sources_list:
+        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "分類", "イベント概要", "SEC Link", "Google News", "Finviz Chart"]).drop_duplicates(subset=["日付", "イベント概要"])
+        st.dataframe(
+            df_sources,
+            column_config={
+                "SEC Link": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
+                "Google News": st.column_config.LinkColumn("Google News", display_text="News ↗"),
+                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
+            },
+            use_container_width=True, hide_index=True, height=250
+        )
+else:
+    st.info("💡 リンク可能なイベント履歴はありません。")
