@@ -73,6 +73,15 @@ st.html("""
         margin-bottom: 16px;
         width: 100%;
     }
+    /* 解説用アカデミックパネルのスタイル */
+    .guide-panel {
+        background-color: #0F172A;
+        border: 1px solid #1E293B;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 24px;
+        border-top: 4px solid #38BDF8;
+    }
     /* ラジオボタンの横並び高密度化 */
     div[data-testid="stRadio"] > div {
         gap: 12px;
@@ -218,7 +227,7 @@ def fetch_option_chain_by_expiry(ticker, expiry_date, current_price):
             call_deltas.append(std_normal_cdf(d1))
         calls["Delta"] = call_deltas
         
-        # Put Delta의 計算 (Put Delta ≈ Call Delta - 1)
+        # Put Deltaの計算 (Put Delta ≈ Call Delta - 1)
         put_deltas = []
         for _, row in puts.iterrows():
             strike = row["strike"]
@@ -745,6 +754,60 @@ else:
 # ==============================================================================
 st.markdown("---")
 st.markdown(f"### 📄 【{current_ticker}】 {selected_expiry} 満期オプション・チェーン (T-Shape プロ仕様マトリックス)")
+
+# --------------------------------------------------------------------------
+# アカデミック解説パネル（マトリックスの直上に配置）
+# --------------------------------------------------------------------------
+st.html("""
+    <div class="guide-panel">
+        <h4 style="color: #38BDF8; margin-top: 0; margin-bottom: 12px;">👁️ 機関投資家仕様：オプション統計指標の完全解読マニュアル</h4>
+        <div style="font-size: 12px; line-height: 1.6; color: #94A3B8;">
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; color: #E2E8F0;">
+                <thead>
+                    <tr style="border-bottom: 1px solid #1E293B; text-align: left;">
+                        <th style="padding: 6px;">指標名</th>
+                        <th style="padding: 6px;">数値の意味</th>
+                        <th style="padding: 6px;">「値が大きい」場合</th>
+                        <th style="padding: 6px;">「値が小さい」場合</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom: 1px solid #1E293B;">
+                        <td style="padding: 6px; font-weight: bold; color: #00FFCC;">Delta (デルタ)</td>
+                        <td style="padding: 6px;">株価変動への感応度 / <b>満期時の勝率（確率）</b></td>
+                        <td style="padding: 6px; color: #38BDF8;">ITM (勝率高、現物代替)</td>
+                        <td style="padding: 6px;">OTM (勝率低、レバレッジ大)</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #1E293B;">
+                        <td style="padding: 6px; font-weight: bold; color: #00FFCC;">IV (予測ボラ)</td>
+                        <td style="padding: 6px;">将来の期待変動率 / <b>プレミアムの割高・割安</b></td>
+                        <td style="padding: 6px; color: #FF007F;">割高 (オプション売り手に有利)</td>
+                        <td style="padding: 6px; color: #38BDF8;">割安 (オプション買い手に有利)</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #1E293B;">
+                        <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (取組高)</td>
+                        <td style="padding: 6px;">未決済の契約残高 / <b>機関投資家の本気度・壁</b></td>
+                        <td style="padding: 6px; color: #38BDF8;">強力な支持・抵抗帯 (磁石効果)</td>
+                        <td style="padding: 6px;">市場の関与が極めて薄い</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #1E293B;">
+                        <td style="padding: 6px; font-weight: bold; color: #00FFCC;">Vol (出来高)</td>
+                        <td style="padding: 6px;">当日売買された契約数 / <b>クジラの仕込み検知</b></td>
+                        <td style="padding: 6px; color: #00FFCC;">大口の売買が活発（急騰の予兆）</td>
+                        <td style="padding: 6px;">流動性不足（スプレッド拡大）</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p style="margin: 0; font-weight: bold; color: #E2E8F0;">💡 組み合わせ分析手順:</p>
+            <ol style="margin-top: 4px; margin-bottom: 0; padding-left: 20px;">
+                <li><b>PCR (Put-Call Ratio)</b> で市場全体の強気・弱気バイアスを検知（0.7以下は極めて強気）。</li>
+                <li>特定のStrikeで <b>VolとOIが同時にスパイク（突出）</b> している箇所を探索（そこがクジラの仕込み位置）。</li>
+                <li>インサイダー買いの後に <b>OTM CallのIVが急上昇</b> し始めたら、数日〜数週間以内の急騰（ボラティリティ・スクイーズ）を狙い撃ちします。</li>
+            </ol>
+        </div>
+    </div>
+""")
+
 st.caption("※Strike（権利行使価格）を中心に、左側にCall（コール）、右側にPut（プット）を対称配置した機関投資家仕様のレイアウトです。")
 
 if hist_data is not None and not df_calls_raw.empty:
