@@ -12,78 +12,25 @@ import math
 # 1. PAGE CONFIG & DARK THEME STYLE
 # ==============================================================================
 st.set_page_config(
-    page_title="Whale-Eye: Institutional Option & Insider Intelligence",
+    page_title="Whale-Eye: Option & Insider Intelligence",
     page_icon="👁️",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# プロ仕様ダークテーマ＆高密度CSS
 st.html("""
     <style>
-    .stApp {
-        background-color: #0B0F19;
-        color: #E2E8F0;
-    }
-    div[data-testid="stMetricValue"] {
-        font-size: 20px;
-        font-weight: bold;
-        color: #00FFCC !important;
-        font-family: 'Consolas', monospace;
-    }
-    div[data-testid="stMetricLabel"] {
-        color: #94A3B8 !important;
-        font-size: 11px;
-    }
-    hr {
-        border-color: #1E293B !important;
-    }
-    a {
-        color: #00FFCC !important;
-        text-decoration: none;
-        font-weight: bold;
-    }
-    a:hover {
-        text-decoration: underline;
-    }
-    .strategy-card {
-        background-color: #111827;
-        border: 1px solid #1F2937;
-        border-left: 5px solid #00FFCC;
-        padding: 20px;
-        border-radius: 8px;
-        margin-bottom: 18px;
-        width: 100%;
-    }
-    .strategy-card-secondary {
-        background-color: #0F172A;
-        border: 1px solid #1E293B;
-        border-left: 5px solid #38BDF8;
-        padding: 20px;
-        border-radius: 8px;
-        margin-bottom: 18px;
-        width: 100%;
-    }
-    .strategy-card-warning {
-        background-color: #1E1B4B;
-        border: 1px solid #312E81;
-        border-left: 5px solid #A855F7;
-        padding: 20px;
-        border-radius: 8px;
-        margin-bottom: 16px;
-        width: 100%;
-    }
-    .guide-panel {
-        background-color: #0F172A;
-        border: 1px solid #1E293B;
-        padding: 20px;
-        border-radius: 8px;
-        margin-bottom: 24px;
-        border-top: 4px solid #38BDF8;
-    }
-    div[data-testid="stRadio"] > div {
-        gap: 12px;
-    }
+    .stApp { background-color: #0B0F19; color: #E2E8F0; }
+    div[data-testid="stMetricValue"] { font-size: 20px; font-weight: bold; color: #00FFCC !important; font-family: 'Consolas', monospace; }
+    div[data-testid="stMetricLabel"] { color: #94A3B8 !important; font-size: 11px; }
+    hr { border-color: #1E293B !important; }
+    a { color: #00FFCC !important; text-decoration: none; font-weight: bold; }
+    a:hover { text-decoration: underline; }
+    .strategy-card { background-color: #111827; border: 1px solid #1F2937; border-left: 5px solid #00FFCC; padding: 20px; border-radius: 8px; margin-bottom: 18px; width: 100%; }
+    .strategy-card-secondary { background-color: #0F172A; border: 1px solid #1E293B; border-left: 5px solid #38BDF8; padding: 20px; border-radius: 8px; margin-bottom: 18px; width: 100%; }
+    .strategy-card-warning { background-color: #1E1B4B; border: 1px solid #312E81; border-left: 5px solid #A855F7; padding: 20px; border-radius: 8px; margin-bottom: 16px; width: 100%; }
+    .guide-panel { background-color: #0F172A; border: 1px solid #1E293B; padding: 20px; border-radius: 8px; margin-bottom: 24px; border-top: 4px solid #38BDF8; }
+    div[data-testid="stRadio"] > div { gap: 12px; }
     </style>
 """)
 
@@ -105,12 +52,10 @@ def load_and_process_data():
         has_sector = False
 
     sector_select = "sector" if has_sector else "'Other' as sector"
-
     query = f"""
         SELECT filing_date, insider, position, ticker, company, avg_price, buy_date,
                total_shares as shares, total_value, filing_url, {sector_select}
-        FROM insider_trades
-        WHERE ticker IS NOT NULL AND ticker != '' 
+        FROM insider_trades WHERE ticker IS NOT NULL AND ticker != '' 
     """
     df = pd.read_sql_query(query, conn)
     conn.close()
@@ -120,8 +65,8 @@ def load_and_process_data():
     df["total_value"] = pd.to_numeric(df["total_value"], errors='coerce')
     df["avg_price"] = pd.to_numeric(df["avg_price"], errors='coerce')
     df["shares"] = pd.to_numeric(df["shares"], errors='coerce')
-    
     df["ticker"] = df["ticker"].str.strip().str.upper()
+    
     exclude_words = {"NONE", "N/A", "NA", "NULL", "DIRECTOR", "OFFICER", "PRESIDENT", "CEO", "CFO"}
     df = df[~df["ticker"].isin(exclude_words)]
     df = df[df["ticker"].str.match(r'^[A-Z0-9\.\-]{1,5}$', na=False)]
@@ -155,8 +100,7 @@ def generate_screener(df):
     
     size_score = np.minimum(100.0, 30.0 + (np.log10(summary["total_value"] + 1) * 10.0))
     summary["Certainty (%)"] = np.minimum(98.5, np.maximum(10.0, size_score))
-    summary = summary.sort_values(by="Certainty (%)", ascending=False)
-    return summary
+    return summary.sort_values(by="Certainty (%)", ascending=False)
 
 df_screener = generate_screener(df_raw)
 top_10_tickers = df_screener["ticker"].head(10).tolist()
@@ -237,8 +181,7 @@ def fetch_catalyst_events(ticker, df_prices, df_raw_trades):
                 title = item.get("title", "")
                 pub_time = item.get("providerPublishTime", 0)
                 link_url = item.get("link", f"https://finance.yahoo.com/quote/{ticker}")
-                if pub_time == 0:
-                    continue
+                if pub_time == 0: continue
                 event_date = datetime.fromtimestamp(pub_time).strftime('%Y-%m-%d')
                 title_lower = title.lower()
                 category = None
@@ -268,22 +211,11 @@ def fetch_catalyst_events(ticker, df_prices, df_raw_trades):
             f_url = trade["filing_url"] if pd.notna(trade["filing_url"]) else f"https://www.sec.gov/edgar/browse/?CIK={ticker}"
             
             if val >= 1000000:
-                events.append({
-                    "date": t_date,
-                    "title": f"超大口インサイダー買い: {insider_name} ({pos}) が ${val:,.0f} を市場から購入",
-                    "category": "🐋 超大口インサイダー",
-                    "source_url": f_url
-                })
+                events.append({"date": t_date, "title": f"超大口インサイダー買い: {insider_name} ({pos}) が ${val:,.0f} を市場から購入", "category": "🐋 超大口インサイダー", "source_url": f_url})
             elif any(x in str(pos).lower() for x in ["ceo", "chief executive officer", "cfo", "chief financial officer"]):
-                events.append({
-                    "date": t_date,
-                    "title": f"経営トップ(CEO/CFO)による買い: {insider_name} が ${val:,.0f} を購入",
-                    "category": "👑 経営陣インサイダー",
-                    "source_url": f_url
-                })
+                events.append({"date": t_date, "title": f"経営トップ(CEO/CFO)による買い: {insider_name} が ${val:,.0f} を購入", "category": "👑 経営陣インサイダー", "source_url": f_url})
     except:
         pass
-
     return pd.DataFrame(events).drop_duplicates(subset=["date", "category"]) if events else pd.DataFrame()
 
 # ==============================================================================
@@ -309,7 +241,6 @@ with col_sel2:
     radio_options = list(top_10_tickers)
     if st.session_state.selected_ticker not in radio_options:
         radio_options.append(st.session_state.selected_ticker)
-
     selected_by_radio = st.radio(
         "⚡ クイック選択 (矢印キーで1ミリ秒連動):",
         options=radio_options,
@@ -348,46 +279,38 @@ with st.spinner(f"【{current_ticker}】の市場データを解析中..."):
     hist_data, current_price, hv, available_expiries = fetch_market_data(current_ticker)
 
 if hist_data is not None:
-    # --- 網羅的テクニカル指標の計算 ---
-    # 1. ボリンジャーバンド
+    # --- テクニカル指標の計算 ---
     hist_data["MA20"] = hist_data["Close"].rolling(window=20).mean()
     hist_data["STD20"] = hist_data["Close"].rolling(window=20).std()
     hist_data["BB_Upper"] = hist_data["MA20"] + (hist_data["STD20"] * 2)
     hist_data["BB_Lower"] = hist_data["MA20"] - (hist_data["STD20"] * 2)
 
-    # 2. EMA 20 / 50
     hist_data["EMA20"] = hist_data["Close"].ewm(span=20, adjust=False).mean()
     hist_data["EMA50"] = hist_data["Close"].ewm(span=50, adjust=False).mean()
 
-    # 3. 一目均衡表 (Ichimoku Cloud)
     high_9 = hist_data["High"].rolling(window=9).max()
     low_9 = hist_data["Low"].rolling(window=9).min()
     hist_data["Tenkan_Sen"] = (high_9 + low_9) / 2
-
     high_26 = hist_data["High"].rolling(window=26).max()
     low_26 = hist_data["Low"].rolling(window=26).min()
     hist_data["Kijun_Sen"] = (high_26 + low_26) / 2
-
     hist_data["Senkou_Span_A"] = ((hist_data["Tenkan_Sen"] + hist_data["Kijun_Sen"]) / 2).shift(26)
     high_52 = hist_data["High"].rolling(window=52).max()
     low_52 = hist_data["Low"].rolling(window=52).min()
     hist_data["Senkou_Span_B"] = ((high_52 + low_52) / 2).shift(26)
 
-    # 4. RSI (14)
     delta_close = hist_data["Close"].diff()
     gain = (delta_close.where(delta_close > 0, 0)).rolling(window=14).mean()
     loss = (-delta_close.where(delta_close < 0, 0)).rolling(window=14).mean()
     rs = gain / (loss + 1e-9)
     hist_data["RSI_14"] = 100 - (100 / (1 + rs))
 
-    # 5. MACD
     ema_12 = hist_data["Close"].ewm(span=12, adjust=False).mean()
     ema_26 = hist_data["Close"].ewm(span=26, adjust=False).mean()
     hist_data["MACD"] = ema_12 - ema_26
     hist_data["MACD_Signal"] = hist_data["MACD"].ewm(span=9, adjust=False).mean()
     hist_data["MACD_Hist"] = hist_data["MACD"] - hist_data["MACD_Signal"]
 
-    # 6. ATR (Average True Range)
     high_low = hist_data["High"] - hist_data["Low"]
     high_close = (hist_data["High"] - hist_data["Close"].shift()).abs()
     low_close = (hist_data["Low"] - hist_data["Close"].shift()).abs()
@@ -395,7 +318,6 @@ if hist_data is not None:
     true_range = ranges.max(axis=1)
     hist_data["ATR"] = true_range.rolling(14).mean()
 
-    # 限月選択
     if available_expiries:
         selected_expiry = st.selectbox("表示するオプションチェーンの満期日を選択してください:", options=available_expiries, index=0)
     else:
@@ -410,20 +332,13 @@ if hist_data is not None:
     upper_1sigma = current_price + one_sigma_move
     lower_1sigma = current_price - one_sigma_move
     
-    # 統計メトリクス
     m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
-    with m_col1:
-        st.metric("インプライド・ボラティリティ (IV)", f"{iv*100:.1f}%")
-    with m_col2:
-        st.metric("歴史的ボラティリティ (HV)", f"{hv*100:.1f}%")
-    with m_col3:
-        st.metric("IV / HV 比率", f"{iv/hv:.2f}" if hv > 0 else "N/A")
-    with m_col4:
-        st.metric("Put-Call Ratio (PCR)", f"{pcr:.2f}")
-    with m_col5:
-        st.metric("1σ 上昇上限 (30日)", f"${upper_1sigma:.2f}")
-    with m_col6:
-        st.metric("1σ 下落下限 (30日)", f"${lower_1sigma:.2f}")
+    with m_col1: st.metric("インプライド・ボラティリティ (IV)", f"{iv*100:.1f}%")
+    with m_col2: st.metric("歴史的ボラティリティ (HV)", f"{hv*100:.1f}%")
+    with m_col3: st.metric("IV / HV 比率", f"{iv/hv:.2f}" if hv > 0 else "N/A")
+    with m_col4: st.metric("Put-Call Ratio (PCR)", f"{pcr:.2f}")
+    with m_col5: st.metric("1σ 上昇上限 (30日)", f"${upper_1sigma:.2f}")
+    with m_col6: st.metric("1σ 下落下限 (30日)", f"${lower_1sigma:.2f}")
 
     st.markdown("---")
 
@@ -442,8 +357,7 @@ if hist_data is not None:
     st.markdown("### 📈 テクニカル分析チャート")
     st.caption("💡 【直接描画機能】: チャート右上（Modebar）の「ライン描画アイコン（Draw line）」や「消しゴム（Erase active shape）」をクリックすると、チャート上で直接ドラッグしてトレンドラインを引くことができます。")
 
-    # 【重要】未来予測レンジ（1段目）と過去実績（2/3段目）のX軸同期を完全に解除（shared_xaxes=False）
-    # これにより、RSIやMACDのデータが未来側に引きずられて圧縮されるバグを根本解決します。
+    # 【デバッグ】X軸同期を完全に解除（shared_xaxes=False）してRSIの圧縮バグを解消
     if sub_indicator == "RSI + MACD":
         fig_tech = make_subplots(
             rows=3, cols=1, shared_xaxes=False, vertical_spacing=0.06, row_width=[0.2, 0.2, 0.5]
@@ -469,50 +383,19 @@ if hist_data is not None:
             mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価 ($)"
         ), row=1, col=1)
         
-    # 重ね合わせ指標の動的描画 (Row 1)
+    # 重ね合わせ指標 (Row 1)
     if overlay_indicator == "ボリンジャーバンド" and "BB_Upper" in hist_data.columns:
-        fig_tech.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], 
-            line=dict(color="rgba(0, 255, 204, 0.45)", width=0.6), hoverinfo="skip", showlegend=False
-        ), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], 
-            line=dict(color="rgba(0, 255, 204, 0.45)", width=0.6), 
-            fill="tonexty", fillcolor="rgba(0, 255, 204, 0.08)", hoverinfo="skip", showlegend=False
-        ), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], 
-            line=dict(color="orange", width=1.0, dash="dash"), name="20日移動平均", hoverinfo="skip"
-        ), row=1, col=1)
-
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Upper"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.45)", width=0.6), hoverinfo="skip", showlegend=False), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["BB_Lower"].iloc[-60:], line=dict(color="rgba(0, 255, 204, 0.45)", width=0.6), fill="tonexty", fillcolor="rgba(0, 255, 204, 0.08)", hoverinfo="skip", showlegend=False), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["MA20"].iloc[-60:], line=dict(color="orange", width=1.0, dash="dash"), name="20日移動平均", hoverinfo="skip"), row=1, col=1)
     elif overlay_indicator == "EMA (20/50)":
-        fig_tech.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["EMA20"].iloc[-60:],
-            line=dict(color="#00C5FF", width=1.2), name="EMA 20"
-        ), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["EMA50"].iloc[-60:],
-            line=dict(color="#FF8C00", width=1.2), name="EMA 50"
-        ), row=1, col=1)
-
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["EMA20"].iloc[-60:], line=dict(color="#00C5FF", width=1.2), name="EMA 20"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["EMA50"].iloc[-60:], line=dict(color="#FF8C00", width=1.2), name="EMA 50"), row=1, col=1)
     elif overlay_indicator == "一目均衡表 (Ichimoku)":
-        fig_tech.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["Senkou_Span_A"].iloc[-60:],
-            line=dict(color="rgba(56, 189, 248, 0.4)", width=0.8), hoverinfo="skip", showlegend=False
-        ), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["Senkou_Span_B"].iloc[-60:],
-            line=dict(color="rgba(244, 63, 94, 0.4)", width=0.8),
-            fill="tonexty", fillcolor="rgba(56, 189, 248, 0.05)", hoverinfo="skip", showlegend=False
-        ), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["Tenkan_Sen"].iloc[-60:],
-            line=dict(color="#38BDF8", width=1.0), name="転換線"
-        ), row=1, col=1)
-        fig_tech.add_trace(gr.Scatter(
-            x=hist_data.index[-60:], y=hist_data["Kijun_Sen"].iloc[-60:],
-            line=dict(color="#F43F5E", width=1.0), name="基準線"
-        ), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["Senkou_Span_A"].iloc[-60:], line=dict(color="rgba(56, 189, 248, 0.4)", width=0.8), hoverinfo="skip", showlegend=False), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["Senkou_Span_B"].iloc[-60:], line=dict(color="rgba(244, 63, 94, 0.4)", width=0.8), fill="tonexty", fillcolor="rgba(56, 189, 248, 0.05)", hoverinfo="skip", showlegend=False), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["Tenkan_Sen"].iloc[-60:], line=dict(color="#38BDF8", width=1.0), name="転換線"), row=1, col=1)
+        fig_tech.add_trace(gr.Scatter(x=hist_data.index[-60:], y=hist_data["Kijun_Sen"].iloc[-60:], line=dict(color="#F43F5E", width=1.0), name="基準線"), row=1, col=1)
 
     # 1σ予測レンジ (Row 1)
     fig_tech.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(0, 255, 204, 0.25)", width=1, dash="dash"), name="1σ 上昇上限 (68%)"), row=1, col=1)
@@ -814,7 +697,7 @@ else:
     st.warning("⚠️ オプションチェーンデータを取得できませんでした。")
 
 st.markdown("---")
-st.markdown(f"### 🔗 【{current_ticker}】 マルチソース・適時開示＆ニュースターミナル")
+st.markdown(f"### 🔗 【{current_ticker}】 適時開示＆ニュースターミナル")
 
 if hist_data is not None:
     raw_events_by_date = {}
@@ -873,4 +756,9 @@ if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_
             column_config={
                 "SEC開示 (Form 4)": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
                 "Googleニュース": st.column_config.LinkColumn("Google News", display_text="News ↗"),
-                "Finviz Chart
+                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
+            },
+            use_container_width=True, hide_index=True, height=250
+        )
+else:
+    st.info("💡 リンク可能なイベント履歴はありません。")
