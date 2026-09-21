@@ -119,8 +119,7 @@ st.markdown("---")
 # ==============================================================================
 st.subheader(f"👁️ 【{current_ticker}】 リアルタイム詳細・オプション解析")
 
-# 【機能拡張】: 期間選択コントロールをサイドバーまたはメイン上部に配置
-# ここでは、データ取得前に期間を決定するため、解析セクションの直前にセレクトボックスを配置します。
+# 期間選択コントロールを配置
 period_col1, period_col2 = st.columns([4, 8])
 with period_col1:
     selected_period = st.selectbox(
@@ -131,7 +130,6 @@ with period_col1:
     )
 
 with st.spinner(f"【{current_ticker}】の市場データを解析中..."):
-    # 選択された期間（selected_period）をデータローダーに渡す
     raw_hist, current_price, hv, available_expiries = fetch_market_data(current_ticker, period=selected_period)
 
 if raw_hist is not None:
@@ -195,9 +193,7 @@ if raw_hist is not None:
         unsafe_allow_html=True
     )
 
-    # 【描画スライスロジック】: 
-    # 選択された期間（3mo, 6mo, 1y, 2y）に応じて、チャート上に描画するローソク足の数を動的に調整します。
-    # これにより、長期データを取得してもチャートが潰れず、常にサクサクと快適に閲覧できます。
+    # 選択された期間に応じて、表示ウィンドウ幅を調整
     slice_windows = {"3mo": 60, "6mo": 120, "1y": 250, "2y": 500}
     display_window = slice_windows.get(selected_period, 120)
     
@@ -577,4 +573,38 @@ if hist_data is not None:
 if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_date:
     linked_sources_list = []
     for event_date in sorted(raw_events_by_date.keys(), reverse=True):
-        date_str = event_date.strftime('%
+        date_str = event_date.strftime('%Y-%m-%d')
+        prev_day = (event_date - timedelta(days=1)).strftime('%Y-%m-%d')
+        next_day = (event_date + timedelta(days=1)).strftime('%Y-%m-%d')
+        date_specific_news_url = f"https://www.google.com/search?q={current_ticker}+stock+news+after:{prev_day}+before:{next_day}&tbm=nws"
+        
+        for item in raw_events_by_date[event_date]:
+            if item["type"] == "I":
+                linked_sources_list.append([
+                    date_str, "🟣 インサイダー [ I ]",
+                    f"{item['insider']} ({item['position']}) が 合計 ${item['value']:,.0f} を購入",
+                    item["url"], date_specific_news_url,
+                    f"https://finviz.com/quote.ashx?t={current_ticker}"
+                ])
+            else:
+                linked_sources_list.append([
+                    date_str, "🟡 カタリスト [ R ]",
+                    f"【{item['category']}】 {item['title']}",
+                    f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
+                    item["url"],
+                    f"https://finviz.com/quote.ashx?t={current_ticker}"
+                ])
+                
+    if linked_sources_list:
+        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "分類", "イベント概要", "SEC Link", "Google News", "Finviz Chart"])
+        st.dataframe(
+            df_sources,
+            column_config={
+                "SEC Link": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
+                "Google News": st.column_config.LinkColumn("Google News", display_text="News ↗"),
+                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
+            },
+            use_container_width=True, hide_index=True, height=250
+        )
+else:
+    st.info("💡 リンク可能なイベント履歴はありません。")
