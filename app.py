@@ -373,17 +373,11 @@ with st.spinner(f"【{current_ticker}】の市場データおよびオプショ�
 if hist_data is not None:
     current_price = hist_data["Close"].iloc[-1]
     
-    # テクニカル計算 (ボリンジャーバンド & RSI)
+    # テクニカル計算 (ボリンジャーバンド)
     hist_data["MA20"] = hist_data["Close"].rolling(window=20).mean()
     hist_data["STD20"] = hist_data["Close"].rolling(window=20).std()
     hist_data["BB_Upper"] = hist_data["MA20"] + (hist_data["STD20"] * 2)
     hist_data["BB_Lower"] = hist_data["MA20"] - (hist_data["STD20"] * 2)
-    
-    delta = hist_data["Close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / (loss + 1e-9)
-    hist_data["RSI"] = 100 - (100 / (1 + rs))
 
     # 1標準偏差 (1σ) 予測レンジ of 満期30日
     T_30 = 30 / 365.25
@@ -392,34 +386,24 @@ if hist_data is not None:
     lower_1sigma = current_price - one_sigma_move
     
     # コントロールパネル
-    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 2, 3])
+    ctrl_col1, ctrl_col2 = st.columns([3, 5])
     with ctrl_col1:
         show_bb = st.checkbox("ボリンジャーバンドを表示", value=True)
     with ctrl_col2:
-        show_rsi = st.checkbox("RSI (14) を表示", value=True)
-    with ctrl_col3:
         chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
 
     col_chart, col_strategy = st.columns([4, 3])
     
     # LEFT: 統合チャート (上段: 株価&1σバンド, 下段: 純粋なボラティリティ推移&インサイダーシグナルのみ)
     with col_chart:
-        # 3段のサブプロットを作成（1段目：株価、2段目：RSI、3段目：ボラティリティ）
-        # secondary_yを完全に排除し、プロットの混ざり合い（ローソク足の重複）を物理的に防ぎます
-        if show_rsi:
-            fig = make_subplots(
-                rows=3, cols=1, 
-                shared_xaxes=True, 
-                vertical_spacing=0.05, 
-                row_heights=[0.55, 0.20, 0.25]
-            )
-        else:
-            fig = make_subplots(
-                rows=2, cols=1, 
-                shared_xaxes=True, 
-                vertical_spacing=0.08, 
-                row_heights=[0.70, 0.30]
-            )
+        # サブプロットの作成 (RSI段を完全に排除し、ROW 2に固定)
+        # 各ROWは独立した単一のY軸を持ち、重複描画を物理的に排除します
+        fig = make_subplots(
+            rows=2, cols=1, 
+            shared_xaxes=True, 
+            vertical_spacing=0.08, 
+            row_heights=[0.65, 0.35]
+        )
         
         # 1σ予測バンドの描画 (統計的確率約68%の推移予測)
         future_dates = [hist_data.index[-1] + timedelta(days=i) for i in range(31)]
@@ -461,21 +445,7 @@ if hist_data is not None:
         ), row=1, col=1)
         
         # ----------------------------------------------------------------------
-        # ROW 2: RSI チャート (表示チェックがONの場合のみ専用段に描画)
-        # ----------------------------------------------------------------------
-        vol_row = 2
-        if show_rsi:
-            vol_row = 3
-            fig.add_trace(gr.Scatter(
-                x=hist_data.index[-60:], y=hist_data["RSI"].iloc[-60:],
-                line=dict(color="#FFA500", width=1.5), name="RSI (14)"
-            ), row=2, col=1)
-            fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 0, 0, 0.4)", row=2, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 0, 0.4)", row=2, col=1)
-            fig.update_yaxes(title_text="RSI", range=[0, 100], row=2, col=1)
-
-        # ----------------------------------------------------------------------
-        # ROW 2 or 3: 純粋なボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング
+        # ROW 2: 純粋なボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミング
         # ----------------------------------------------------------------------
         # 過去のHV推移のシミュレーション（20日移動標準偏差から算出）
         hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
@@ -486,13 +456,13 @@ if hist_data is not None:
         fig.add_trace(gr.Scatter(
             x=hist_data.index[-60:], y=hist_data["HV_20"].iloc[-60:],
             mode="lines", line=dict(color="#FF007F", width=1.5), name="歴史的ボラティリティ (HV %)"
-        ), row=vol_row, col=1)
+        ), row=2, col=1)
 
         # IV推移の描画
         fig.add_trace(gr.Scatter(
             x=hist_data.index[-60:], y=hist_data["IV_Sim"].iloc[-60:],
             mode="lines", line=dict(color="#00C5FF", width=1.5), name="予測ボラティリティ (IV %)"
-        ), row=vol_row, col=1)
+        ), row=2, col=1)
 
         # インサイダー買いタイミング
         df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
@@ -508,12 +478,12 @@ if hist_data is not None:
                 text=["🐋 Buy"] * len(df_insider_daily),
                 textposition="top center",
                 name="インサイダー買いタイミング"
-            ), row=vol_row, col=1)
+            ), row=2, col=1)
             
         fig.update_yaxes(title_text="株価 ($)", row=1, col=1)
-        fig.update_yaxes(title_text="ボラティリティ (%)", row=vol_row, col=1)
+        fig.update_yaxes(title_text="ボラティリティ (%)", row=2, col=1)
         
-        # チャート全体の高さを 450 -> 700 に大幅に拡大して視認性を最大化
+        # チャート全体の高さを 700 に設定して視認性を最大化
         fig.update_layout(
             height=700, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
             margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.05, x=0),
@@ -625,7 +595,7 @@ if hist_data is not None:
         # ----------------------------------------------------------------------
         st.markdown("#### 📈 満期時株価騰落率 vs 予想投資リターン (%)")
         
-        # 株価変動レンジの生成 (-20% から +20%)
+        # 株価変動レンジ of 生成 (-20% から +20%)
         stock_changes = np.linspace(-0.20, 0.20, 100)
         underlying_prices = current_price * (1 + stock_changes)
         payoffs = []
