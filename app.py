@@ -775,18 +775,4 @@ if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_
                     f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
                     item["url"],
                     f"https://finviz.com/quote.ashx?t={current_ticker}"
-                ])
                 
-    if linked_sources_list:
-        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "分類", "イベント概要", "SEC Link", "Google News", "Finviz Chart"])
-        st.dataframe(
-            df_sources,
-            column_config={
-                "SEC Link": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
-                "Google News": st.column_config.LinkColumn("Google News", display_text="News ↗"),
-                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
-            },
-            use_container_width=True, hide_index=True, height=250
-        )
-else:
-    st.info("💡 リンク可能なイベント履歴はありません。")
