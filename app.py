@@ -57,9 +57,9 @@ df_screener = generate_screener(df_raw)
 top_10_tickers = df_screener["ticker"].head(10).tolist()
 all_available_tickers = df_screener["ticker"].tolist()
 
-# セッション状態の初期化
+# セッション状態の初期化 (デフォルトをSMMTに設定)
 if "selected_ticker" not in st.session_state:
-    st.session_state.selected_ticker = top_10_tickers[0] if top_10_tickers else "SMMT"
+    st.session_state.selected_ticker = "SMMT" if "SMMT" in all_available_tickers else (top_10_tickers[0] if top_10_tickers else "")
     
 # 検索履歴（動的に追加されたカスタム銘柄）を保持するリスト
 if "custom_tickers" not in st.session_state:
@@ -86,14 +86,12 @@ with col_sel1:
         search_options.append(st.session_state.selected_ticker)
 
     # 以前の美しいドロップダウン（検索機能付き）を復元
-    # Streamlitの st.selectbox は、右上の検索アイコンまたはキーボード入力でリスト内を高速に絞り込めます。
     selected_from_dropdown = st.selectbox(
         "🔍 解析・表示する銘柄を全銘柄リストから選択 (直接入力で新規検索も可能):",
         options=search_options,
         index=search_options.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in search_options else 0
     )
     
-    # もしユーザーがセレクトボックスに「リストにない新しいティッカー」を入力して確定した場合の動的追加ロジック
     if selected_from_dropdown != st.session_state.selected_ticker:
         st.session_state.selected_ticker = selected_from_dropdown
         st.rerun()
@@ -116,7 +114,7 @@ with col_sel2:
 
 current_ticker = st.session_state.selected_ticker
 
-# スクリーナー表示
+# スクリーナー表示 (確実に全銘柄が表示されるようにテーブルを明示的に構成)
 df_screener_display = df_screener.copy()
 df_screener_display = df_screener_display.rename(columns={
     "ticker": "ティッカー", "company": "企業名", "total_value": "直近取引額 ($)",
@@ -128,9 +126,10 @@ df_screener_display["平均取得単価 ($)"] = df_screener_display["平均取�
 df_screener_display["直近取引日"] = df_screener_display["直近取引日"].dt.strftime('%Y-%m-%d')
 df_screener_display["統計的確実性スコア (%)"] = df_screener_display["統計的確実性スコア (%)"].map(lambda x: f"{x:.1f}%")
 
+# 全銘柄を一望できるよう、高さを適切に確保してテーブルを表示
 st.dataframe(
     df_screener_display[["ティッカー", "企業名", "直近取引額 ($)", "平均取得単価 ($)", "主なインサイダー", "直近取引日", "取引回数", "統計的確実性スコア (%)"]],
-    use_container_width=True, hide_index=True, height=200
+    use_container_width=True, hide_index=True, height=240
 )
 
 st.markdown("---")
@@ -523,117 +522,4 @@ if selected_expiry:
                             <td style="padding: 6px; color: #38BDF8;">割安 (オプション買い手に有利)</td>
                         </tr>
                         <tr style="border-bottom: 1px solid #1E293B;">
-                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (取組高)</td>
-                            <td style="padding: 6px;">未決済 of 契約残高 / <b>機関投資家の本気度・壁</b></td>
-                            <td style="padding: 6px; color: #38BDF8;">強力な支持・抵抗帯 (磁石効果)</td>
-                            <td style="padding: 6px;">市場の関与が極めて薄い</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    """)
-
-    if hist_data is not None and not df_calls_raw.empty:
-        df_c = df_calls_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
-        df_p = df_puts_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
-        
-        df_t_shape = pd.merge(df_c, df_p, on="strike", suffixes=("_call", "_put"))
-        df_t_shape = df_t_shape.sort_values(by="strike").reset_index(drop=True)
-        
-        df_t_shape_display = pd.DataFrame()
-        df_t_shape_display["Call Delta"] = df_t_shape["Delta_call"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
-        df_t_shape_display["Call IV"] = df_t_shape["impliedVolatility_call"].map(lambda x: f"{x*100:.1f}%")
-        df_t_shape_display["Call OI"] = df_t_shape["openInterest_call"].fillna(0).astype(int)
-        df_t_shape_display["Call Vol"] = df_t_shape["volume_call"].fillna(0).astype(int)
-        df_t_shape_display["Call Price"] = df_t_shape["lastPrice_call"].map(lambda x: f"${x:.2f}")
-        
-        df_t_shape_display["権利行使価格 (Strike)"] = df_t_shape["strike"].map(lambda x: f"${x:.1f}")
-        
-        df_t_shape_display["Put Price"] = df_t_shape["lastPrice_put"].map(lambda x: f"${x:.2f}")
-        df_t_shape_display["Put Vol"] = df_t_shape["volume_put"].fillna(0).astype(int)
-        df_t_shape_display["Put OI"] = df_t_shape["openInterest_put"].fillna(0).astype(int)
-        df_t_shape_display["Put IV"] = df_t_shape["impliedVolatility_put"].map(lambda x: f"{x*100:.1f}%")
-        df_t_shape_display["Put Delta"] = df_t_shape["Delta_put"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
-        
-        st.dataframe(
-            df_t_shape_display[[
-                "Call Delta", "Call IV", "Call OI", "Call Vol", "Call Price", 
-                "権利行使価格 (Strike)", 
-                "Put Price", "Put Vol", "Put OI", "Put IV", "Put Delta"
-            ]],
-            use_container_width=True, hide_index=True, height=320
-        )
-    else:
-        st.warning("⚠️ オプションチェーンデータを取得できませんでした。")
-else:
-    st.info("💡 この銘柄にはオプションチェーンが存在しないため、T-Shapeマトリックス表示をスキップします。")
-
-# ==============================================================================
-# 6. NEWS TERMINAL
-# ==============================================================================
-st.markdown("---")
-st.markdown(f"### 🔗 【{current_ticker}】 適時開示＆ニュースターミナル")
-
-if hist_data is not None:
-    raw_events_by_date = {}
-    df_catalysts = fetch_catalyst_events(current_ticker, df_raw)
-    df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
-    df_insider_grouped = df_ticker_raw.groupby(["buy_date", "insider"]).agg({
-        "total_value": "sum", "position": "first", "filing_url": "first"
-    }).reset_index()
-
-    for _, trade in df_insider_grouped.iterrows():
-        t_date = trade["buy_date"]
-        if t_date not in raw_events_by_date: raw_events_by_date[t_date] = []
-        raw_events_by_date[t_date].append({
-            "type": "I", "insider": trade["insider"], "position": trade["position"],
-            "value": trade["total_value"], "url": trade["filing_url"]
-        })
-
-    if not df_catalysts.empty:
-        for _, row in df_catalysts.iterrows():
-            c_date = pd.to_datetime(row["date"])
-            if c_date not in raw_events_by_date: raw_events_by_date[c_date] = []
-            raw_events_by_date[c_date].append({
-                "type": "C", "category": row["category"], "title": row["title"], "url": row["source_url"]
-            })
-
-if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_date:
-    linked_sources_list = []
-    for event_date in sorted(raw_events_by_date.keys(), reverse=True):
-        date_str = event_date.strftime('%Y-%m-%d')
-        prev_day = (event_date - timedelta(days=1)).strftime('%Y-%m-%d')
-        next_day = (event_date + timedelta(days=1)).strftime('%Y-%m-%d')
-        date_specific_news_url = f"https://www.google.com/search?q={current_ticker}+stock+news+after:{prev_day}+before:{next_day}&tbm=nws"
-        
-        for item in raw_events_by_date[event_date]:
-            if item["type"] == "I":
-                linked_sources_list.append([
-                    date_str, "🟣 インサイダー [ I ]",
-                    f"{item['insider']} ({item['position']}) が 合計 ${item['value']:,.0f} を購入",
-                    item["url"], date_specific_news_url,
-                    f"https://finviz.com/quote.ashx?t={current_ticker}"
-                ])
-            else:
-                linked_sources_list.append([
-                    date_str, "🟡 カタリスト [ R ]",
-                    f"【{item['category']}】 {item['title']}",
-                    f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
-                    item["url"],
-                    f"https://finviz.com/quote.ashx?t={current_ticker}"
-                ])
-                
-    if linked_sources_list:
-        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "分類", "イベント概要", "SEC Link", "Google News", "Finviz Chart"])
-        st.dataframe(
-            df_sources,
-            column_config={
-                "SEC Link": st.column_config.LinkColumn("SEC Link", display_text="Form 4 ↗"),
-                "Google News": st.column_config.LinkColumn("Google News", display_text="News ↗"),
-                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart ↗")
-            },
-            use_container_width=True, hide_index=True, height=250
-        )
-else:
-    st.info("💡 リンク可能なイベント履歴はありません。")
+                            <td style="padding: 6px; font-weight: bold; color: #00
