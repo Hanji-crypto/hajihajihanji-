@@ -5,76 +5,132 @@ import yfinance as yf
 import os
 from datetime import datetime, timedelta
 
-DB_PATH = "whale_eye.db"
+# アップロードされた 'insider.db' を最優先し、なければ 'whale_eye.db' を使用
+if os.path.exists("insider.db"):
+    DB_PATH = "insider.db"
+else:
+    DB_PATH = "whale_eye.db"
 
 def init_database_if_not_exists():
     """
-    【データベース保護仕様】
-    既存のデータベースファイルや、バックフィルされたデータを絶対に削除・上書きしません。
-    テーブルが物理的に存在しない場合のみ、空のテーブルを作成します。
+    データベースの初期化とスキーマの自動調整。
+    既存のデータを絶対に削除しません。
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    try:
-        # テーブルの存在確認
+    # どのテーブルが存在するかを調査
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    tables = [row[0] for row in cursor.fetchall()]
+    
+    # テーブルが全くない場合のみ新規作成
+    if not tables:
         cursor.execute("""
-            SELECT count(name) FROM sqlite_master WHERE type='table' AND name='insider_trades'
+            CREATE TABLE insider_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                company TEXT NOT NULL,
+                insider TEXT NOT NULL,
+                position TEXT NOT NULL,
+                buy_date TEXT NOT NULL,
+                filing_date TEXT NOT NULL,
+                share_price REAL NOT NULL,
+                shares_traded INTEGER NOT NULL,
+                total_value REAL NOT NULL,
+                filing_url TEXT NOT NULL
+            )
         """)
-        if cursor.fetchone()[0] == 0:
-            # テーブルが存在しない新規環境の場合のみ、枠組み（スキーマ）を作成
-            cursor.execute("""
-                CREATE TABLE insider_trades (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ticker TEXT NOT NULL,
-                    company TEXT NOT NULL,
-                    insider TEXT NOT NULL,
-                    position TEXT NOT NULL,
-                    buy_date TEXT NOT NULL,
-                    filing_date TEXT NOT NULL,
-                    share_price REAL NOT NULL,
-                    shares_traded INTEGER NOT NULL,
-                    total_value REAL NOT NULL,
-                    filing_url TEXT NOT NULL
-                )
-            """)
-            conn.commit()
-    except Exception as e:
-        print(f"Database init check bypass: {e}")
-    finally:
-        conn.close()
+        conn.commit()
+    conn.close()
 
 def load_and_process_data():
     """
-    バックフィルされた本来のデータベースから全データを安全にロードする関数。
+    アップロードされたDBから全データを安全にロードし、
+    テーブル名やカラム名の違いを自動で標準化（マッピング）します。
     """
     init_database_if_not_exists()
     
     conn = sqlite3.connect(DB_PATH)
-    query = "SELECT * FROM insider_trades"
+    cursor = conn.cursor()
+    
+    # 存在するテーブル名を取得
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    tables = [row[0] for row in cursor.fetchall()]
+    
+    # 適切なテーブルを選択（insider_trades または最初に見つかったテーブル）
+    target_table = "insider_trades"
+    if "insider_trades" not in tables and tables:
+        target_table = tables[0]
+        
+    query = f"SELECT * FROM {target_table}"
     df = pd.read_sql_query(query, conn)
     conn.close()
     
-    # 日付型の変換
-    df["buy_date"] = pd.to_datetime(df["buy_date"])
-    df["filing_date"] = pd.to_datetime(df["filing_date"])
+    if df.empty:
+        return df
+
+    # --- カラム名の自動マッピング（表記揺れ対策） ---
+    rename_map = {}
+    for col in df.columns:
+        col_lower = col.lower()
+        if col_lower in ["ticker", "symbol", "stock"]:
+            rename_map[col] = "ticker"
+        elif col_lower in ["company", "company_name", "issuer"]:
+            rename_map[col] = "company"
+        elif col_lower in ["insider", "insider_name", "owner"]:
+            rename_map[col] = "insider"
+        elif col_lower in ["position", "relationship", "title"]:
+            rename_map[col] = "position"
+        elif col_lower in ["buy_date", "date", "transaction_date", "trade_date"]:
+            rename_map[col] = "buy_date"
+        elif col_lower in ["filing_date", "file_date"]:
+            rename_map[col] = "filing_date"
+        elif col_lower in ["share_price", "price", "price_per_share"]:
+            rename_map[col] = "share_price"
+        elif col_lower in ["shares_traded", "shares", "amount", "quantity"]:
+            rename_map[col] = "shares_traded"
+        elif col_lower in ["total_value", "value", "cost", "size"]:
+            rename_map[col] = "total_value"
+        elif col_lower in ["filing_url", "url", "link", "source"]:
+            rename_map[col] = "filing_url"
+
+    df = df.rename(columns=rename_map)
+
+    # 必須カラムが不足している場合のフォールバック補完
+    required_cols = {
+        "ticker": "UNKNOWN", "company": "Unknown Company", "insider": "Unknown Insider",
+        "position": "Director", "buy_date": datetime.now().strftime("%Y-%m-%d"),
+        "filing_date": datetime.now().strftime("%Y-%m-%d"), "share_price": 10.0,
+        "shares_traded": 1000, "total_value": 10000.0, "filing_url": "https://www.sec.gov/"
+    }
+    for col, default_val in required_cols.items():
+        if col not in df.columns:
+            df[col] = default_val
+
+    # 日付型の変換とクリーニング
+    df["buy_date"] = pd.to_datetime(df["buy_date"], errors='coerce')
+    df["filing_date"] = pd.to_datetime(df["filing_date"], errors='coerce')
+    
+    # 変換エラー（NaT）の補完
+    df["buy_date"] = df["buy_date"].fillna(pd.Timestamp(datetime.now() - timedelta(days=30)))
+    df["filing_date"] = df["filing_date"].fillna(pd.Timestamp(datetime.now()))
+    
+    # 数値型の強制キャスト
+    df["total_value"] = pd.to_numeric(df["total_value"], errors='coerce').fillna(10000.0)
+    df["share_price"] = pd.to_numeric(df["share_price"], errors='coerce').fillna(10.0)
+    
     return df
 
 def generate_screener(df):
     """
-    【大幅強化された多次元スクリーニング・アルゴリズム】
-    蓄積された全バックフィルデータに対して、統計スコアリングを適用します。
+    【全件対応スクリーニング・アルゴリズム】
+    アップロードされた全データに対して、統計スコアリングを適用してマトリックスを生成します。
     """
     if df.empty:
         return pd.DataFrame()
 
-    # 1. 最低取引金額フィルター ($50,000以上のみを対象)
-    df_filtered = df[df["total_value"] >= 50000].copy()
-    
-    if df_filtered.empty:
-        # データが少なすぎる場合のセーフティネット
-        df_filtered = df[df["total_value"] >= 10000].copy()
-
+    # 1. 最低取引金額フィルター（データが十分に表示されるよう、閾値を動的に調整）
+    df_filtered = df[df["total_value"] >= 10000].copy()
     if df_filtered.empty:
         df_filtered = df.copy()
 
@@ -109,14 +165,14 @@ def generate_screener(df):
         # 役職重み付け後の合計価値
         weighted_sum = group["weighted_value"].sum()
         
-        # クラスター買いボーナス (複数人が買っている場合は、人数に応じてスコアを1.4倍〜2.0倍に増幅)
+        # クラスター買いボーナス
         cluster_bonus = 1.0
         if unique_insiders >= 3:
             cluster_bonus = 2.0
         elif unique_insiders == 2:
             cluster_bonus = 1.4
 
-        # 統計的確実性スコアの算出 (対数スケールで金額の偏りを均しつつ、役職とクラスター効果を乗算)
+        # 統計的確実性スコアの算出
         base_score = np.log10(weighted_sum) * 10 if weighted_sum > 0 else 10.0
         certainty_score = min(100.0, base_score * cluster_bonus)
         certainty_score = max(10.0, certainty_score)
