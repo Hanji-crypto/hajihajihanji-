@@ -57,7 +57,7 @@ def load_and_process_data():
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = [row[0] for row in cursor.fetchall()]
     
-    # 適切なテーブルを選択（insider_trades または最初に見つかったテーブル）
+    # 適切なテーブルを選択
     target_table = "insider_trades"
     if "insider_trades" not in tables and tables:
         target_table = tables[0]
@@ -129,7 +129,7 @@ def generate_screener(df):
     if df.empty:
         return pd.DataFrame()
 
-    # 1. 最低取引金額フィルター（データが十分に表示されるよう、閾値を動的に調整）
+    # 1. 最低取引金額フィルター
     df_filtered = df[df["total_value"] >= 10000].copy()
     if df_filtered.empty:
         df_filtered = df.copy()
@@ -312,6 +312,46 @@ def fetch_option_chain_by_expiry(ticker, expiry, current_price):
         return df_calls, df_puts, representative_iv, pcr
     except Exception:
         return pd.DataFrame(), pd.DataFrame(), 0.30, 1.0
+
+def calculate_volatility_skew(df_calls, df_puts, current_price):
+    """
+    【新規実装：ボラティリティ・スキュー算出ロジック】
+    OTMプット(Delta ~ -0.25)とOTMコール(Delta ~ 0.25)のIVの差を計算し、市場の歪みを数値化します。
+    """
+    if df_calls.empty or df_puts.empty:
+        return 0.0, "標準的 (Neutral)"
+        
+    try:
+        # OTMコールの選定 (Deltaが 0.20 ~ 0.35 に最も近い契約)
+        otm_calls = df_calls[df_calls["Delta"].between(0.20, 0.35)]
+        if otm_calls.empty:
+            otm_calls = df_calls[df_calls["strike"] > current_price]
+        call_iv = otm_calls.sort_values(by="openInterest", ascending=False).iloc[0]["impliedVolatility"] if not otm_calls.empty else 0.30
+        
+        # OTMプットの選定 (Deltaが -0.35 ~ -0.20 に最も近い契約)
+        otm_puts = df_puts[df_puts["Delta"].between(-0.35, -0.20)]
+        if otm_puts.empty:
+            otm_puts = df_puts[df_puts["strike"] < current_price]
+        put_iv = otm_puts.sort_values(by="openInterest", ascending=False).iloc[0]["impliedVolatility"] if not otm_puts.empty else 0.30
+        
+        # スキュー（歪み）の計算 (プットIV - コールIV)
+        skew_value = (put_iv - call_iv) * 100
+        
+        # スキュー状態の判定
+        if skew_value > 8.0:
+            status = "極端なプット過熱 (Extreme Downside Fear)"
+        elif skew_value > 3.0:
+            status = "プット優勢 (Downside Protection Demand)"
+        elif skew_value < -5.0:
+            status = "極端なコール過熱 (Extreme Upside Speculation)"
+        elif skew_value < -1.0:
+            status = "コール優勢 (Bullish Speculation Demand)"
+        else:
+            status = "均衡状態 (Balanced)"
+            
+        return skew_value, status
+    except Exception:
+        return 0.0, "判定不可 (Error)"
 
 def fetch_catalyst_events(ticker, df_raw):
     """
