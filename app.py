@@ -71,7 +71,7 @@ if "custom_tickers" not in st.session_state:
 st.title("Whale-Eye: Option and Insider Intelligence")
 st.markdown("---")
 
-st.subheader("[Screener] All Tickers Multi-Dimensional Screening Matrix")
+st.subheader("[スクリーナー] 全銘柄多次元スクリーニング・マトリックス")
 col_sel1, col_sel2 = st.columns([4, 8])
 
 with col_sel1:
@@ -85,9 +85,9 @@ with col_sel1:
     if st.session_state.selected_ticker not in search_options:
         search_options.append(st.session_state.selected_ticker)
 
-    # 以前の美しいドロップダウン（検索機能付き）を復元
+    # ドロップダウン（検索機能付き）
     selected_from_dropdown = st.selectbox(
-        "Search / Select Ticker (Direct input allowed for new tickers):",
+        "解析・表示する銘柄を全銘柄リストから選択 (直接入力で新規検索も可能):",
         options=search_options,
         index=search_options.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in search_options else 0
     )
@@ -102,7 +102,7 @@ with col_sel2:
     if st.session_state.selected_ticker not in radio_options:
         radio_options.append(st.session_state.selected_ticker)
     selected_by_radio = st.radio(
-        "Quick Selection:",
+        "クイック選択:",
         options=radio_options,
         index=radio_options.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in radio_options else 0,
         horizontal=True,
@@ -118,41 +118,41 @@ current_ticker = st.session_state.selected_ticker
 if not df_screener.empty:
     df_screener_display = df_screener.copy()
     df_screener_display = df_screener_display.rename(columns={
-        "ticker": "Ticker", "company": "Company Name", "total_value": "Total Value ($)",
-        "avg_price": "Avg Buy Price ($)", "insider": "Key Insider", "buy_date": "Trade Date",
-        "trade_count": "Trades", "Certainty (%)": "Certainty Score (%)"
+        "ticker": "ティッカー", "company": "企業名", "total_value": "直近取引額 ($)",
+        "avg_price": "平均取得単価 ($)", "insider": "主なインサイダー", "buy_date": "直近取引日",
+        "trade_count": "取引回数", "Certainty (%)": "統計的確実性スコア (%)"
     })
-    df_screener_display["Total Value ($)"] = df_screener_display["Total Value ($)"].map(lambda x: f"${x:,.0f}")
-    df_screener_display["Avg Buy Price ($)"] = df_screener_display["Avg Buy Price ($)"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
-    df_screener_display["Trade Date"] = df_screener_display["Trade Date"].dt.strftime('%Y-%m-%d')
-    df_screener_display["Certainty Score (%)"] = df_screener_display["Certainty Score (%)"].map(lambda x: f"{x:.1f}%")
+    df_screener_display["直近取引額 ($)"] = df_screener_display["直近取引額 ($)"].map(lambda x: f"${x:,.0f}")
+    df_screener_display["平均取得単価 ($)"] = df_screener_display["平均取得単価 ($)"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
+    df_screener_display["直近取引日"] = df_screener_display["直近取引日"].dt.strftime('%Y-%m-%d')
+    df_screener_display["統計的確実性スコア (%)"] = df_screener_display["統計的確実性スコア (%)"].map(lambda x: f"{x:.1f}%")
 
     # 全銘柄を一望できるように高さを適切に確保
     st.dataframe(
-        df_screener_display[["Ticker", "Company Name", "Total Value ($)", "Avg Buy Price ($)", "Key Insider", "Trade Date", "Trades", "Certainty Score (%)"]],
+        df_screener_display[["ティッカー", "企業名", "直近取引額 ($)", "平均取得単価 ($)", "主なインサイダー", "直近取引日", "取引回数", "統計的確実性スコア (%)"]],
         use_container_width=True, hide_index=True, height=240
     )
 else:
-    st.info("No data available in the database.")
+    st.info("データベースに利用可能なデータがありません。")
 
 st.markdown("---")
 
 # ==============================================================================
 # 4. REALTIME ANALYSIS & CHARTS
 # ==============================================================================
-st.subheader(f"[{current_ticker}] Real-Time Details and Option Analysis")
+st.subheader(f"[{current_ticker}] リアルタイム詳細・オプション解析")
 
 # 期間選択コントロールを配置
 period_col1, period_col2 = st.columns([4, 8])
 with period_col1:
     selected_period = st.selectbox(
-        "Historical Period:",
+        "データ取得（ヒストリカル）期間:",
         options=["3mo", "6mo", "1y", "2y"],
         index=1,
-        format_func=lambda x: {"3mo": "3 Months", "6mo": "6 Months (Standard)", "1y": "1 Year", "2y": "2 Years"}[x]
+        format_func=lambda x: {"3mo": "3ヶ月 (短期)", "6mo": "6ヶ月 (中期・標準)", "1y": "1年間 (長期)", "2y": "2年間 (超長期)"}[x]
     )
 
-with st.spinner(f"Analyzing market data for [{current_ticker}]..."):
+with st.spinner(f"[{current_ticker}] の市場データを解析中..."):
     raw_hist, current_price, hv, available_expiries = fetch_market_data(current_ticker, period=selected_period)
 
 # 新規入力されたティッカーが有効な米国株かを判定し、有効であればカスタムリストに永続追加
@@ -165,12 +165,12 @@ if raw_hist is not None:
     # 満期日の取得とガード処理
     selected_expiry = None
     if available_expiries:
-        selected_expiry = st.selectbox("Select Option Expiration Date:", options=available_expiries, index=0)
+        selected_expiry = st.selectbox("オプション満期日を選択してください:", options=available_expiries, index=0)
     else:
-        st.warning("Warning: No active option chain found for this ticker. Running in fallback simulation mode.")
+        st.warning("⚠️ この銘柄には現在、有効なオプションチェーンが存在しないか、取得できません。オプション解析は簡易シミュレーションモードで動作します。")
 
     # オプションチェーンデータの取得
-    with st.spinner(f"Fetching option chain..."):
+    with st.spinner(f"オプションチェーンを解析中..."):
         if selected_expiry:
             df_calls_raw, df_puts_raw, iv, pcr = fetch_option_chain_by_expiry(current_ticker, selected_expiry, current_price)
         else:
@@ -184,38 +184,38 @@ if raw_hist is not None:
     lower_1sigma = current_price - one_sigma_move
     
     m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
-    with m_col1: st.metric("Implied Volatility (IV)", f"{iv*100:.1f}%" if selected_expiry else f"{iv*100:.1f}% (HV Fallback)")
-    with m_col2: st.metric("Historical Volatility (HV)", f"{hv*100:.1f}%")
-    with m_col3: st.metric("IV / HV Ratio", f"{iv/hv:.2f}" if hv > 0 else "N/A")
+    with m_col1: st.metric("インプライド・ボラティリティ (IV)", f"{iv*100:.1f}%" if selected_expiry else f"{iv*100:.1f}% (HV代用)")
+    with m_col2: st.metric("歴史的ボラティリティ (HV)", f"{hv*100:.1f}%")
+    with m_col3: st.metric("IV / HV 比率", f"{iv/hv:.2f}" if hv > 0 else "N/A")
     with m_col4: st.metric("Put-Call Ratio (PCR)", f"{pcr:.2f}" if selected_expiry else "N/A")
-    with m_col5: st.metric("1-Sigma Upper (30 Days)", f"${upper_1sigma:.2f}")
-    with m_col6: st.metric("1-Sigma Lower (30 Days)", f"${lower_1sigma:.2f}")
+    with m_col5: st.metric("1σ 上昇上限 (30日)", f"${upper_1sigma:.2f}")
+    with m_col6: st.metric("1σ 下落下限 (30日)", f"${lower_1sigma:.2f}")
 
     st.markdown("---")
 
-    # コントロールパネル (インデントを厳密に揃えています)
+    # コントロールパネル
     ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([3, 3, 4])
     with ctrl_col1:
         chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
     with ctrl_col2:
-        overlay_indicator = st.selectbox("Overlay Indicator:", ["Bollinger Bands", "EMA (20/50)", "Ichimoku", "None"])
+        overlay_indicator = st.selectbox("重ね合わせ指標の選択:", ["Bollinger Bands", "EMA (20/50)", "Ichimoku", "None"])
     with ctrl_col3:
-        sub_indicator = st.selectbox("Sub Indicator:", ["RSI + MACD", "ATR (Volatility Range)"])
+        sub_indicator = st.selectbox("下段サブ指標の選択:", ["RSI + MACD", "ATR (Volatility Range)"])
 
     # ----------------------------------------------------------------------
     # CHART 1 & 2: メイン株価チャート ＆ サブ指標（完全物理分離）
     # ----------------------------------------------------------------------
-    st.markdown("### Technical Analysis Chart")
+    st.markdown("### テクニカル分析チャート")
 
     st.html("""
         <div style='background-color: #111827; padding: 10px; border-radius: 6px; font-size: 12px; border: 1px solid #1F2937; margin-bottom: 10px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center;'>
-        <span style='color: #00FFCC;'>- stock price</span>
-        <span style='color: #38BDF8; border-bottom: 2px dashed rgba(56, 189, 248, 0.6);'>-- 1-Sigma Range (30 Days)</span>
+        <span style='color: #00FFCC;'>- 現物株価</span>
+        <span style='color: #38BDF8; border-bottom: 2px dashed rgba(56, 189, 248, 0.6);'>-- 1σ 確率予測範囲 (30日)</span>
         <span style='color: #A855F7;'>- RSI (14)</span>
         <span style='color: #38BDF8;'>- MACD</span>
         <span style='color: #FF8C00;'>- Signal</span>
-        <span style='color: #00FFCC;'>- MACD Hist (Bullish)</span>
-        <span style='color: #FF007F;'>- MACD Hist (Bearish)</span>
+        <span style='color: #00FFCC;'>- MACD Hist (強気)</span>
+        <span style='color: #FF007F;'>- MACD Hist (弱気)</span>
         </div>
     """)
 
@@ -277,7 +277,7 @@ if raw_hist is not None:
             color = color_palette[idx_for_color % len(color_palette)]
             offset_y = 6.0 - (date_counts[b_date] * 12.0)
             
-            hover_text = f"Insider: {row['insider']}<br>Value: ${row['total_value']:,.0f}"
+            hover_text = f"インサイダー: {row['insider']}<br>購入総額: ${row['total_value']:,.0f}"
             show_in_legend = insider not in registered_legends
             if show_in_legend:
                 registered_legends.add(insider)
@@ -285,15 +285,15 @@ if raw_hist is not None:
             fig_vol.add_trace(gr.Scatter(
                 x=[b_date], y=[offset_y], mode="markers",
                 marker=dict(symbol="star", size=14, color=color, line=dict(color="#FFFFFF", width=1.2)),
-                text=[hover_text], hoverinfo="text", legendgroup=insider, name=f"Insider: {insider}", showlegend=show_in_legend
+                text=[hover_text], hoverinfo="text", legendgroup=insider, name=f"インサイダー: {insider}", showlegend=show_in_legend
             ))
             
     fig_vol.update_layout(
         height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
         margin=dict(l=10, r=130, t=50, b=10), 
         legend=dict(orientation="v", y=1, x=1.02, xanchor="left", yanchor="top"),
-        xaxis=dict(title="Date", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-        yaxis=dict(title="Volatility (%)", range=[-25, 105], showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
+        xaxis=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
+        yaxis=dict(title="ボラティリティ (%)", range=[-25, 105], showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
         hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace")
     )
     st.plotly_chart(fig_vol, use_container_width=True)
@@ -301,9 +301,9 @@ if raw_hist is not None:
     st.markdown("---")
 
     # ==============================================================================
-    # 🎯 強化された動的オプション推奨戦略アルゴリズム
+    # 🎯 強化された動的オプション推奨戦略アルゴリズム（日本語化）
     # ==============================================================================
-    st.subheader("Statistical Option Strategy Ranking")
+    st.subheader("統計的オプション推奨戦略ランキング")
 
     # デフォルト値の設定（オプションチェーンが空だった場合のフォールバック）
     bc_buy_strike, bc_sell_strike, bc_buy_prem, bc_sell_prem = round(current_price * 0.95, 1), round(upper_1sigma, 1), round(current_price * 0.08, 2), round(current_price * 0.02, 2)
@@ -380,64 +380,64 @@ if raw_hist is not None:
     lc_prob = 45.0 + (10.0 if iv < hv else -10.0)
 
     # オプションチェーン未存在時の文言調整
-    source_label = "[Dynamic Chain Selection]" if selected_expiry else "[Theoretical Simulation]"
+    source_label = "[実在するオプションチェーンから自動選定]" if selected_expiry else "[理論値に基づくシミュレーション構成]"
 
     strategies_pool = [
         {
             "id": "bull_call", 
-            "title": "Bull Call Spread", 
+            "title": "ブル・コール・スプレッド (Bull Call Spread)", 
             "class": "strategy-card", 
             "roi": bc_roi, 
             "prob": bc_prob,
-            "desc": f"<b>[Statistical Basis]</b><br>"
-                    f"IV/HV ratio is <b>{(iv/hv if hv > 0 else 1.0):.2f}</b>.<br>"
-                    f"Combining ITM Call buying and OTM Call selling offsets theta decay while securing a high probability of success.<br><br>"
+            "desc": f"<b>【統計的選定根拠】</b><br>"
+                    f"IV/HV比率は <b>{(iv/hv if hv > 0 else 1.0):.2f}</b> です。<br>"
+                    f"ITM（イン・ザ・マネー）コールの買いと、OTM（アウト・オブ・ザ・マネー）コールの売りを組み合わせることで、時間経過によるプレミアムの減少（セータ）の影響を相殺しつつ、高い統計的勝率を確保します。<br><br>"
                     f"<b>{source_label}</b><br>"
-                    f"1. <b>Buy {current_ticker} ${bc_buy_strike:.1f} Call (ITM)</b> (Est: ${bc_buy_prem:.2f})<br>"
-                    f"2. <b>Sell {current_ticker} ${bc_sell_strike:.1f} Call (OTM)</b> (Est: ${bc_sell_prem:.2f})<br><br>"
-                    f"<b>[Risk/Return Profile]</b><br>"
-                    f"* <b>Max Loss (Net Cost)</b>: <b>${bc_net_cost:.2f}</b> (${bc_net_cost*100:.0f})<br>"
-                    f"* <b>Max Profit</b>: <b>${bc_max_profit:.2f}</b> (${bc_max_profit*100:.0f})<br>"
-                    f"* <b>Expected ROI</b>: <span style='color: #00FFCC; font-weight: bold;'>+{bc_roi:.1f}%</span><br>"
-                    f"* <b>Probability of Profit</b>: <b>{bc_prob:.1f}%</b>"
+                    f"1. <b>Buy {current_ticker} ${bc_buy_strike:.1f} Call (ITM)</b> (想定価格: ${bc_buy_prem:.2f})<br>"
+                    f"2. <b>Sell {current_ticker} ${bc_sell_strike:.1f} Call (OTM)</b> (想定価格: ${bc_sell_prem:.2f})<br><br>"
+                    f"<b>【リスク・リターン特性】</b><br>"
+                    f"* <b>最大損失 (投資コスト)</b>: 1契約あたり <b>${bc_net_cost:.2f}</b> (${bc_net_cost*100:.0f})<br>"
+                    f"* <b>最大利益</b>: 1契約あたり <b>${bc_max_profit:.2f}</b> (${bc_max_profit*100:.0f})<br>"
+                    f"* <b>想定投資リターン (ROI)</b>: <span style='color: #00FFCC; font-weight: bold;'>+{bc_roi:.1f}%</span><br>"
+                    f"* <b>統計的勝率 (Delta予測)</b>: <b>{bc_prob:.1f}%</b>"
         },
         {
             "id": "covered_call", 
-            "title": "Covered Call", 
+            "title": "カバード・コール (Covered Call)", 
             "class": "strategy-card-secondary", 
             "roi": cc_roi, 
             "prob": cc_prob,
-            "desc": f"<b>[Statistical Basis]</b><br>"
-                    f"IV/HV ratio is <b>{(iv/hv if hv > 0 else 1.0):.2f}</b>.<br>"
-                    f"Own the stock and sell OTM call options to collect premium (income gain).<br><br>"
+            "desc": f"<b>【統計的選定根拠】</b><br>"
+                    f"IV/HV比率は <b>{(iv/hv if hv > 0 else 1.0):.2f}</b> です。<br>"
+                    f"現物株式を保有しながら、権利行使されにくいOTM（アウト・オブ・ザ・マネー）コールを売却することで、確実性の高い時間価値（インカムゲイン）を回収します。<br><br>"
                     f"<b>{source_label}</b><br>"
-                    f"1. <b>Buy Stock at ${current_price:.2f}</b><br>"
-                    f"2. <b>Sell {current_ticker} ${cc_sell_strike:.1f} Call (OTM)</b> (Est Premium: ${cc_sell_prem:.2f})<br><br>"
-                    f"<b>[Risk/Return Profile]</b><br>"
-                    f"* <b>Net Cost</b>: <b>${cc_net_cost:.2f}</b><br>"
-                    f"* <b>Max Profit</b>: <b>${cc_max_profit:.2f}</b> (Expected ROI: <span style='color: #38BDF8; font-weight: bold;'>+{cc_roi:.1f}%</span>)<br>"
-                    f"* <b>Probability of Profit</b>: <b>{cc_prob:.1f}%</b>"
+                    f"1. <b>現物株式を ${current_price:.2f} で購入 (または保有)</b><br>"
+                    f"2. <b>Sell {current_ticker} ${cc_sell_strike:.1f} Call (OTM)</b> (想定プレミアム受取: ${cc_sell_prem:.2f})<br><br>"
+                    f"<b>【リスク・リターン特性】</b><br>"
+                    f"* <b>実質取得コスト</b>: 1株あたり <b>${cc_net_cost:.2f}</b><br>"
+                    f"* <b>最大利益 (株価上昇上限時)</b>: 1株あたり <b>${cc_max_profit:.2f}</b> (想定最大リターン: <span style='color: #38BDF8; font-weight: bold;'>+{cc_roi:.1f}%</span>)<br>"
+                    f"* <b>統計的勝率 (権利消滅確率)</b>: <b>{cc_prob:.1f}%</b>"
         },
         {
             "id": "long_call", 
-            "title": "Long Call", 
+            "title": "ロング・コール (Long Call) 単体打診買い", 
             "class": "strategy-card-warning", 
             "roi": lc_roi, 
             "prob": lc_prob,
-            "desc": f"<b>[Statistical Basis]</b><br>"
-                    f"High-leverage strategy targeting sharp upward moves following heavy insider cluster buying.<br><br>"
+            "desc": f"<b>【統計的選定根拠】</b><br>"
+                    f"インサイダーによる強力なクラスター買い（同時期複数購入）が観測されており、突発的な好材料（カタリスト）発表による株価急騰を狙う高レバレッジ戦略です。<br><br>"
                     f"<b>{source_label}</b><br>"
-                    f"* <b>Buy {current_ticker} ${lc_strike:.1f} Call (ATM/OTM)</b> (Est: ${lc_prem:.2f})<br><br>"
-                    f"<b>[Risk/Return Profile]</b><br>"
-                    f"* <b>Max Loss</b>: Premium Paid <b>${lc_prem:.2f}</b> (Limited Risk)<br>"
-                    f"* <b>Max Profit</b>: Unlimited<br>"
-                    f"* <b>Probability of Profit</b>: <b>{lc_prob:.1f}%</b>"
+                    f"* <b>Buy {current_ticker} ${lc_strike:.1f} Call (ATM/OTM)</b> (想定価格: ${lc_prem:.2f})<br><br>"
+                    f"<b>【リスク・リターン特性】</b><br>"
+                    f"* <b>最大損失</b>: 支払ったプレミアム <b>${lc_prem:.2f}</b> のみ (損失限定)<br>"
+                    f"* <b>最大利益</b>: 理論上無制限<br>"
+                    f"* <b>統計的勝率</b>: <b>{lc_prob:.1f}%</b>"
         }
     ]
 
     # ROI（リターン効率）の高い順にランキング表示
     ranked_strategies = sorted(strategies_pool, key=lambda x: x["roi"], reverse=True)
-    rank_medals = ["🥇 1st Active Strategy", "🥈 2nd Alternative Strategy", "🥉 3rd Tactical Strategy"]
+    rank_medals = ["1st 推奨戦略 (Active Strategy)", "2nd 代替戦略 (Alternative Strategy)", "3rd 戦術的戦略 (Tactical Strategy)"]
     for idx, strat in enumerate(ranked_strategies[:3]):
         st.html(f"""
             <div class="{strat['class']}">
@@ -449,7 +449,7 @@ if raw_hist is not None:
 
     # ペイオフ・ダイアグラム
     best_strat = ranked_strategies[0]["id"]
-    st.markdown("#### Payoff Diagram: Return vs Underlying Change (%)")
+    st.markdown("#### 損益図（ペイオフ・ダイアグラム）: 満期時株価騰落率 vs 予想投資リターン (%)")
     stock_changes = np.linspace(-0.20, 0.20, 100)
     underlying_prices = current_price * (1 + stock_changes)
     payoffs = []
@@ -474,16 +474,16 @@ if raw_hist is not None:
     breakeven_change = ((breakeven_price / current_price) - 1) * 100
     
     fig_payoff = gr.Figure()
-    fig_payoff.add_vrect(x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100, fillcolor="rgba(0, 255, 204, 0.05)", line_width=0, annotation_text="1-Sigma Range", annotation_position="top left", annotation_font=dict(size=10, color="rgba(0, 255, 204, 0.5)"))
+    fig_payoff.add_vrect(x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100, fillcolor="rgba(0, 255, 204, 0.05)", line_width=0, annotation_text="1σ 確率予測範囲", annotation_position="top left", annotation_font=dict(size=10, color="rgba(0, 255, 204, 0.5)"))
     fig_payoff.add_trace(gr.Scatter(x=stock_changes * 100, y=payoffs, mode="lines", line=dict(color="#00FFCC", width=3)))
     fig_payoff.add_vline(x=breakeven_change, line_dash="dash", line_color="#FF007F")
     fig_payoff.add_hline(y=0, line_color="rgba(255, 255, 255, 0.2)", line_width=1)
-    fig_payoff.update_layout(height=240, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19", margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(title="Underlying Change (%)"), yaxis=dict(title="Return (%)"), showlegend=False)
+    fig_payoff.update_layout(height=240, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19", margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(title="株価騰落率 (%)"), yaxis=dict(title="投資リターン (%)"), showlegend=False)
     st.plotly_chart(fig_payoff, use_container_width=True)
-    st.caption(f"Break-even: {breakeven_change:+.1f}% (${breakeven_price:.2f})")
+    st.caption(f"損益分岐点（Break-even）: 株価騰落率 {breakeven_change:+.1f}% (${breakeven_price:.2f})")
 
 else:
-    st.error(f"Error: Invalid Ticker '{current_ticker}'. Please check and try again.")
+    st.error(f"Error: 無効なティッカー '{current_ticker}' です。正しいティッカーを入力してください。")
     if current_ticker in st.session_state.custom_tickers:
         st.session_state.custom_tickers.remove(current_ticker)
     st.stop()
@@ -492,40 +492,40 @@ else:
 # 5. T-SHAPE OPTION CHAIN MATRIX
 # ==============================================================================
 st.markdown("---")
-st.markdown(f"### Options Chain: [{current_ticker}] T-Shape Matrix")
+st.markdown(f"### オプション・チェーン: [{current_ticker}] T-Shape マトリックス")
 
 if selected_expiry:
     st.html("""
         <div class="guide-panel">
-            <h4 style="color: #38BDF8; margin-top: 0; margin-bottom: 12px;">Option Metrics Guide</h4>
+            <h4 style="color: #38BDF8; margin-top: 0; margin-bottom: 12px;">オプション統計指標の完全解読マニュアル</h4>
             <div style="font-size: 12px; line-height: 1.6; color: #94A3B8;">
                 <table style="width: 100%; border-collapse: collapse; color: #E2E8F0;">
                     <thead>
                         <tr style="border-bottom: 1px solid #1E293B; text-align: left;">
-                            <th style="padding: 6px;">Metric</th>
-                            <th style="padding: 6px;">Meaning</th>
-                            <th style="padding: 6px;">High Value</th>
-                            <th style="padding: 6px;">Low Value</th>
+                            <th style="padding: 6px;">指標名</th>
+                            <th style="padding: 6px;">数値の意味</th>
+                            <th style="padding: 6px;">「値が大きい」場合</th>
+                            <th style="padding: 6px;">「値が小さい」場合</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr style="border-bottom: 1px solid #1E293B;">
-                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">Delta</td>
-                            <td style="padding: 6px;">Sensitivity / Probability of expiring ITM</td>
-                            <td style="padding: 6px; color: #38BDF8;">ITM (High Win Rate)</td>
-                            <td style="padding: 6px;">OTM (High Leverage)</td>
+                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">Delta (デルタ)</td>
+                            <td style="padding: 6px;">株価変動への感応度 / 満期時の勝率（確率）</td>
+                            <td style="padding: 6px; color: #38BDF8;">ITM (勝率高、現物代替)</td>
+                            <td style="padding: 6px;">OTM (勝率低、レバレッジ大)</td>
                         </tr>
                         <tr style="border-bottom: 1px solid #1E293B;">
-                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">IV</td>
-                            <td style="padding: 6px;">Implied Volatility / Premium pricing level</td>
-                            <td style="padding: 6px; color: #FF007F;">Overvalued (Favors Sellers)</td>
-                            <td style="padding: 6px; color: #38BDF8;">Undervalued (Favors Buyers)</td>
+                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">IV (予測ボラ)</td>
+                            <td style="padding: 6px;">将来の期待変動率 / プレミアムの割高・割安</td>
+                            <td style="padding: 6px; color: #FF007F;">割高 (オプション売り手に有利)</td>
+                            <td style="padding: 6px; color: #38BDF8;">割安 (オプション買い手に有利)</td>
                         </tr>
                         <tr style="border-bottom: 1px solid #1E293B;">
-                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI</td>
-                            <td style="padding: 6px;">Open Interest / Active contracts</td>
-                            <td style="padding: 6px; color: #38BDF8;">Strong Support/Resistance</td>
-                            <td style="padding: 6px;">Thin Liquidity</td>
+                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (建玉)</td>
+                            <td style="padding: 6px;">未決済の契約総数 / 市場の注目度</td>
+                            <td style="padding: 6px; color: #38BDF8;">強い支持線・抵抗線として機能</td>
+                            <td style="padding: 6px;">流動性が低くスプレッドが広い</td>
                         </tr>
                     </tbody>
                 </table>
@@ -572,7 +572,7 @@ else:
 # 6. NEWS TERMINAL
 # ==============================================================================
 st.markdown("---")
-st.markdown(f"### Events and Corporate Catalyst Terminal: [{current_ticker}]")
+st.markdown(f"### 適時開示・コーポレートカタリスト・ターミナル: [{current_ticker}]")
 
 if hist_data is not None:
     raw_events_by_date = {}
@@ -609,14 +609,14 @@ if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_
         for item in raw_events_by_date[event_date]:
             if item["type"] == "I":
                 linked_sources_list.append([
-                    date_str, "Insider [ I ]",
-                    f"{item['insider']} ({item['position']}) bought ${item['value']:,.0f}",
+                    date_str, "インサイダー取引 [ I ]",
+                    f"{item['insider']} ({item['position']}) が ${item['value']:,.0f} 相当を購入",
                     item["url"], date_specific_news_url,
                     f"https://finviz.com/quote.ashx?t={current_ticker}"
                 ])
             else:
                 linked_sources_list.append([
-                    date_str, "Catalyst [ R ]",
+                    date_str, "カタリストイベント [ R ]",
                     f"[{item['category']}] {item['title']}",
                     f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
                     item["url"],
@@ -624,15 +624,15 @@ if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_
                 ])
                 
     if linked_sources_list:
-        df_sources = pd.DataFrame(linked_sources_list, columns=["Date", "Type", "Event Summary", "SEC Link", "Google News", "Finviz Chart"])
+        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "イベント種別", "イベント概要", "SEC Form 4 リンク", "Google ニュース", "Finviz チャート"])
         st.dataframe(
             df_sources,
             column_config={
-                "SEC Link": st.column_config.LinkColumn("SEC Link", display_text="Form 4"),
-                "Google News": st.column_config.LinkColumn("Google News", display_text="News"),
-                "Finviz Chart": st.column_config.LinkColumn("Finviz Chart", display_text="Chart")
+                "SEC Form 4 リンク": st.column_config.LinkColumn("SEC Form 4 リンク", display_text="Form 4 開示"),
+                "Google ニュース": st.column_config.LinkColumn("Google ニュース", display_text="ニュース検索"),
+                "Finviz チャート": st.column_config.LinkColumn("Finviz チャート", display_text="外部チャート")
             },
             use_container_width=True, hide_index=True, height=250
         )
 else:
-    st.info("No linked event history found.")
+    st.info("関連するイベント履歴が見つかりませんでした。")
