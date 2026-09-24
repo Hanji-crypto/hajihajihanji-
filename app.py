@@ -58,7 +58,7 @@ top_10_tickers = df_screener["ticker"].head(10).tolist()
 all_available_tickers = df_screener["ticker"].tolist()
 
 if "selected_ticker" not in st.session_state:
-    st.session_state.selected_ticker = top_10_tickers[0] if top_10_tickers else ""
+    st.session_state.selected_ticker = top_10_tickers[0] if top_10_tickers else "SMMT"
 
 # ==============================================================================
 # 3. MAIN TERMINAL LAYOUT
@@ -68,11 +68,32 @@ st.markdown("---")
 
 st.subheader("📊 全銘柄多次元スクリーニング・マトリックス")
 col_sel1, col_sel2 = st.columns([3, 5])
+
 with col_sel1:
+    # 【自由入力・動的検索の実現】
+    # セレクトボックスではなく、自由にティッカーを入力できるテキスト入力、または動的に選択肢が増えるコンボボックスを配置します。
+    # ここでは、既存リストにない銘柄を入力された場合でも動的にリストに追加して選択状態にするロジックを実装します。
+    search_options = all_available_tickers.copy()
+    
+    # 現在選択されているティッカーが選択肢にない場合は、動的に選択肢の先頭に追加
+    if st.session_state.selected_ticker not in search_options:
+        search_options.insert(0, st.session_state.selected_ticker)
+        
+    # ユーザーが自由なティッカーを入力できるテキスト入力を設置
+    user_input_ticker = st.text_input(
+        "🔍 自由検索（ティッカーシンボルを入力してEnter。例: AMD, AMZN, NFLX）:",
+        value=st.session_state.selected_ticker
+    ).strip().upper()
+
+    if user_input_ticker and user_input_ticker != st.session_state.selected_ticker:
+        st.session_state.selected_ticker = user_input_ticker
+        st.rerun()
+
+    # ドロップダウン選択（既存の抽出銘柄用）
     selected_from_dropdown = st.selectbox(
-        "🔍 解析・表示する銘柄を全銘柄リストから選択:",
-        options=all_available_tickers,
-        index=all_available_tickers.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in all_available_tickers else 0
+        "📂 抽出済み銘柄リストから選択:",
+        options=search_options,
+        index=search_options.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in search_options else 0
     )
     if selected_from_dropdown != st.session_state.selected_ticker:
         st.session_state.selected_ticker = selected_from_dropdown
