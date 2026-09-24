@@ -54,8 +54,8 @@ except Exception as e:
     st.stop()
 
 df_screener = generate_screener(df_raw)
-top_10_tickers = df_screener["ticker"].head(10).tolist()
-all_available_tickers = df_screener["ticker"].tolist()
+top_10_tickers = df_screener["ticker"].head(10).tolist() if not df_screener.empty else []
+all_available_tickers = df_screener["ticker"].tolist() if not df_screener.empty else []
 
 # セッション状態の初期化
 if "selected_ticker" not in st.session_state:
@@ -68,7 +68,7 @@ if "custom_tickers" not in st.session_state:
 # ==============================================================================
 # 3. MAIN TERMINAL LAYOUT
 # ==============================================================================
-st.title("Whale-Eye: Institutional Option and Insider Intelligence")
+st.title("Whale-Eye: Option and Insider Intelligence")
 st.markdown("---")
 
 st.subheader("[Screener] All Tickers Multi-Dimensional Screening Matrix")
@@ -115,22 +115,25 @@ with col_sel2:
 current_ticker = st.session_state.selected_ticker
 
 # スクリーナー表示
-df_screener_display = df_screener.copy()
-df_screener_display = df_screener_display.rename(columns={
-    "ticker": "Ticker", "company": "Company Name", "total_value": "Total Value ($)",
-    "avg_price": "Avg Buy Price ($)", "insider": "Key Insider", "buy_date": "Trade Date",
-    "trade_count": "Trades", "Certainty (%)": "Certainty Score (%)"
-})
-df_screener_display["Total Value ($)"] = df_screener_display["Total Value ($)"].map(lambda x: f"${x:,.0f}")
-df_screener_display["Avg Buy Price ($)"] = df_screener_display["Avg Buy Price ($)"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
-df_screener_display["Trade Date"] = df_screener_display["Trade Date"].dt.strftime('%Y-%m-%d')
-df_screener_display["Certainty Score (%)"] = df_screener_display["Certainty Score (%)"].map(lambda x: f"{x:.1f}%")
+if not df_screener.empty:
+    df_screener_display = df_screener.copy()
+    df_screener_display = df_screener_display.rename(columns={
+        "ticker": "Ticker", "company": "Company Name", "total_value": "Total Value ($)",
+        "avg_price": "Avg Buy Price ($)", "insider": "Key Insider", "buy_date": "Trade Date",
+        "trade_count": "Trades", "Certainty (%)": "Certainty Score (%)"
+    })
+    df_screener_display["Total Value ($)"] = df_screener_display["Total Value ($)"].map(lambda x: f"${x:,.0f}")
+    df_screener_display["Avg Buy Price ($)"] = df_screener_display["Avg Buy Price ($)"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
+    df_screener_display["Trade Date"] = df_screener_display["Trade Date"].dt.strftime('%Y-%m-%d')
+    df_screener_display["Certainty Score (%)"] = df_screener_display["Certainty Score (%)"].map(lambda x: f"{x:.1f}%")
 
-# 全銘柄を一望できるように高さを適切に確保
-st.dataframe(
-    df_screener_display[["Ticker", "Company Name", "Total Value ($)", "Avg Buy Price ($)", "Key Insider", "Trade Date", "Trades", "Certainty Score (%)"]],
-    use_container_width=True, hide_index=True, height=240
-)
+    # 全銘柄を一望できるように高さを適切に確保
+    st.dataframe(
+        df_screener_display[["Ticker", "Company Name", "Total Value ($)", "Avg Buy Price ($)", "Key Insider", "Trade Date", "Trades", "Certainty Score (%)"]],
+        use_container_width=True, hide_index=True, height=240
+    )
+else:
+    st.info("No data available in the database.")
 
 st.markdown("---")
 
@@ -190,11 +193,10 @@ if raw_hist is not None:
 
     st.markdown("---")
 
-# コントロールパネル
-ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([3, 3, 4])
+    # コントロールパネル (インデントを厳密に揃えています)
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([3, 3, 4])
     with ctrl_col1:
-          chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
-
+        chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
     with ctrl_col2:
         overlay_indicator = st.selectbox("Overlay Indicator:", ["Bollinger Bands", "EMA (20/50)", "Ichimoku", "None"])
     with ctrl_col3:
