@@ -57,8 +57,13 @@ df_screener = generate_screener(df_raw)
 top_10_tickers = df_screener["ticker"].head(10).tolist()
 all_available_tickers = df_screener["ticker"].tolist()
 
+# セッション状態の初期化
 if "selected_ticker" not in st.session_state:
     st.session_state.selected_ticker = top_10_tickers[0] if top_10_tickers else "SMMT"
+    
+# 検索履歴（動的に追加されたカスタム銘柄）を保持するリスト
+if "custom_tickers" not in st.session_state:
+    st.session_state.custom_tickers = []
 
 # ==============================================================================
 # 3. MAIN TERMINAL LAYOUT
@@ -67,39 +72,34 @@ st.title("👁️ Whale-Eye: Institutional Option & Insider Intelligence")
 st.markdown("---")
 
 st.subheader("📊 全銘柄多次元スクリーニング・マトリックス")
-col_sel1, col_sel2 = st.columns([3, 5])
+col_sel1, col_sel2 = st.columns([4, 8])
 
 with col_sel1:
-    # 【自由入力・動的検索の実現】
-    # セレクトボックスではなく、自由にティッカーを入力できるテキスト入力、または動的に選択肢が増えるコンボボックスを配置します。
-    # ここでは、既存リストにない銘柄を入力された場合でも動的にリストに追加して選択状態にするロジックを実装します。
+    # データベースから取得した全銘柄リストに、ユーザーが過去に検索したカスタム銘柄を結合
     search_options = all_available_tickers.copy()
-    
-    # 現在選択されているティッカーが選択肢にない場合は、動的に選択肢の先頭に追加
+    for ct in st.session_state.custom_tickers:
+        if ct not in search_options:
+            search_options.append(ct)
+            
+    # 現在選択されているティッカーが選択肢にない場合は、選択肢に追加
     if st.session_state.selected_ticker not in search_options:
-        search_options.insert(0, st.session_state.selected_ticker)
-        
-    # ユーザーが自由なティッカーを入力できるテキスト入力を設置
-    user_input_ticker = st.text_input(
-        "🔍 自由検索（ティッカーシンボルを入力してEnter。例: AMD, AMZN, NFLX）:",
-        value=st.session_state.selected_ticker
-    ).strip().upper()
+        search_options.append(st.session_state.selected_ticker)
 
-    if user_input_ticker and user_input_ticker != st.session_state.selected_ticker:
-        st.session_state.selected_ticker = user_input_ticker
-        st.rerun()
-
-    # ドロップダウン選択（既存の抽出銘柄用）
+    # 以前の美しいドロップダウン（検索機能付き）を復元
+    # Streamlitの st.selectbox は、右上の検索アイコンまたはキーボード入力でリスト内を高速に絞り込めます。
     selected_from_dropdown = st.selectbox(
-        "📂 抽出済み銘柄リストから選択:",
+        "🔍 解析・表示する銘柄を全銘柄リストから選択 (直接入力で新規検索も可能):",
         options=search_options,
         index=search_options.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in search_options else 0
     )
+    
+    # もしユーザーがセレクトボックスに「リストにない新しいティッカー」を入力して確定した場合の動的追加ロジック
     if selected_from_dropdown != st.session_state.selected_ticker:
         st.session_state.selected_ticker = selected_from_dropdown
         st.rerun()
 
 with col_sel2:
+    # クイック選択ラジオボタン
     radio_options = list(top_10_tickers)
     if st.session_state.selected_ticker not in radio_options:
         radio_options.append(st.session_state.selected_ticker)
@@ -152,6 +152,10 @@ with period_col1:
 
 with st.spinner(f"【{current_ticker}】の市場データを解析中..."):
     raw_hist, current_price, hv, available_expiries = fetch_market_data(current_ticker, period=selected_period)
+
+# 新規入力されたティッカーが有効な米国株かを判定し、有効であればカスタムリストに永続追加
+if raw_hist is not None and current_ticker not in all_available_tickers and current_ticker not in st.session_state.custom_tickers:
+    st.session_state.custom_tickers.append(current_ticker)
 
 if raw_hist is not None:
     hist_data = compute_technical_indicators(raw_hist)
@@ -479,7 +483,11 @@ if raw_hist is not None:
     st.caption(f"損益分岐点（Break-even）: 株価騰落率 {breakeven_change:+.1f}% (${breakeven_price:.2f}) 以上でプラス収支")
 
 else:
-    st.warning("⚠️ 選択された銘柄の株価データを取得できませんでした。")
+    # 入力されたティッカーが無効な場合のフォールバック処理
+    st.error(f"⚠️ ティッカー '{current_ticker}' は無効か、データを取得できませんでした。正しいティッカーシンボルを入力してください。")
+    if current_ticker in st.session_state.custom_tickers:
+        st.session_state.custom_tickers.remove(current_ticker)
+    st.stop()
 
 # ==============================================================================
 # 5. T-SHAPE OPTION CHAIN MATRIX
