@@ -191,8 +191,8 @@ if raw_hist is not None:
     st.markdown("---")
 
 # コントロールパネル
-      ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([3, 3, 4])
-      with ctrl_col1:
+ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([3, 3, 4])
+    with ctrl_col1:
           chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
 
     with ctrl_col2:
