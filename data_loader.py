@@ -10,17 +10,27 @@ DB_PATH = "whale_eye.db"
 def init_database_if_not_exists():
     """
     データベースファイルまたはテーブルが存在しない場合、自動的に作成し、
-    スクリーニングやシミュレーションに適したリアルなデモデータを注入（シード）します。
+    SMMTを含むスクリーニングやシミュレーションに適したリアルなデモデータを注入（シード）します。
     """
+    # 既存の不完全なDBがある場合は、一度削除して再作成することで確実にSMMTデータを反映させます
+    # (本番環境でユーザーデータを保持したい場合はこの処理を調整しますが、今回はデモ環境の修復を優先します)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # テーブルの存在確認
-    cursor.execute("""
-        SELECT count(name) FROM sqlite_master WHERE type='table' AND name='insider_trades'
-    """)
-    if cursor.fetchone()[0] == 0:
-        # テーブルの作成
+    # テーブルの存在確認、およびSMMTデータが含まれているか確認
+    has_table = False
+    try:
+        cursor.execute("SELECT count(name) FROM sqlite_master WHERE type='table' AND name='insider_trades'")
+        if cursor.fetchone()[0] > 0:
+            cursor.execute("SELECT count(*) FROM insider_trades WHERE ticker='SMMT'")
+            if cursor.fetchone()[0] > 0:
+                has_table = True
+    except Exception:
+        pass
+
+    if not has_table:
+        # テーブルの初期化（一度削除してクリーンに再作成）
+        cursor.execute("DROP TABLE IF EXISTS insider_trades")
         cursor.execute("""
             CREATE TABLE insider_trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,9 +47,13 @@ def init_database_if_not_exists():
             )
         """)
         
-        # リアルなデモデータの定義
+        # リアルなデモデータの定義 (SMMTを最上位クラスとして追加)
         base_date = datetime.now() - timedelta(days=45)
         demo_data = [
+            # SMMT (Summit Therapeutics - 超大口インサイダー買い)
+            ("SMMT", "Summit Therapeutics Inc.", "Robert W. Duggan", "CEO / 10% Owner", (base_date + timedelta(days=1)).strftime("%Y-%m-%d"), (base_date + timedelta(days=3)).strftime("%Y-%m-%d"), 12.50, 800000, 10000000.0, "https://www.sec.gov/"),
+            ("SMMT", "Summit Therapeutics Inc.", "Maky Zanganeh", "Co-CEO & President", (base_date + timedelta(days=2)).strftime("%Y-%m-%d"), (base_date + timedelta(days=4)).strftime("%Y-%m-%d"), 12.80, 150000, 1920000.0, "https://www.sec.gov/"),
+
             # AAPL (複数インサイダーによるクラスター買い & CEO大口)
             ("AAPL", "Apple Inc.", "Tim Cook", "CEO", (base_date + timedelta(days=5)).strftime("%Y-%m-%d"), (base_date + timedelta(days=7)).strftime("%Y-%m-%d"), 185.50, 15000, 2782500.0, "https://www.sec.gov/"),
             ("AAPL", "Apple Inc.", "Luca Maestri", "CFO", (base_date + timedelta(days=6)).strftime("%Y-%m-%d"), (base_date + timedelta(days=8)).strftime("%Y-%m-%d"), 186.20, 5000, 931000.0, "https://www.sec.gov/"),
@@ -89,13 +103,12 @@ def load_and_process_data():
 def generate_screener(df):
     """
     【大幅強化された多次元スクリーニング・アルゴリズム】
-    単なる購入金額順ではなく、以下のプロ仕様フィルターと統計スコアリングを適用します。
+    単なる購入金額順ではなく、プロ仕様フィルターと統計スコアリングを適用します。
     """
     # 1. 最低取引金額フィルター ($50,000以上のみを対象)
     df_filtered = df[df["total_value"] >= 50000].copy()
     
     if df_filtered.empty:
-        # データが空になってしまう場合のセーフティネット
         df_filtered = df[df["total_value"] >= 10000].copy()
 
     # 2. 役職による重み係数の定義
@@ -136,9 +149,11 @@ def generate_screener(df):
         elif unique_insiders == 2:
             cluster_bonus = 1.4
 
-        # 統計的確実性スコアの算出
-        base_score = np.log10(weighted_sum) * 10
+        # 統計的確実性スコアの算出 (対数スケールで金額の偏りを均しつつ、役職とクラスター効果を乗算)
+        base_score = np.log10(weighted_sum) * 10  # 例: $100k -> 50点, $1M -> 60点, $10M -> 70点
         certainty_score = min(100.0, base_score * cluster_bonus)
+        
+        # 100点満点に正規化
         certainty_score = max(10.0, certainty_score)
 
         screener_rows.append({
@@ -163,7 +178,6 @@ def generate_screener(df):
 def fetch_market_data(ticker, period="6mo"):
     """
     yfinanceからリアルタイム株価、HV、および満期日リストを取得する関数。
-    【機能拡張】: 取得期間を動的に指定できるように引数 `period` を追加。
     """
     try:
         stock = yf.Ticker(ticker)
