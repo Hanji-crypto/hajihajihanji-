@@ -9,84 +9,44 @@ DB_PATH = "whale_eye.db"
 
 def init_database_if_not_exists():
     """
-    データベースファイルまたはテーブルが存在しない場合、自動的に作成し、
-    SMMTを含むスクリーニングやシミュレーションに適したリアルなデモデータを注入（シード）します。
+    【データベース保護仕様】
+    既存のデータベースファイルや、バックフィルされたデータを絶対に削除・上書きしません。
+    テーブルが物理的に存在しない場合のみ、空のテーブルを作成します。
     """
-    # 既存の不完全なDBがある場合は、一度削除して再作成することで確実にSMMTデータを反映させます
-    # (本番環境でユーザーデータを保持したい場合はこの処理を調整しますが、今回はデモ環境の修復を優先します)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # テーブルの存在確認、およびSMMTデータが含まれているか確認
-    has_table = False
     try:
-        cursor.execute("SELECT count(name) FROM sqlite_master WHERE type='table' AND name='insider_trades'")
-        if cursor.fetchone()[0] > 0:
-            cursor.execute("SELECT count(*) FROM insider_trades WHERE ticker='SMMT'")
-            if cursor.fetchone()[0] > 0:
-                has_table = True
-    except Exception:
-        pass
-
-    if not has_table:
-        # テーブルの初期化（一度削除してクリーンに再作成）
-        cursor.execute("DROP TABLE IF EXISTS insider_trades")
+        # テーブルの存在確認
         cursor.execute("""
-            CREATE TABLE insider_trades (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ticker TEXT NOT NULL,
-                company TEXT NOT NULL,
-                insider TEXT NOT NULL,
-                position TEXT NOT NULL,
-                buy_date TEXT NOT NULL,
-                filing_date TEXT NOT NULL,
-                share_price REAL NOT NULL,
-                shares_traded INTEGER NOT NULL,
-                total_value REAL NOT NULL,
-                filing_url TEXT NOT NULL
-            )
+            SELECT count(name) FROM sqlite_master WHERE type='table' AND name='insider_trades'
         """)
-        
-        # リアルなデモデータの定義 (SMMTを最上位クラスとして追加)
-        base_date = datetime.now() - timedelta(days=45)
-        demo_data = [
-            # SMMT (Summit Therapeutics - 超大口インサイダー買い)
-            ("SMMT", "Summit Therapeutics Inc.", "Robert W. Duggan", "CEO / 10% Owner", (base_date + timedelta(days=1)).strftime("%Y-%m-%d"), (base_date + timedelta(days=3)).strftime("%Y-%m-%d"), 12.50, 800000, 10000000.0, "https://www.sec.gov/"),
-            ("SMMT", "Summit Therapeutics Inc.", "Maky Zanganeh", "Co-CEO & President", (base_date + timedelta(days=2)).strftime("%Y-%m-%d"), (base_date + timedelta(days=4)).strftime("%Y-%m-%d"), 12.80, 150000, 1920000.0, "https://www.sec.gov/"),
-
-            # AAPL (複数インサイダーによるクラスター買い & CEO大口)
-            ("AAPL", "Apple Inc.", "Tim Cook", "CEO", (base_date + timedelta(days=5)).strftime("%Y-%m-%d"), (base_date + timedelta(days=7)).strftime("%Y-%m-%d"), 185.50, 15000, 2782500.0, "https://www.sec.gov/"),
-            ("AAPL", "Apple Inc.", "Luca Maestri", "CFO", (base_date + timedelta(days=6)).strftime("%Y-%m-%d"), (base_date + timedelta(days=8)).strftime("%Y-%m-%d"), 186.20, 5000, 931000.0, "https://www.sec.gov/"),
-            ("AAPL", "Apple Inc.", "Arthur Levinson", "Director", (base_date + timedelta(days=8)).strftime("%Y-%m-%d"), (base_date + timedelta(days=10)).strftime("%Y-%m-%d"), 188.00, 2000, 376000.0, "https://www.sec.gov/"),
-            
-            # NVDA (大口役員買い)
-            ("NVDA", "NVIDIA Corp.", "Jen-Hsun Huang", "CEO", (base_date + timedelta(days=12)).strftime("%Y-%m-%d"), (base_date + timedelta(days=14)).strftime("%Y-%m-%d"), 450.00, 8000, 3600000.0, "https://www.sec.gov/"),
-            ("NVDA", "NVIDIA Corp.", "Colette Kress", "CFO", (base_date + timedelta(days=13)).strftime("%Y-%m-%d"), (base_date + timedelta(days=15)).strftime("%Y-%m-%d"), 455.00, 1500, 682500.0, "https://www.sec.gov/"),
-            
-            # MSFT (取締役大口)
-            ("MSFT", "Microsoft Corp.", "Satya Nadella", "CEO", (base_date + timedelta(days=2)).strftime("%Y-%m-%d"), (base_date + timedelta(days=4)).strftime("%Y-%m-%d"), 380.00, 6000, 2280000.0, "https://www.sec.gov/"),
-            ("MSFT", "Microsoft Corp.", "Penny Pritzker", "Director", (base_date + timedelta(days=15)).strftime("%Y-%m-%d"), (base_date + timedelta(days=17)).strftime("%Y-%m-%d"), 390.00, 3000, 1170000.0, "https://www.sec.gov/"),
-            
-            # TSLA (大株主による超巨額買い)
-            ("TSLA", "Tesla, Inc.", "Elon Musk", "CEO / 10% Owner", (base_date + timedelta(days=20)).strftime("%Y-%m-%d"), (base_date + timedelta(days=22)).strftime("%Y-%m-%d"), 175.00, 50000, 8750000.0, "https://www.sec.gov/"),
-            
-            # EIKN (オプション取引がない小型株のデモデータ)
-            ("EIKN", "Eikon Therapeutics", "Roger Perlmutter", "CEO", (base_date + timedelta(days=25)).strftime("%Y-%m-%d"), (base_date + timedelta(days=27)).strftime("%Y-%m-%d"), 10.50, 10000, 105000.0, "https://www.sec.gov/"),
-            ("EIKN", "Eikon Therapeutics", "John Doe", "Director", (base_date + timedelta(days=26)).strftime("%Y-%m-%d"), (base_date + timedelta(days=28)).strftime("%Y-%m-%d"), 10.60, 5000, 53000.0, "https://www.sec.gov/")
-        ]
-        
-        cursor.executemany("""
-            INSERT INTO insider_trades (ticker, company, insider, position, buy_date, filing_date, share_price, shares_traded, total_value, filing_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, demo_data)
-        
-        conn.commit()
-    
-    conn.close()
+        if cursor.fetchone()[0] == 0:
+            # テーブルが存在しない新規環境の場合のみ、枠組み（スキーマ）を作成
+            cursor.execute("""
+                CREATE TABLE insider_trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticker TEXT NOT NULL,
+                    company TEXT NOT NULL,
+                    insider TEXT NOT NULL,
+                    position TEXT NOT NULL,
+                    buy_date TEXT NOT NULL,
+                    filing_date TEXT NOT NULL,
+                    share_price REAL NOT NULL,
+                    shares_traded INTEGER NOT NULL,
+                    total_value REAL NOT NULL,
+                    filing_url TEXT NOT NULL
+                )
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"Database init check bypass: {e}")
+    finally:
+        conn.close()
 
 def load_and_process_data():
     """
-    データベースの自動初期化を行い、データをロードする関数。
+    バックフィルされた本来のデータベースから全データを安全にロードする関数。
     """
     init_database_if_not_exists()
     
@@ -103,13 +63,20 @@ def load_and_process_data():
 def generate_screener(df):
     """
     【大幅強化された多次元スクリーニング・アルゴリズム】
-    単なる購入金額順ではなく、プロ仕様フィルターと統計スコアリングを適用します。
+    蓄積された全バックフィルデータに対して、統計スコアリングを適用します。
     """
+    if df.empty:
+        return pd.DataFrame()
+
     # 1. 最低取引金額フィルター ($50,000以上のみを対象)
     df_filtered = df[df["total_value"] >= 50000].copy()
     
     if df_filtered.empty:
+        # データが少なすぎる場合のセーフティネット
         df_filtered = df[df["total_value"] >= 10000].copy()
+
+    if df_filtered.empty:
+        df_filtered = df.copy()
 
     # 2. 役職による重み係数の定義
     def get_position_weight(pos):
@@ -150,10 +117,8 @@ def generate_screener(df):
             cluster_bonus = 1.4
 
         # 統計的確実性スコアの算出 (対数スケールで金額の偏りを均しつつ、役職とクラスター効果を乗算)
-        base_score = np.log10(weighted_sum) * 10  # 例: $100k -> 50点, $1M -> 60点, $10M -> 70点
+        base_score = np.log10(weighted_sum) * 10 if weighted_sum > 0 else 10.0
         certainty_score = min(100.0, base_score * cluster_bonus)
-        
-        # 100点満点に正規化
         certainty_score = max(10.0, certainty_score)
 
         screener_rows.append({
@@ -305,7 +270,7 @@ def fetch_catalyst_events(ticker, df_raw):
     
     catalysts = [
         {"date": latest_date - timedelta(days=15), "category": "決算発表 (Earnings)", "title": "第3四半期 決算発表：EPS・売上高ともに市場予想を大きく上回るサプライズ決算", "source_url": "https://www.sec.gov/"},
-        {"date": latest_date - timedelta(days=5), "category": "製品発表 (Product)", "title": "次世代AI統合型エンタープライズプラットフォームの正式ローンチを発表", "source_url": "https://www.sec.gov/"},
+        {"date": latest_date - timedelta(days=5), "category": "製品発表 (Product)", "title": "次世代AI統合型エンタープライズプラットフォーム of 正式リリース", "source_url": "https://www.sec.gov/"},
         {"date": latest_date + timedelta(days=10), "category": "株主総会 (Meeting)", "title": "臨時株主総会：自社株買いプログラムの規模拡大（最大5億ドル）を決議予定", "source_url": "https://www.sec.gov/"}
     ]
     return pd.DataFrame(catalysts)
