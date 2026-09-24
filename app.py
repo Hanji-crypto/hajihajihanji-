@@ -495,7 +495,7 @@ st.markdown("---")
 st.markdown(f"### 📄 【{current_ticker}】 オプション・チェーン (T-Shape プロ仕様マトリックス)")
 
 if selected_expiry:
-    st.html("""
+    st.html(""
         <div class="guide-panel">
             <h4 style="color: #38BDF8; margin-top: 0; margin-bottom: 12px;">👁️ オプション統計指標の完全解読マニュアル</h4>
             <div style="font-size: 12px; line-height: 1.6; color: #94A3B8;">
