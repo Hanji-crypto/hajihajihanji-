@@ -1,111 +1,185 @@
 import plotly.graph_objects as gr
-from plotly.subplots import make_subplots
-import pandas as pd
 import numpy as np
-import math
+from datetime import timedelta
 
 def draw_stock_chart(df_plot, chart_type, overlay_indicator, current_price, iv, future_dates, upper_band_curve, lower_band_curve, xaxis_range):
-    """
-    1段目：株価チャートのみを完全に独立して描画する関数。
-    RSIやMACDのデータは一切ここに関与しないため、混入は物理的に発生しません。
-    """
+    """メイン株価チャートを描画"""
     fig = gr.Figure()
+    
+    # 1σ 確率予測範囲 (30日) の網掛け
+    fig.add_trace(gr.Scatter(
+        x=list(future_dates) + list(future_dates)[::-1],
+        y=list(upper_band_curve) + list(lower_band_curve)[::-1],
+        fill='toself',
+        fillcolor='rgba(56, 189, 248, 0.08)',
+        line=dict(color='rgba(255,255,255,0)'),
+        hoverinfo="skip",
+        name="1σ 確率予測範囲 (30日)"
+    ))
 
-    # 株価トレース
     if chart_type == "ローソク足":
         fig.add_trace(gr.Candlestick(
-            x=df_plot.index, open=df_plot["Open"], high=df_plot["High"], low=df_plot["Low"], close=df_plot["Close"], name="株価"
+            x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'],
+            name="株価", increasing_line_color='#00FFCC', decreasing_line_color='#FF007F'
         ))
     else:
         fig.add_trace(gr.Scatter(
-            x=df_plot.index, y=df_plot["Close"], mode="lines", line=dict(color="#00FFCC", width=2.5), name="現物株価"
+            x=df_plot.index, y=df_plot['Close'], mode="lines",
+            line=dict(color="#00FFCC", width=2), name="終値"
         ))
 
-    # テクニカル指標の重ね合わせ
-    # 【ボリンジャーバンドの完全仕様修正】
-    # - 境界線(Upper/Lower)は、目立たないよう「極細(width=1.0)・極薄(不透明度15%)の実線(solid)」に設定。
-    # - バンド内部を、視認性の高い「濃いエメラルドグリーン(不透明度18%: rgba(0, 255, 204, 0.18))」で美しく面塗りつぶし。
-    if overlay_indicator == "ボリンジャーバンド" and "BB_Upper" in df_plot.columns:
-        # 先に下限（Lower）を定義（塗りつぶしなし）
-        fig.add_trace(gr.Scatter(
-            x=df_plot.index, y=df_plot["BB_Lower"], 
-            line=dict(color="rgba(0, 255, 204, 0.15)", width=1.0), 
-            fill='none', name="BB Lower"
-        ))
-        # 次に上限（Upper）を定義し、下限との間（tonexty）を濃いめの半透明緑で塗りつぶす
-        fig.add_trace(gr.Scatter(
-            x=df_plot.index, y=df_plot["BB_Upper"], 
-            line=dict(color="rgba(0, 255, 204, 0.15)", width=1.0), 
-            fill='tonexty', 
-            fillcolor="rgba(0, 255, 204, 0.18)", 
-            name="BB Upper"
-        ))
-        # 20日移動平均線
-        fig.add_trace(gr.Scatter(
-            x=df_plot.index, y=df_plot["MA20"], 
-            line=dict(color="rgba(255, 165, 0, 0.7)", width=1.0, dash="dash"), 
-            fill='none', name="20日移動平均"
-        ))
+    # 重ね合わせ指標
+    if overlay_indicator == "Bollinger Bands":
+        ma = df_plot['Close'].rolling(window=20).mean()
+        std = df_plot['Close'].rolling(window=20).std()
+        fig.add_trace(gr.Scatter(x=df_plot.index, y=ma + 2*std, mode="lines", line=dict(color="rgba(148, 163, 184, 0.4)", width=1, dash="dash"), name="BB Upper"))
+        fig.add_trace(gr.Scatter(x=df_plot.index, y=ma - 2*std, mode="lines", line=dict(color="rgba(148, 163, 184, 0.4)", width=1, dash="dash"), name="BB Lower"))
     elif overlay_indicator == "EMA (20/50)":
-        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["EMA20"], line=dict(color="#00C5FF", width=1.5), fill='none', name="EMA 20"))
-        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["EMA50"], line=dict(color="#FF8C00", width=1.5), fill='none', name="EMA 50"))
-    elif overlay_indicator == "一目均衡表 (Ichimoku)":
-        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Senkou_Span_A"], line=dict(color="rgba(56, 189, 248, 0.4)", width=0.8, dash="dash"), fill='none', name="先行スパンA"))
-        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Senkou_Span_B"], line=dict(color="rgba(244, 63, 94, 0.4)", width=0.8, dash="dash"), fill='none', name="先行スパンB"))
-        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Tenkan_Sen"], line=dict(color="#38BDF8", width=1.2), fill='none', name="転換線"))
-        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["Kijun_Sen"], line=dict(color="#F43F5E", width=1.2), fill='none', name="基準線"))
-
-    # 1σ予測レンジ (30日予測の未来バンド)
-    fig.add_trace(gr.Scatter(x=future_dates, y=upper_band_curve, mode="lines", line=dict(color="rgba(56, 189, 248, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ上限"))
-    fig.add_trace(gr.Scatter(x=future_dates, y=lower_band_curve, mode="lines", line=dict(color="rgba(239, 68, 68, 0.6)", width=1.2, dash="dash"), fill='none', name="1σ下限"))
+        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot['Close'].ewm(span=20).mean(), mode="lines", line=dict(color="#38BDF8", width=1), name="EMA 20"))
+        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot['Close'].ewm(span=50).mean(), mode="lines", line=dict(color="#A855F7", width=1), name="EMA 50"))
 
     fig.update_layout(
-        height=380, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-        margin=dict(l=10, r=10, t=10, b=10), showlegend=False, hovermode="x unified",
-        dragmode="drawline", newshape=dict(line=dict(color="#00FFCC", width=1.5), opacity=0.8),
-        xaxis=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-        yaxis=dict(title="株価 ($)", showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)")
+        height=350, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+        margin=dict(l=10, r=10, t=10, b=10), showlegend=False,
+        xaxis=dict(range=xaxis_range, showgrid=True, gridcolor="rgba(255,255,255,0.05)", rangeslider=dict(visible=False)),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)")
     )
     return fig
 
 def draw_sub_indicators_chart(df_plot, sub_indicator, xaxis_range):
-    """
-    2段目：サブ指標（RSI, MACD, ATR）のみを完全に独立して描画する関数。
-    株価のローソク足トレースは一切インポートすらしていないため、混入バグは100%発生しません。
-    """
+    """サブ指標（RSI, MACD, ATR）を描画"""
+    fig = gr.Figure()
+    
     if sub_indicator == "RSI + MACD":
-        # RSIとMACDの2段サブプロット
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_width=[0.5, 0.5])
+        # RSI (14)
+        delta = df_plot['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / (loss + 1e-9)
+        rsi = 100 - (100 / (1 + rs))
         
-        # RSI (Row 1)
-        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["RSI_14"], mode="lines", line=dict(color="#A855F7", width=2.0), fill='none', name="RSI"), row=1, col=1)
-        fig.add_hline(y=70, line_dash="dash", line_color="rgba(239, 68, 68, 0.5)", row=1, col=1)
-        fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.5)", row=1, col=1)
-
-        # MACD (Row 2)
-        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MACD"], mode="lines", line=dict(color="#38BDF8", width=1.5), fill='none', name="MACD"), row=2, col=1)
-        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["MACD_Signal"], mode="lines", line=dict(color="#FF8C00", width=1.5), fill='none', name="Signal"), row=2, col=1)
-        
-        hist_colors = ["#00FFCC" if (not math.isnan(val) and val >= 0) else "#FF007F" for val in df_plot["MACD_Hist"]]
-        fig.add_trace(gr.Bar(x=df_plot.index, y=df_plot["MACD_Hist"], marker_color=hist_colors, name="Hist"), row=2, col=1)
-        
-        fig.update_layout(
-            height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-            margin=dict(l=10, r=10, t=10, b=10), showlegend=False, hovermode="x unified",
-            xaxis=dict(range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-            xaxis2=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-            yaxis=dict(title="RSI", range=[10, 90]),
-            yaxis2=dict(title="MACD")
-        )
+        fig.add_trace(gr.Scatter(x=df_plot.index, y=rsi, mode="lines", line=dict(color="#A855F7", width=1.5), name="RSI (14)"))
+        fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 0, 127, 0.4)", line_width=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.4)", line_width=1)
+        fig.update_yaxes(range=[10, 90])
     else:
-        # ATR単体グラフ
-        fig = gr.Figure()
-        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot["ATR"], mode="lines", line=dict(color="#E2E8F0", width=1.8), fill='none', name="ATR"))
+        # ATR
+        high_low = df_plot['High'] - df_plot['Low']
+        high_close = (df_plot['High'] - df_plot['Close'].shift()).abs()
+        low_close = (df_plot['Low'] - df_plot['Close'].shift()).abs()
+        ranges = gr.concat([high_low, high_close, low_close], axis=1)
+        true_range = ranges.max(axis=1)
+        atr = true_range.rolling(14).mean()
+        fig.add_trace(gr.Scatter(x=df_plot.index, y=atr, mode="lines", line=dict(color="#FF8C00", width=1.5), name="ATR (14)"))
+
+    fig.update_layout(
+        height=150, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+        margin=dict(l=10, r=10, t=10, b=10), showlegend=False,
+        xaxis=dict(range=xaxis_range, showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)")
+    )
+    return fig
+
+def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw, current_ticker, xaxis_range):
+    """ボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミングを描画"""
+    fig = gr.Figure()
+    
+    # 20日ヒストリカルボラティリティの算出
+    hist_data["HV_20"] = hist_data["Close"].pct_change().rolling(window=20).std() * np.sqrt(252) * 100
+    hist_data["IV_Sim"] = hist_data["HV_20"] * (iv / (hv if hv > 0 else 1.0))
+
+    fig.add_trace(gr.Scatter(x=plot_dates, y=hist_data["HV_20"].iloc[-display_window:], mode="lines", line=dict(color="#FF007F", width=1.5), name="HV (%)"))
+    fig.add_trace(gr.Scatter(x=plot_dates, y=hist_data["IV_Sim"].iloc[-display_window:], mode="lines", line=dict(color="#00C5FF", width=1.5), name="IV (%)"))
+
+    df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
+    df_insider_daily = df_ticker_raw.groupby(["buy_date", "insider"])["net_value"].sum().reset_index()
+    df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
+
+    if not df_insider_daily.empty:
+        unique_insiders = df_insider_daily["insider"].unique().tolist()
+        color_palette = ["#AA00FF", "#00FFCC", "#38BDF8", "#FFD700", "#FF007F", "#FF8C00"]
+        date_counts = {}
+        registered_legends = set()
         
-        fig.update_layout(
-            height=180, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-            margin=dict(l=10, r=10, t=10, b=10), showlegend=False, hovermode="x unified",
-            xaxis=dict(title="日付", range=xaxis_range, showspikes=True, spikemode="across", spikethickness=1, spikedash="dash", spikecolor="rgba(255, 255, 255, 0.4)"),
-            yaxis=dict(title="ATR")
+        for _, row in df_insider_daily.iterrows():
+            b_date = row["buy_date"]
+            insider = row["insider"]
+            val = row["net_value"]
+            
+            if b_date not in date_counts:
+                date_counts[b_date] = 0
+            else:
+                date_counts[b_date] += 1
+                
+            idx_for_color = unique_insiders.index(insider)
+            color = color_palette[idx_for_color % len(color_palette)]
+            offset_y = 6.0 - (date_counts[b_date] * 12.0)
+            
+            symbol = "star" if val > 0 else "triangle-down"
+            trade_label = "購入" if val > 0 else "売却"
+            hover_text = f"インサイダー: {row['insider']}<br>取引: {trade_label}<br>金額: ${abs(val):,.0f}"
+            
+            show_in_legend = insider not in registered_legends
+            if show_in_legend:
+                registered_legends.add(insider)
+            
+            fig.add_trace(gr.Scatter(
+                x=[b_date], y=[offset_y], mode="markers",
+                marker=dict(symbol=symbol, size=14, color=color, line=dict(color="#FFFFFF", width=1.2)),
+                text=[hover_text], hoverinfo="text", legendgroup=insider, name=f"🐋 {insider} ({trade_label})", showlegend=show_in_legend
+            ))
+            
+    fig.update_layout(
+        height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+        margin=dict(l=10, r=130, t=50, b=10), 
+        legend=dict(orientation="v", y=1, x=1.02, xanchor="left", yanchor="top"),
+        xaxis=dict(title="日付", range=xaxis_range, showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
+        yaxis=dict(title="ボラティリティ (%)", range=[-25, 105], showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
+        hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace")
+    )
+    return fig
+
+def draw_payoff_chart(current_price, iv, T_30, payoffs, stock_changes, breakeven_change, breakeven_price, best_strat):
+    """アフォーダンスを極限まで高めた損益図（ペイオフ・ダイアグラム）を描画"""
+    fig = gr.Figure()
+    
+    # 1. 利益エリア（緑）と損失エリア（赤）の背景塗り分け
+    fig.add_hrect(y0=0, y1=max(payoffs)*1.2 if max(payoffs) > 0 else 100, fillcolor="rgba(0, 255, 204, 0.03)", line_width=0)
+    fig.add_hrect(y0=min(payoffs)*1.2 if min(payoffs) < 0 else -100, y1=0, fillcolor="rgba(255, 0, 127, 0.03)", line_width=0)
+    
+    # 2. 1σ 確率予測範囲の網掛け
+    fig.add_vrect(
+        x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100, 
+        fillcolor="rgba(56, 189, 248, 0.08)", line_width=0, 
+        annotation_text="1σ 確率予測範囲 (30日)", annotation_position="top left", 
+        annotation_font=dict(size=10, color="rgba(56, 189, 248, 0.7)")
+    )
+    
+    # 3. 損益曲線のプロット
+    fig.add_trace(gr.Scatter(
+        x=stock_changes * 100, y=payoffs, mode="lines", 
+        line=dict(color="#00FFCC", width=3),
+        hovertemplate="株価騰落率: %{x:+.1f}%<br>予想投資リターン: %{y:+.1f}%<extra></hover>"
+    ))
+    
+    # 4. 現在株価 (0%) の縦線
+    fig.add_vline(x=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", line_width=1.5, annotation_text="現在株価", annotation_position="bottom right")
+    
+    # 5. 損益分岐点（Break-even）の縦線表示
+    if not np.isnan(breakeven_change):
+        fig.add_vline(
+            x=breakeven_change, line_dash="dash", line_color="#FF007F", line_width=2,
+            annotation_text=f"損益分岐点: {breakeven_change:+.1f}%", annotation_position="top right",
+            annotation_font=dict(color="#FF007F", size=11, bold=True)
         )
+    
+    fig.add_hline(y=0, line_color="rgba(255, 255, 255, 0.5)", line_width=1)
+    
+    fig.update_layout(
+        height=300, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19", 
+        margin=dict(l=10, r=10, t=10, b=10), 
+        xaxis=dict(title="満期時株価騰落率 (%)", range=[-30, 30], gridcolor="rgba(255, 255, 255, 0.05)"), 
+        yaxis=dict(title="予想投資リターン (%)", gridcolor="rgba(255, 255, 255, 0.05)"), 
+        showlegend=False
+    )
     return fig
