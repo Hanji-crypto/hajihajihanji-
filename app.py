@@ -297,7 +297,7 @@ if raw_hist is not None:
     with ctrl_col3:
         sub_indicator = st.selectbox("下段サブ指標の選択:", ["RSI + MACD", "ATR (Volatility Range)"])
 
-      # ----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     # CHARTS: メイン ＆ サブ ＆ ボラティリティ
     # ----------------------------------------------------------------------
     st.markdown("### テクニカル分析チャート")
@@ -312,31 +312,4 @@ if raw_hist is not None:
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
 
-        # 315行目で作成したチャートオブジェクト
-    fig_stock = draw_stock_chart(
-        df_plot, 
-        chart_type, 
-        overlay_indicator, 
-        current_price,
-        iv,
-        future_dates,
-        upper_band_curve,
-        lower_band_curve,
-        xaxis_range
-    )
-
-    # ----------------------------------------------------------------------
-    # 【重要】チャートを画面に出力するコードが有効になっているか確認してください
-    # ----------------------------------------------------------------------
-    # 1. メインの株価チャートを表示
-    st.plotly_chart(fig_stock, use_container_width=True)
-
-    # 2. サブ指標チャート（RSIやMACDなど）の描画と表示
-    # (もし draw_sub_indicators_chart が定義されている場合)
-    fig_sub = draw_sub_indicators_chart(df_plot, sub_indicator, xaxis_range)
-    st.plotly_chart(fig_sub, use_container_width=True)
-
-    # 3. ボラティリティチャートの描画と表示
-    # (もし draw_volatility_chart が定義されている場合)
-    fig_vol = draw_volatility_chart(df_plot, xaxis_range)
-    st.plotly_chart(fig_vol, use_container_width=True)
+    fig_stock = draw_stock_chart(df_plot, chart_type, overlay_indicator, current_price,
