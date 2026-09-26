@@ -297,7 +297,7 @@ if raw_hist is not None:
     with ctrl_col3:
         sub_indicator = st.selectbox("下段サブ指標の選択:", ["RSI + MACD", "ATR (Volatility Range)"])
 
-    # ----------------------------------------------------------------------
+      # ----------------------------------------------------------------------
     # CHARTS: メイン ＆ サブ ＆ ボラティリティ
     # ----------------------------------------------------------------------
     st.markdown("### テクニカル分析チャート")
@@ -311,13 +311,11 @@ if raw_hist is not None:
     future_dates = [plot_dates[-1] + timedelta(days=i) for i in range(1, 31)]
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
-# 修正後（予測バンドの引数を追加して閉じる）
+
+    # 修正：引数を4つに絞って呼び出す
     fig_stock = draw_stock_chart(
-    df_plot, 
-    chart_type, 
-    overlay_indicator, 
-    current_price,
-    future_dates,
-    upper_band_curve,
-    lower_band_curve
-)
+        df_plot, 
+        chart_type, 
+        overlay_indicator, 
+        current_price
+    )
