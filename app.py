@@ -12,6 +12,7 @@ from data_loader import (
     fetch_market_data,
     compute_technical_indicators,
     fetch_option_chain_by_expiry,
+    calculate_volatility_skew,
     fetch_catalyst_events
 )
 from charts import (
@@ -75,17 +76,14 @@ st.subheader("[スクリーナー] 全銘柄多次元スクリーニング・マ
 col_sel1, col_sel2 = st.columns([4, 8])
 
 with col_sel1:
-    # データベースから取得した全銘柄リストに、ユーザーが過去に検索したカスタム銘柄を結合
     search_options = all_available_tickers.copy()
     for ct in st.session_state.custom_tickers:
         if ct not in search_options:
             search_options.append(ct)
             
-    # 現在選択されているティッカーが選択肢にない場合は、選択肢に追加
     if st.session_state.selected_ticker not in search_options:
         search_options.append(st.session_state.selected_ticker)
 
-    # ドロップダウン（検索機能付き）
     selected_from_dropdown = st.selectbox(
         "解析・表示する銘柄を全銘柄リストから選択 (直接入力で新規検索も可能):",
         options=search_options,
@@ -97,7 +95,6 @@ with col_sel1:
         st.rerun()
 
 with col_sel2:
-    # クイック選択ラジオボタン
     radio_options = list(top_10_tickers)
     if st.session_state.selected_ticker not in radio_options:
         radio_options.append(st.session_state.selected_ticker)
@@ -114,22 +111,26 @@ with col_sel2:
 
 current_ticker = st.session_state.selected_ticker
 
-# スクリーナー表示
+# スクリーナー表示 (ネット需給フローの可視化)
 if not df_screener.empty:
     df_screener_display = df_screener.copy()
     df_screener_display = df_screener_display.rename(columns={
-        "ticker": "ティッカー", "company": "企業名", "total_value": "直近取引額 ($)",
+        "ticker": "ティッカー", "company": "企業名", 
+        "net_flow": "ネット・フロー ($)", "total_buy": "総買い額 ($)", "total_sell": "総売り額 ($)",
         "avg_price": "平均取得単価 ($)", "insider": "主なインサイダー", "buy_date": "直近取引日",
         "trade_count": "取引回数", "Certainty (%)": "統計的確実性スコア (%)"
     })
-    df_screener_display["直近取引額 ($)"] = df_screener_display["直近取引額 ($)"].map(lambda x: f"${x:,.0f}")
+    
+    # 金額フォーマット
+    df_screener_display["ネット・フロー ($)"] = df_screener_display["ネット・フロー ($)"].map(lambda x: f"${x:+,.0f}" if x != 0 else "$0")
+    df_screener_display["総買い額 ($)"] = df_screener_display["総買い額 ($)"].map(lambda x: f"${x:,.0f}")
+    df_screener_display["総売り額 ($)"] = df_screener_display["総売り額 ($)"].map(lambda x: f"${x:,.0f}")
     df_screener_display["平均取得単価 ($)"] = df_screener_display["平均取得単価 ($)"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
     df_screener_display["直近取引日"] = df_screener_display["直近取引日"].dt.strftime('%Y-%m-%d')
     df_screener_display["統計的確実性スコア (%)"] = df_screener_display["統計的確実性スコア (%)"].map(lambda x: f"{x:.1f}%")
 
-    # 全銘柄を一望できるように高さを適切に確保
     st.dataframe(
-        df_screener_display[["ティッカー", "企業名", "直近取引額 ($)", "平均取得単価 ($)", "主なインサイダー", "直近取引日", "取引回数", "統計的確実性スコア (%)"]],
+        df_screener_display[["ティッカー", "企業名", "ネット・フロー ($)", "総買い額 ($)", "総売り額 ($)", "平均取得単価 ($)", "主なインサイダー", "直近取引日", "取引回数", "統計的確実性スコア (%)"]],
         use_container_width=True, hide_index=True, height=240
     )
 else:
@@ -142,7 +143,6 @@ st.markdown("---")
 # ==============================================================================
 st.subheader(f"[{current_ticker}] リアルタイム詳細・オプション解析")
 
-# 期間選択コントロールを配置
 period_col1, period_col2 = st.columns([4, 8])
 with period_col1:
     selected_period = st.selectbox(
@@ -155,28 +155,28 @@ with period_col1:
 with st.spinner(f"[{current_ticker}] の市場データを解析中..."):
     raw_hist, current_price, hv, available_expiries = fetch_market_data(current_ticker, period=selected_period)
 
-# 新規入力されたティッカーが有効な米国株かを判定し、有効であればカスタムリストに永続追加
 if raw_hist is not None and current_ticker not in all_available_tickers and current_ticker not in st.session_state.custom_tickers:
     st.session_state.custom_tickers.append(current_ticker)
 
 if raw_hist is not None:
     hist_data = compute_technical_indicators(raw_hist)
 
-    # 満期日の取得とガード処理
     selected_expiry = None
     if available_expiries:
         selected_expiry = st.selectbox("オプション満期日を選択してください:", options=available_expiries, index=0)
     else:
         st.warning("⚠️ この銘柄には現在、有効なオプションチェーンが存在しないか、取得できません。オプション解析は簡易シミュレーションモードで動作します。")
 
-    # オプションチェーンデータの取得
     with st.spinner(f"オプションチェーンを解析中..."):
         if selected_expiry:
             df_calls_raw, df_puts_raw, iv, pcr = fetch_option_chain_by_expiry(current_ticker, selected_expiry, current_price)
+            # 【新規統合：ボラティリティ・スキューの計算】
+            skew_val, skew_status = calculate_volatility_skew(df_calls_raw, df_puts_raw, current_price)
         else:
             df_calls_raw, df_puts_raw = pd.DataFrame(), pd.DataFrame()
             iv = hv if hv > 0 else 0.30
             pcr = 1.0
+            skew_val, skew_status = 0.0, "判定不可 (シミュレーション)"
 
     T_30 = 30 / 365.25
     one_sigma_move = current_price * iv * np.sqrt(T_30)
@@ -186,7 +186,7 @@ if raw_hist is not None:
     m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
     with m_col1: st.metric("インプライド・ボラティリティ (IV)", f"{iv*100:.1f}%" if selected_expiry else f"{iv*100:.1f}% (HV代用)")
     with m_col2: st.metric("歴史的ボラティリティ (HV)", f"{hv*100:.1f}%")
-    with m_col3: st.metric("IV / HV 比率", f"{iv/hv:.2f}" if hv > 0 else "N/A")
+    with m_col3: st.metric("ボラティリティ・スキュー (歪み)", f"{skew_val:+.1f}%", help=f"状態: {skew_status}")
     with m_col4: st.metric("Put-Call Ratio (PCR)", f"{pcr:.2f}" if selected_expiry else "N/A")
     with m_col5: st.metric("1σ 上昇上限 (30日)", f"${upper_1sigma:.2f}")
     with m_col6: st.metric("1σ 下落下限 (30日)", f"${lower_1sigma:.2f}")
@@ -219,7 +219,6 @@ if raw_hist is not None:
         </div>
     """)
 
-    # 選択された期間に応じて、表示ウィンドウ幅を調整
     slice_windows = {"3mo": 60, "6mo": 120, "1y": 250, "2y": 500}
     display_window = slice_windows.get(selected_period, 120)
     
@@ -229,19 +228,16 @@ if raw_hist is not None:
     end_date = plot_dates[-1]
     xaxis_range = [start_date, end_date]
 
-    # 未来予測30日データの作成
     future_dates = [end_date + timedelta(days=i) for i in range(1, 31)]
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
 
-    # 1. 独立した株価チャートを呼び出して描画
     fig_stock = draw_stock_chart(
         df_plot, chart_type, overlay_indicator, current_price, iv, 
         future_dates, upper_band_curve, lower_band_curve, xaxis_range
     )
     st.plotly_chart(fig_stock, use_container_width=True, key="stock_chart_final_v2")
 
-    # 2. 独立したサブ指標チャートを呼び出して描画
     fig_sub = draw_sub_indicators_chart(df_plot, sub_indicator, xaxis_range)
     st.plotly_chart(fig_sub, use_container_width=True, key="sub_indicators_chart_v2")
 
@@ -256,7 +252,7 @@ if raw_hist is not None:
     fig_vol.add_trace(gr.Scatter(x=plot_dates, y=hist_data["IV_Sim"].iloc[-display_window:], mode="lines", line=dict(color="#00C5FF", width=1.5), name="IV (%)"))
 
     df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
-    df_insider_daily = df_ticker_raw.groupby(["buy_date", "insider"])["total_value"].sum().reset_index()
+    df_insider_daily = df_ticker_raw.groupby(["buy_date", "insider"])["net_value"].sum().reset_index()
     df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
 
     if not df_insider_daily.empty:
@@ -268,6 +264,8 @@ if raw_hist is not None:
         for _, row in df_insider_daily.iterrows():
             b_date = row["buy_date"]
             insider = row["insider"]
+            val = row["net_value"]
+            
             if b_date not in date_counts:
                 date_counts[b_date] = 0
             else:
@@ -277,15 +275,19 @@ if raw_hist is not None:
             color = color_palette[idx_for_color % len(color_palette)]
             offset_y = 6.0 - (date_counts[b_date] * 12.0)
             
-            hover_text = f"インサイダー: {row['insider']}<br>購入総額: ${row['total_value']:,.0f}"
+            # 買いは星型、売りは逆三角型でチャート上に表示
+            symbol = "star" if val > 0 else "triangle-down"
+            trade_label = "購入" if val > 0 else "売却"
+            hover_text = f"インサイダー: {row['insider']}<br>取引: {trade_label}<br>金額: ${abs(val):,.0f}"
+            
             show_in_legend = insider not in registered_legends
             if show_in_legend:
                 registered_legends.add(insider)
             
             fig_vol.add_trace(gr.Scatter(
                 x=[b_date], y=[offset_y], mode="markers",
-                marker=dict(symbol="star", size=14, color=color, line=dict(color="#FFFFFF", width=1.2)),
-                text=[hover_text], hoverinfo="text", legendgroup=insider, name=f"インサイダー: {insider}", showlegend=show_in_legend
+                marker=dict(symbol=symbol, size=14, color=color, line=dict(color="#FFFFFF", width=1.2)),
+                text=[hover_text], hoverinfo="text", legendgroup=insider, name=f"🐋 {insider} ({trade_label})", showlegend=show_in_legend
             ))
             
     fig_vol.update_layout(
@@ -301,21 +303,18 @@ if raw_hist is not None:
     st.markdown("---")
 
     # ==============================================================================
-    # 🎯 強化された動的オプション推奨戦略アルゴリズム（日本語化）
+    # 🎯 強化された動的オプション推奨戦略アルゴリズム（スキュー・ネット需給連動型）
     # ==============================================================================
     st.subheader("統計的オプション推奨戦略ランキング")
 
-    # デフォルト値の設定（オプションチェーンが空だった場合のフォールバック）
     bc_buy_strike, bc_sell_strike, bc_buy_prem, bc_sell_prem = round(current_price * 0.95, 1), round(upper_1sigma, 1), round(current_price * 0.08, 2), round(current_price * 0.02, 2)
     cc_buy_stock, cc_sell_strike, cc_sell_prem = current_price, round(upper_1sigma, 1), round(current_price * 0.05, 2)
     lc_strike, lc_prem = round(current_price * 1.05, 1), round(current_price * 0.04, 2)
     
     bc_valid, cc_valid, lc_valid = False, False, False
 
-    # リアルタイムオプションチェーンが存在する場合、動的ストライク探索を実行
     if not df_calls_raw.empty:
         try:
-            # 1. ブル・コール・スプレッド用の実契約探索
             calls_itm = df_calls_raw[df_calls_raw["Delta"].between(0.60, 0.75)]
             if calls_itm.empty:
                 calls_itm = df_calls_raw[df_calls_raw["strike"] < current_price]
@@ -336,7 +335,6 @@ if raw_hist is not None:
                     bc_sell_prem = best_otm["lastPrice"] if best_otm["lastPrice"] > 0 else (current_price * 0.02)
                     bc_valid = True
 
-            # 2. カバード・コール用の実契約探索
             cc_calls = df_calls_raw[df_calls_raw["Delta"].between(0.15, 0.25)]
             if cc_calls.empty:
                 cc_calls = df_calls_raw[df_calls_raw["strike"] > current_price]
@@ -348,7 +346,6 @@ if raw_hist is not None:
                 cc_sell_prem = best_cc_call["lastPrice"] if best_cc_call["lastPrice"] > 0 else (current_price * 0.03)
                 cc_valid = True
 
-            # 3. ロング・コール用の実契約探索
             lc_calls = df_calls_raw[df_calls_raw["Delta"].between(0.45, 0.55)]
             if lc_calls.empty:
                 lc_calls = df_calls_raw.copy()
@@ -367,19 +364,22 @@ if raw_hist is not None:
     bc_net_cost = max(0.10, bc_buy_prem - bc_sell_prem)
     bc_max_profit = max(0.10, (bc_sell_strike - bc_buy_strike) - bc_net_cost)
     bc_roi = (bc_max_profit / bc_net_cost) * 100
-    bc_prob = 65.0 + (10.0 if iv > hv else -5.0)
+    
+    # スキュー値による勝率調整 (コール過熱時は上値追い勝率を上方修正)
+    bc_prob = 65.0 + (10.0 if iv > hv else -5.0) + (-5.0 if skew_val > 5.0 else 5.0)
 
     # 2. カバード・コール
     cc_net_cost = max(1.0, cc_buy_stock - cc_sell_prem)
     cc_max_profit = (cc_sell_strike - cc_buy_stock) + cc_sell_prem
     cc_roi = (cc_max_profit / cc_net_cost) * 100
-    cc_prob = 80.0 + (5.0 if iv > hv else 0.0)
+    
+    # プット過熱（下落警戒）時はカバード・コールのプレミアム回収率が上がるため勝率を上方修正
+    cc_prob = 80.0 + (5.0 if iv > hv else 0.0) + (5.0 if skew_val > 3.0 else -5.0)
 
     # 3. ロング・コール
     lc_roi = 150.0 + (50.0 if iv < hv else -30.0)
-    lc_prob = 45.0 + (10.0 if iv < hv else -10.0)
+    lc_prob = 45.0 + (10.0 if iv < hv else -10.0) + (10.0 if skew_val < -2.0 else -5.0)
 
-    # オプションチェーン未存在時の文言調整
     source_label = "[実在するオプションチェーンから自動選定]" if selected_expiry else "[理論値に基づくシミュレーション構成]"
 
     strategies_pool = [
@@ -390,8 +390,8 @@ if raw_hist is not None:
             "roi": bc_roi, 
             "prob": bc_prob,
             "desc": f"<b>【統計的選定根拠】</b><br>"
-                    f"IV/HV比率は <b>{(iv/hv if hv > 0 else 1.0):.2f}</b> です。<br>"
-                    f"ITM（イン・ザ・マネー）コールの買いと、OTM（アウト・オブ・ザ・マネー）コールの売りを組み合わせることで、時間経過によるプレミアムの減少（セータ）の影響を相殺しつつ、高い統計的勝率を確保します。<br><br>"
+                    f"IV/HV比率は <b>{(iv/hv if hv > 0 else 1.0):.2f}</b>、ボラティリティ・スキューは <b>{skew_val:+.1f}% ({skew_status})</b> です。<br>"
+                    f"{'市場は上方向のプレミアムを高く評価しており、ブル・コール戦略に強い追い風が吹いています。' if skew_val < -1.0 else 'ボラティリティの歪みは標準的であり、時間経過によるプレミアム減少を相殺するスプレッド設計が有効です。'}<br><br>"
                     f"<b>{source_label}</b><br>"
                     f"1. <b>Buy {current_ticker} ${bc_buy_strike:.1f} Call (ITM)</b> (想定価格: ${bc_buy_prem:.2f})<br>"
                     f"2. <b>Sell {current_ticker} ${bc_sell_strike:.1f} Call (OTM)</b> (想定価格: ${bc_sell_prem:.2f})<br><br>"
@@ -408,8 +408,8 @@ if raw_hist is not None:
             "roi": cc_roi, 
             "prob": cc_prob,
             "desc": f"<b>【統計的選定根拠】</b><br>"
-                    f"IV/HV比率は <b>{(iv/hv if hv > 0 else 1.0):.2f}</b> です。<br>"
-                    f"現物株式を保有しながら、権利行使されにくいOTM（アウト・オブ・ザ・マネー）コールを売却することで、確実性の高い時間価値（インカムゲイン）を回収します。<br><br>"
+                    f"IV/HV比率は <b>{(iv/hv if hv > 0 else 1.0):.2f}</b>、ボラティリティ・スキューは <b>{skew_val:+.1f}% ({skew_status})</b> です。<br>"
+                    f"{'プット過熱により下値ヘッジ需要が高いため、コールの売りプレミアムを効率よく回収できる環境です。' if skew_val > 3.0 else '安定したレンジ相場が想定されるため、現物保有＋OTMコールの売却によるインカムゲイン獲得が推奨されます。'}<br><br>"
                     f"<b>{source_label}</b><br>"
                     f"1. <b>現物株式を ${current_price:.2f} で購入 (または保有)</b><br>"
                     f"2. <b>Sell {current_ticker} ${cc_sell_strike:.1f} Call (OTM)</b> (想定プレミアム受取: ${cc_sell_prem:.2f})<br><br>"
@@ -425,7 +425,8 @@ if raw_hist is not None:
             "roi": lc_roi, 
             "prob": lc_prob,
             "desc": f"<b>【統計的選定根拠】</b><br>"
-                    f"インサイダーによる強力なクラスター買い（同時期複数購入）が観測されており、突発的な好材料（カタリスト）発表による株価急騰を狙う高レバレッジ戦略です。<br><br>"
+                    f"直近で強力なインサイダー買いが集中しています。<br>"
+                    f"ボラティリティ・スキューが <b>{skew_val:+.1f}%</b> と{'コールオプションが比較的割安に放置されているため、ロング・コール単体での上値追いに適したタイミングです。' if skew_val >= -1.0 else 'コール過熱気味ですが、インサイダーの確実性スコアが高いため、高レバレッジでの短期勝負が有効です。'}<br><br>"
                     f"<b>{source_label}</b><br>"
                     f"* <b>Buy {current_ticker} ${lc_strike:.1f} Call (ATM/OTM)</b> (想定価格: ${lc_prem:.2f})<br><br>"
                     f"<b>【リスク・リターン特性】</b><br>"
@@ -435,7 +436,6 @@ if raw_hist is not None:
         }
     ]
 
-    # ROI（リターン効率）の高い順にランキング表示
     ranked_strategies = sorted(strategies_pool, key=lambda x: x["roi"], reverse=True)
     rank_medals = ["1st 推奨戦略 (Active Strategy)", "2nd 代替戦略 (Alternative Strategy)", "3rd 戦術的戦略 (Tactical Strategy)"]
     for idx, strat in enumerate(ranked_strategies[:3]):
@@ -540,99 +540,4 @@ if selected_expiry:
         df_t_shape = pd.merge(df_c, df_p, on="strike", suffixes=("_call", "_put"))
         df_t_shape = df_t_shape.sort_values(by="strike").reset_index(drop=True)
         
-        df_t_shape_display = pd.DataFrame()
-        df_t_shape_display["Call Delta"] = df_t_shape["Delta_call"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
-        df_t_shape_display["Call IV"] = df_t_shape["impliedVolatility_call"].map(lambda x: f"{x*100:.1f}%")
-        df_t_shape_display["Call OI"] = df_t_shape["openInterest_call"].fillna(0).astype(int)
-        df_t_shape_display["Call Vol"] = df_t_shape["volume_call"].fillna(0).astype(int)
-        df_t_shape_display["Call Price"] = df_t_shape["lastPrice_call"].map(lambda x: f"${x:.2f}")
-        
-        df_t_shape_display["Strike"] = df_t_shape["strike"].map(lambda x: f"${x:.1f}")
-        
-        df_t_shape_display["Put Price"] = df_t_shape["lastPrice_put"].map(lambda x: f"${x:.2f}")
-        df_t_shape_display["Put Vol"] = df_t_shape["volume_put"].fillna(0).astype(int)
-        df_t_shape_display["Put OI"] = df_t_shape["openInterest_put"].fillna(0).astype(int)
-        df_t_shape_display["Put IV"] = df_t_shape["impliedVolatility_put"].map(lambda x: f"{x*100:.1f}%")
-        df_t_shape_display["Put Delta"] = df_t_shape["Delta_put"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
-        
-        st.dataframe(
-            df_t_shape_display[[
-                "Call Delta", "Call IV", "Call OI", "Call Vol", "Call Price", 
-                "Strike", 
-                "Put Price", "Put Vol", "Put OI", "Put IV", "Put Delta"
-            ]],
-            use_container_width=True, hide_index=True, height=320
-        )
-    else:
-        st.warning("Warning: Options data not available.")
-else:
-    st.info("Info: No option chain available for this ticker.")
-
-# ==============================================================================
-# 6. NEWS TERMINAL
-# ==============================================================================
-st.markdown("---")
-st.markdown(f"### 適時開示・コーポレートカタリスト・ターミナル: [{current_ticker}]")
-
-if hist_data is not None:
-    raw_events_by_date = {}
-    df_catalysts = fetch_catalyst_events(current_ticker, df_raw)
-    df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
-    df_insider_grouped = df_ticker_raw.groupby(["buy_date", "insider"]).agg({
-        "total_value": "sum", "position": "first", "filing_url": "first"
-    }).reset_index()
-
-    for _, trade in df_insider_grouped.iterrows():
-        t_date = trade["buy_date"]
-        if t_date not in raw_events_by_date: raw_events_by_date[t_date] = []
-        raw_events_by_date[t_date].append({
-            "type": "I", "insider": trade["insider"], "position": trade["position"],
-            "value": trade["total_value"], "url": trade["filing_url"]
-        })
-
-    if not df_catalysts.empty:
-        for _, row in df_catalysts.iterrows():
-            c_date = pd.to_datetime(row["date"])
-            if c_date not in raw_events_by_date: raw_events_by_date[c_date] = []
-            raw_events_by_date[c_date].append({
-                "type": "C", "category": row["category"], "title": row["title"], "url": row["source_url"]
-            })
-
-if hist_data is not None and 'raw_events_by_date' in locals() and raw_events_by_date:
-    linked_sources_list = []
-    for event_date in sorted(raw_events_by_date.keys(), reverse=True):
-        date_str = event_date.strftime('%Y-%m-%d')
-        prev_day = (event_date - timedelta(days=1)).strftime('%Y-%m-%d')
-        next_day = (event_date + timedelta(days=1)).strftime('%Y-%m-%d')
-        date_specific_news_url = f"https://www.google.com/search?q={current_ticker}+stock+news+after:{prev_day}+before:{next_day}&tbm=nws"
-        
-        for item in raw_events_by_date[event_date]:
-            if item["type"] == "I":
-                linked_sources_list.append([
-                    date_str, "インサイダー取引 [ I ]",
-                    f"{item['insider']} ({item['position']}) が ${item['value']:,.0f} 相当を購入",
-                    item["url"], date_specific_news_url,
-                    f"https://finviz.com/quote.ashx?t={current_ticker}"
-                ])
-            else:
-                linked_sources_list.append([
-                    date_str, "カタリストイベント [ R ]",
-                    f"[{item['category']}] {item['title']}",
-                    f"https://www.sec.gov/edgar/browse/?CIK={current_ticker}",
-                    item["url"],
-                    f"https://finviz.com/quote.ashx?t={current_ticker}"
-                ])
-                
-    if linked_sources_list:
-        df_sources = pd.DataFrame(linked_sources_list, columns=["日付", "イベント種別", "イベント概要", "SEC Form 4 リンク", "Google ニュース", "Finviz チャート"])
-        st.dataframe(
-            df_sources,
-            column_config={
-                "SEC Form 4 リンク": st.column_config.LinkColumn("SEC Form 4 リンク", display_text="Form 4 開示"),
-                "Google ニュース": st.column_config.LinkColumn("Google ニュース", display_text="ニュース検索"),
-                "Finviz チャート": st.column_config.LinkColumn("Finviz チャート", display_text="外部チャート")
-            },
-            use_container_width=True, hide_index=True, height=250
-        )
-else:
-    st.info("関連するイベント履歴が見つかりませんでした。")
+        df
