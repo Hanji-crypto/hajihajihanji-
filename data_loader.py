@@ -23,7 +23,6 @@ def init_database_if_not_exists():
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = [row[0] for row in cursor.fetchall()]
     
-    # テーブルが全くない場合のみ新規作成
     if not tables:
         cursor.execute("""
             CREATE TABLE insider_trades (
@@ -53,11 +52,9 @@ def load_and_process_data():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # 存在するテーブル名を取得
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = [row[0] for row in cursor.fetchall()]
     
-    # 適切なテーブルを選択
     target_table = "insider_trades"
     if "insider_trades" not in tables and tables:
         target_table = tables[0]
@@ -69,7 +66,7 @@ def load_and_process_data():
     if df.empty:
         return df
 
-    # --- カラム名の自動マッピング（表記揺れ対策） ---
+    # --- カラム名の自動マッピング ---
     rename_map = {}
     for col in df.columns:
         col_lower = col.lower()
@@ -93,15 +90,18 @@ def load_and_process_data():
             rename_map[col] = "total_value"
         elif col_lower in ["filing_url", "url", "link", "source"]:
             rename_map[col] = "filing_url"
+        elif col_lower in ["transaction_type", "type", "action"]:
+            rename_map[col] = "transaction_type"
 
     df = df.rename(columns=rename_map)
 
-    # 必須カラムが不足している場合のフォールバック補完
+    # 必須カラムの補完
     required_cols = {
         "ticker": "UNKNOWN", "company": "Unknown Company", "insider": "Unknown Insider",
         "position": "Director", "buy_date": datetime.now().strftime("%Y-%m-%d"),
         "filing_date": datetime.now().strftime("%Y-%m-%d"), "share_price": 10.0,
-        "shares_traded": 1000, "total_value": 10000.0, "filing_url": "https://www.sec.gov/"
+        "shares_traded": 1000, "total_value": 10000.0, "filing_url": "https://www.sec.gov/",
+        "transaction_type": "Buy"  # デフォルトは買い
     }
     for col, default_val in required_cols.items():
         if col not in df.columns:
@@ -111,76 +111,69 @@ def load_and_process_data():
     df["buy_date"] = pd.to_datetime(df["buy_date"], errors='coerce')
     df["filing_date"] = pd.to_datetime(df["filing_date"], errors='coerce')
     
-    # 変換エラー（NaT）の補完
     df["buy_date"] = df["buy_date"].fillna(pd.Timestamp(datetime.now() - timedelta(days=30)))
     df["filing_date"] = df["filing_date"].fillna(pd.Timestamp(datetime.now()))
     
     # 数値型の強制キャスト
     df["total_value"] = pd.to_numeric(df["total_value"], errors='coerce').fillna(10000.0)
     df["share_price"] = pd.to_numeric(df["share_price"], errors='coerce').fillna(10.0)
+    df["shares_traded"] = pd.to_numeric(df["shares_traded"], errors='coerce').fillna(1000)
+    
+    # 【売りデータの判別と負値化】
+    # transaction_type が S, Sell, Sale, 売り などの場合はマイナス値として処理
+    def adjust_value_by_type(row):
+        t_type = str(row["transaction_type"]).strip().upper()
+        val = abs(row["total_value"])
+        if t_type in ["S", "SELL", "SALE", "売り", "DISPOSITION"]:
+            return -val
+        return val
+
+    df["net_value"] = df.apply(adjust_value_by_type, axis=1)
     
     return df
 
 def generate_screener(df):
     """
-    【全件対応スクリーニング・アルゴリズム】
-    アップロードされた全データに対して、統計スコアリングを適用してマトリックスを生成します。
+    【ネット需給対応多次元スクリーニング・アルゴリズム】
+    買い（プラス）と売り（マイナス）を相殺した「ネット・インサイダー・フロー」を算出。
     """
     if df.empty:
         return pd.DataFrame()
 
-    # 1. 最低取引金額フィルター
-    df_filtered = df[df["total_value"] >= 10000].copy()
-    if df_filtered.empty:
-        df_filtered = df.copy()
-
-    # 2. 役職による重み係数の定義
-    def get_position_weight(pos):
-        if not pos:
-            return 1.0
-        pos_upper = str(pos).upper()
-        if "CEO" in pos_upper or "CHIEF EXECUTIVE" in pos_upper or "CFO" in pos_upper or "CHIEF FINANCIAL" in pos_upper:
-            return 1.5
-        elif "DIRECTOR" in pos_upper or "OFFICER" in pos_upper or "PRESIDENT" in pos_upper:
-            return 1.2
-        else:
-            return 1.0
-
-    df_filtered["pos_weight"] = df_filtered["position"].apply(get_position_weight)
-    df_filtered["weighted_value"] = df_filtered["total_value"] * df_filtered["pos_weight"]
-
     # 銘柄ごとの集計
     screener_rows = []
-    grouped = df_filtered.groupby("ticker")
+    grouped = df.groupby("ticker")
     
     for ticker, group in grouped:
-        total_val = group["total_value"].sum()
+        # ネットフロー（総買い額 - 総売り額）
+        net_flow = group["net_value"].sum()
+        
+        # 買いと売りのそれぞれの合計額
+        total_buy = group[group["net_value"] > 0]["net_value"].sum()
+        total_sell = abs(group[group["net_value"] < 0]["net_value"].sum())
+        
         avg_price = group["share_price"].mean()
         most_recent_trade = group.sort_values(by="buy_date", ascending=False).iloc[0]
         trade_count = len(group)
         
-        # ユニークなインサイダー数（クラスター買い判定用）
+        # ユニークなインサイダー数
         unique_insiders = group["insider"].nunique()
         
-        # 役職重み付け後の合計価値
-        weighted_sum = group["weighted_value"].sum()
-        
-        # クラスター買いボーナス
-        cluster_bonus = 1.0
-        if unique_insiders >= 3:
-            cluster_bonus = 2.0
-        elif unique_insiders == 2:
-            cluster_bonus = 1.4
-
-        # 統計的確実性スコアの算出
-        base_score = np.log10(weighted_sum) * 10 if weighted_sum > 0 else 10.0
-        certainty_score = min(100.0, base_score * cluster_bonus)
-        certainty_score = max(10.0, certainty_score)
+        # 統計的確実性スコアの算出 (ネットフローがプラスの場合のみ高スコア)
+        if net_flow > 0:
+            base_score = np.log10(net_flow) * 10
+            cluster_bonus = 1.4 if unique_insiders >= 2 else 1.0
+            certainty_score = min(100.0, base_score * cluster_bonus)
+            certainty_score = max(10.0, certainty_score)
+        else:
+            certainty_score = 0.0  # 売り越し銘柄はスコア0
 
         screener_rows.append({
             "ticker": ticker,
             "company": most_recent_trade["company"],
-            "total_value": total_val,
+            "net_flow": net_flow,
+            "total_buy": total_buy,
+            "total_sell": total_sell,
             "avg_price": avg_price,
             "insider": most_recent_trade["insider"],
             "buy_date": most_recent_trade["buy_date"],
@@ -190,9 +183,9 @@ def generate_screener(df):
 
     df_screener = pd.DataFrame(screener_rows)
     
-    # 統計的確実性スコア（Certainty）の降順でソート
+    # ネットフロー（需給）の降順でソート
     if not df_screener.empty:
-        df_screener = df_screener.sort_values(by="Certainty (%)", ascending=False).reset_index(drop=True)
+        df_screener = df_screener.sort_values(by="net_flow", ascending=False).reset_index(drop=True)
     
     return df_screener
 
@@ -315,29 +308,25 @@ def fetch_option_chain_by_expiry(ticker, expiry, current_price):
 
 def calculate_volatility_skew(df_calls, df_puts, current_price):
     """
-    【新規実装：ボラティリティ・スキュー算出ロジック】
+    【ボラティリティ・スキュー算出ロジック】
     OTMプット(Delta ~ -0.25)とOTMコール(Delta ~ 0.25)のIVの差を計算し、市場の歪みを数値化します。
     """
     if df_calls.empty or df_puts.empty:
         return 0.0, "標準的 (Neutral)"
         
     try:
-        # OTMコールの選定 (Deltaが 0.20 ~ 0.35 に最も近い契約)
         otm_calls = df_calls[df_calls["Delta"].between(0.20, 0.35)]
         if otm_calls.empty:
             otm_calls = df_calls[df_calls["strike"] > current_price]
         call_iv = otm_calls.sort_values(by="openInterest", ascending=False).iloc[0]["impliedVolatility"] if not otm_calls.empty else 0.30
         
-        # OTMプットの選定 (Deltaが -0.35 ~ -0.20 に最も近い契約)
         otm_puts = df_puts[df_puts["Delta"].between(-0.35, -0.20)]
         if otm_puts.empty:
             otm_puts = df_puts[df_puts["strike"] < current_price]
         put_iv = otm_puts.sort_values(by="openInterest", ascending=False).iloc[0]["impliedVolatility"] if not otm_puts.empty else 0.30
         
-        # スキュー（歪み）の計算 (プットIV - コールIV)
         skew_value = (put_iv - call_iv) * 100
         
-        # スキュー状態の判定
         if skew_value > 8.0:
             status = "極端なプット過熱 (Extreme Downside Fear)"
         elif skew_value > 3.0:
