@@ -312,10 +312,16 @@ if raw_hist is not None:
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
 
-    # 修正：引数を4つに絞って呼び出す
+    # 修正後：定義されている9つの引数をすべて正しい順序で渡す
     fig_stock = draw_stock_chart(
         df_plot, 
         chart_type, 
         overlay_indicator, 
-        current_price
+        current_price,
+        iv,                 # ← 不足していた引数1
+        future_dates,
+        upper_band_curve,
+        lower_band_curve,
+        xaxis_range         # ← 不足していた引数2
     )
+
