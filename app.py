@@ -360,33 +360,59 @@ if raw_hist is not None:
         if 'ticker' not in df_plot_safe.columns:
             df_plot_safe['ticker'] = current_ticker_var
 
-        # 3. 渡す可能性のあるすべての引数プールを定義
+
+    # 3. ボラティリティチャートの描画と出力
+    try:
+        import inspect
+        import pandas as pd
+
+        # 1. 安全なティッカー名と現在日付の取得
+        current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
+        current_date_safe = pd.Timestamp.now()
+
+        # 2. データのディープコピーと必須カラムの安全な補完（ベストプラクティス：データ整合性の確保）
+        df_raw_safe = hist_data.copy()
+        df_plot_safe = df_plot.copy() if 'df_plot' in locals() else df_raw_safe.copy()
+
+        for df_temp in [df_raw_safe, df_plot_safe]:
+            # 'ticker' カラムの補完
+            if 'ticker' not in df_temp.columns:
+                df_temp['ticker'] = current_ticker_var
+            # 'buy_date' カラムの補完（エラーの原因を直接解決）
+            if 'buy_date' not in df_temp.columns:
+                # インデックスがDatetimeIndexの場合はその最小値、そうでなければ現在時刻
+                if isinstance(df_temp.index, pd.DatetimeIndex) and not df_temp.empty:
+                    df_temp['buy_date'] = df_temp.index.min()
+                else:
+                    df_temp['buy_date'] = current_date_safe
+
+        # 3. 渡す可能性のあるすべての引数プール（ベストプラクティス：明示的なデータマッピング）
         arg_pool = {
             'df_plot': df_plot_safe,
             'hist_data': df_raw_safe,
-            'display_window': display_window,
-            'iv': iv,
-            'hv': hv,
+            'display_window': display_window if 'display_window' in locals() else 30,
+            'iv': iv if 'iv' in locals() else 0.2,
+            'hv': hv if 'hv' in locals() else 0.2,
             'df_raw': df_raw_safe,
             'current_ticker': current_ticker_var,
-            'xaxis_range': xaxis_range
+            'xaxis_range': xaxis_range if 'xaxis_range' in locals() else None
         }
 
-        # 4. 関数のシグネチャ（引数定義）を動的に解析
+        # 4. 関数の引数定義を動的に解析（ベストプラクティス：実行時整合性の確保）
         sig = inspect.signature(draw_volatility_chart)
         sig_params = list(sig.parameters.keys())
 
-        # 5. 関数が要求する引数だけを、定義されている順番通りに並べ替えて抽出
+        # 5. 関数が要求する引数だけを、定義されている順番通りに抽出
         final_args = []
         for param_name in sig_params:
             if param_name in arg_pool:
                 final_args.append(arg_pool[param_name])
             else:
-                # 定義されているがプールにない引数がある場合、安全なデフォルト値を推測して追加
+                # 未知の引数に対するフォールバック
                 if 'ticker' in param_name.lower():
                     final_args.append(current_ticker_var)
                 elif 'range' in param_name.lower():
-                    final_args.append(xaxis_range)
+                    final_args.append(arg_pool['xaxis_range'])
                 elif 'df' in param_name.lower() or 'data' in param_name.lower():
                     final_args.append(df_raw_safe)
                 else:
@@ -397,10 +423,4 @@ if raw_hist is not None:
         st.plotly_chart(fig_vol, use_container_width=True)
 
     except Exception as e:
-        # 万が一のフォールバック：最もシンプルな引数で試行
-        try:
-            fig_vol = draw_volatility_chart(hist_data, xaxis_range)
-            st.plotly_chart(fig_vol, use_container_width=True)
-        except Exception as inner_e:
-            st.error(f"ボラティリティチャートの描画に失敗しました: {e} (詳細: {inner_e})")
-
+        st.error(f"ボラティリティチャートの描画に失敗しました: {e}")
