@@ -162,7 +162,7 @@ if raw_hist is not None:
     hist_data = compute_technical_indicators(raw_hist)
 
     # ----------------------------------------------------------------------
-    # 【大幅改良】全満期日の推奨オプション戦略データの動的構築（DTE/IV感応型）
+    # 全満期日の推奨オプション戦略データの動的構築（DTE/IV感応型）
     # ----------------------------------------------------------------------
     recommendations_list = []
     
@@ -247,19 +247,17 @@ if raw_hist is not None:
                     atm_put_price = atm_put["lastPrice"] if atm_put["lastPrice"] > 0 else atm_put_price
 
                 # --- 統計数値の動的計算（DTEとIV、スキューを反映） ---
-                # 1. ブル・コール・スプレッド
                 bc_net_cost = max(0.10, bc_buy_prem - bc_sell_prem)
                 bc_max_profit = max(0.10, (bc_sell_strike - bc_buy_strike) - bc_net_cost)
                 bc_roi = (bc_max_profit / bc_net_cost) * 100
                 bc_prob = 50.0 + (15.0 * math.tanh(dte / 90)) + (10.0 if iv > hv else -5.0) + (-5.0 if skew_val > 5.0 else 5.0)
 
-                # 2. カバード・コール
                 cc_net_cost = max(1.0, cc_buy_stock - cc_sell_prem)
                 cc_max_profit = (cc_sell_strike - cc_buy_stock) + cc_sell_prem
-                cc_roi = ((cc_max_profit / cc_net_cost) * 100) * (30 / dte) # 月利換算に調整
+                cc_roi = ((cc_max_profit / cc_net_cost) * 100) * (30 / dte) # 月利換算
                 cc_prob = 90.0 - (20.0 * math.tanh(dte / 180)) + (5.0 if iv > hv else 0.0) + (5.0 if skew_val > 3.0 else -5.0)
 
-                # 3. ロング・コール
+                # ロング・コール
                 lc_roi = 100.0 + (150.0 * math.log10(dte + 1)) + (50.0 if iv < hv else -30.0)
                 lc_prob = 40.0 - (15.0 * math.tanh(dte / 120)) + (10.0 if iv < hv else -10.0) + (10.0 if skew_val < -2.0 else -5.0)
 
@@ -427,6 +425,46 @@ if raw_hist is not None:
         hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace")
     )
     st.plotly_chart(fig_vol, use_container_width=True)
+
+    st.markdown("---")
+
+    # ==============================================================================
+    # 【復元】インサイダー取引 BIマトリックス
+    # ==============================================================================
+    st.subheader(f"🐋 [{current_ticker}] インサイダー取引アクティビティ BIマトリックス")
+    
+    df_ticker_insider = df_raw[df_raw["ticker"] == current_ticker].copy()
+    if not df_ticker_insider.empty:
+        # 表示用にカラムを整理
+        df_insider_bi = df_ticker_insider.sort_values(by="buy_date", ascending=False).copy()
+        df_insider_bi = df_insider_bi.rename(columns={
+            "buy_date": "取引日",
+            "insider": "インサイダー氏名",
+            "position": "役職",
+            "shares": "取引株数",
+            "price": "取引単価 ($)",
+            "net_value": "取引金額 ($)",
+            "Certainty (%)": "統計的確実性スコア"
+        })
+        
+        # 取引タイプの判別
+        df_insider_bi["取引タイプ"] = df_insider_bi["取引金額 ($)"].map(lambda x: "購入 (Buy)" if x > 0 else "売却 (Sell)")
+        
+        # フォーマット適用
+        df_insider_bi["取引日"] = df_insider_bi["取引日"].dt.strftime('%Y-%m-%d')
+        df_insider_bi["取引株数"] = df_insider_bi["取引株数"].map(lambda x: f"{x:,.0f}")
+        df_insider_bi["取引単価 ($)"] = df_insider_bi["取引単価 ($)"].map(lambda x: f"${x:,.2f}")
+        df_insider_bi["取引金額 ($)"] = df_insider_bi["取引金額 ($)"].map(lambda x: f"${x:+,.0f}" if x != 0 else "$0")
+        df_insider_bi["統計的確実性スコア"] = df_insider_bi["統計的確実性スコア"].map(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
+        
+        st.dataframe(
+            df_insider_bi[["取引日", "インサイダー氏名", "役職", "取引タイプ", "取引株数", "取引単価 ($)", "取引金額 ($)", "統計的確実性スコア"]],
+            use_container_width=True,
+            hide_index=True,
+            height=200
+        )
+    else:
+        st.info(f"💡 [{current_ticker}] のインサイダー取引データはデータベースに登録されていません。")
 
     st.markdown("---")
 
@@ -637,7 +675,7 @@ if raw_hist is not None:
     ]
 
     ranked_strategies = sorted(strategies_pool, key=lambda x: x["roi"], reverse=True)
-    rank_medals = ["1st 推奨戦略 (Active Strategy)", "2nd 代替戦略 (Alternative Strategy)", "3rd 戦術的戦略 (Tactical Strategy)"]
+    rank_medals = ["1st 推挙戦略 (Active Strategy)", "2nd 代替戦略 (Alternative Strategy)", "3rd 戦術的戦略 (Tactical Strategy)"]
     for idx, strat in enumerate(ranked_strategies[:3]):
         st.html(f"""
             <div class="{strat['class']}">
@@ -765,7 +803,7 @@ if selected_expiry:
                     <p style="color: #94A3B8; font-size: 11px; margin-top: 5px; margin-bottom: 0;">スキュー値: {skew_val:+.1f}% (状態: {skew_status})</p>
                 </div>
                 <div style="background-color: #111827; padding: 15px; border-radius: 6px; border: 1px solid #1E293B;">
-                    <span style="color: #94A3B8; font-size: 11px; display: block; margin-bottom: 5px;">オプション価格の割高・割安度</span>
+                    <span style="color: #94A3B8; font-size: 11px; display: block; margin-bottom: 5px;">オプション価格 of 割高・割安度</span>
                     <strong style="color: #E2E8F0; font-size: 16px;">{vol_sentiment}</strong>
                     <p style="color: #94A3B8; font-size: 11px; margin-top: 5px; margin-bottom: 0;">IV/HV比率: {iv_hv_ratio:.2f} (IV: {iv*100:.1f}% / HV: {hv*100:.1f}%)</p>
                 </div>
@@ -796,18 +834,4 @@ if selected_expiry:
                         </tr>
                         <tr style="border-bottom: 1px solid #1E293B;">
                             <td style="padding: 6px; font-weight: bold; color: #00FFCC;">IV (予測ボラ)</td>
-                            <td style="padding: 6px;">将来の期待変動率 / プレミアムの割高・割安</td>
-                            <td style="padding: 6px; color: #FF007F;">割高 (オプション売り手有利。カバード・コール推奨)</td>
-                            <td style="padding: 6px; color: #38BDF8;">割安 (オプション買い手有利。ロング・コール推奨)</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #1E293B;">
-                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (建玉)</td>
-                            <td style="padding: 6px;">未決済の契約総数 / 市場の注目度</td>
-                            <td style="padding: 6px; color: #38BDF8;">強い支持線・抵抗線として機能（壁としての意識）</td>
-                            <td style="padding: 6px;">流動性が低くスプレッドが広いため、取引回避推奨</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    """)
+                            <td style="padding: 6px;">将来の期待変動率 / プレミアム
