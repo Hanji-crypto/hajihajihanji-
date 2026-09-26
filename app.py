@@ -344,20 +344,21 @@ if raw_hist is not None:
     except Exception as e:
         st.error(f"サブ指標チャートの描画中にエラーが発生しました: {e}")
 
-          # 3. ボラティリティチャートの描画と出力
+            # 3. ボラティリティチャートの描画と出力
     try:
         # app.py で使われているティッカー変数を自動特定
         current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
         
-        # エラーメッセージの要求順（7つの引数）に完全に一致させます
+        # 8つの引数を正しい順番で完全に一致させます
         fig_vol = draw_volatility_chart(
-            hist_data,          # 1. hist_data
-            display_window,     # 2. display_window
-            iv,                 # 3. iv
-            hv,                 # 4. hv
-            hist_data,          # 5. df_raw (生データとしてhist_dataを渡す)
-            current_ticker_var, # 6. current_ticker
-            xaxis_range         # 7. xaxis_range
+            df_plot,            # 1. df_plot (スライスされたプロット用データ)
+            hist_data,          # 2. hist_data (ヒストリカルデータ全体)
+            display_window,     # 3. display_window (表示ウィンドウ幅)
+            iv,                 # 4. iv (インプライド・ボラティリティ)
+            hv,                 # 5. hv (歴史的ボラティリティ)
+            hist_data,          # 6. df_raw (生データ)
+            current_ticker_var, # 7. current_ticker (ティッカー名)
+            xaxis_range         # 8. xaxis_range (X軸の表示範囲)
         )
         st.plotly_chart(fig_vol, use_container_width=True)
     except Exception as e:
