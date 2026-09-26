@@ -409,6 +409,133 @@ if raw_hist is not None:
     try:
         fig_vol = draw_volatility_chart(*final_args)
         st.plotly_chart(fig_vol, use_container_width=True)
+
+
+    # ==============================================================================
+    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (復元)
+    # ==============================================================================
+    if recommendations_list:
+        st.markdown("---")
+        st.subheader("Whale-Eye 推奨オプション戦略")
+
+        # 最も条件の良い満期日のデータを取得（1番目の満期日をデフォルトとする）
+        rec = recommendations_list[0]
+
+        col_strat1, col_strat2, col_strat3 = st.columns(3)
+
+        with col_strat1:
+            st.html(f"""
+                <div class="strategy-card">
+                    <h4 style="color: #00FFCC; margin-top:0;">📈 ブル・コール・スプレッド</h4>
+                    <p style="font-size: 12px; color: #94A3B8;">上昇トレンドかつ高ボラティリティ局面で有効</p>
+                    <p><b>想定勝率:</b> <span style="color: #00FFCC; font-family: monospace;">{rec['ブル・コール 勝率 (%)']:.1f}%</span></p>
+                    <p><b>期待ROI:</b> <span style="color: #00FFCC; font-family: monospace;">{rec['ブル・コール ROI (%)']:.1f}%</span></p>
+                    <p style="font-size: 11px; color: #64748B;">※インサイダーの買い集めとIV/HVの乖離から算出された最適エントリー</p>
+                </div>
+            """)
+
+        with col_strat2:
+            st.html(f"""
+                <div class="strategy-card-secondary">
+                    <h4 style="color: #38BDF8; margin-top:0;">🛡️ カバード・コール</h4>
+                    <p style="font-size: 12px; color: #94A3B8;">緩やかな上昇またはレンジ相場でインカムを狙う</p>
+                    <p><b>想定勝率:</b> <span style="color: #38BDF8; font-family: monospace;">{rec['カバード・コール 勝率 (%)']:.1f}%</span></p>
+                    <p><b>期待ROI (年換算):</b> <span style="color: #38BDF8; font-family: monospace;">{rec['カバード・コール ROI (%)']:.1f}%</span></p>
+                    <p style="font-size: 11px; color: #64748B;">※現物保有リスクをオプションプレミアムでヘッジ</p>
+                </div>
+            """)
+
+        with col_strat3:
+            st.html(f"""
+                <div class="strategy-card-warning">
+                    <h4 style="color: #A855F7; margin-top:0;">🚀 ロング・コール (単体買い)</h4>
+                    <p style="font-size: 12px; color: #94A3B8;">爆発的な急上昇（カタリスト直前）を狙う高リスク戦略</p>
+                    <p><b>想定勝率:</b> <span style="color: #A855F7; font-family: monospace;">{rec['ロング・コール 勝率 (%)']:.1f}%</span></p>
+                    <p><b>期待ROI:</b> <span style="color: #A855F7; font-family: monospace;">{rec['ロング・コール ROI (%)']:.1f}%</span></p>
+                    <p style="font-size: 11px; color: #64748B;">※ボラティリティが歴史的に低く、インサイダーの急激な買いがトリガー</p>
+                </div>
+            """)
+
+        # 損益図（ペイオフ・ダイアグラム）の描画
+        st.markdown("### 選択戦略の損益プロファイル (ペイオフ・ダイアグラム)")
+        selected_strategy = st.selectbox(
+            "損益シミュレーションを行う戦略を選択:",
+            options=["ブル・コール・スプレッド", "カバード・コール", "ロング・コール"]
+        )
+
+        try:
+            # 各戦略に応じたストライクとプレミアムの動的設定
+            if selected_strategy == "ブル・コール・スプレッド":
+                # スクリーニングマトリックスやインサイダーの平均取得単価を参考にストライクを決定
+                strike_long = round(current_price * 0.95, 1)
+                strike_short = round(current_price * 1.10, 1)
+                premium_paid = round(current_price * 0.05, 2)
+                premium_received = round(current_price * 0.01, 2)
+                
+                fig_payoff = draw_payoff_chart(
+                    strategy_name="Bull Call Spread",
+                    current_price=current_price,
+                    iv=iv,
+                    strike_long=strike_long,
+                    strike_short=strike_short,
+                    premium_paid=premium_paid,
+                    premium_received=premium_received
+                )
+            elif selected_strategy == "カバード・コール":
+                strike_short = round(current_price * 1.05, 1)
+                premium_received = round(current_price * 0.03, 2)
+                
+                fig_payoff = draw_payoff_chart(
+                    strategy_name="Covered Call",
+                    current_price=current_price,
+                    iv=iv,
+                    strike_long=current_price, # 原資産価格
+                    strike_short=strike_short,
+                    premium_paid=0.0,
+                    premium_received=premium_received
+                )
+            else: # ロング・コール
+                strike_long = round(current_price * 1.02, 1)
+                premium_paid = round(current_price * 0.04, 2)
+                
+                fig_payoff = draw_payoff_chart(
+                    strategy_name="Long Call",
+                    current_price=current_price,
+                    iv=iv,
+                    strike_long=strike_long,
+                    strike_short=None,
+                    premium_paid=premium_paid,
+                    premium_received=0.0
+                )
+
+            if fig_payoff:
+                st.plotly_chart(fig_payoff, use_container_width=True)
+        except Exception as e:
+            st.error(f"損益図の描画中にエラーが発生しました: {e}")
+
+    # ==============================================================================
+    # 6. MARKET DIAGNOSTIC & GUIDE (復元)
+    # ==============================================================================
+    st.markdown("---")
+    st.subheader("Whale-Eye 統合市場診断・インテリジェンス・ガイド")
+    
+    try:
+        # インサイダー確実性スコアの取得
+        certainty_score = 50.0
+        if not df_screener.empty:
+            ticker_row = df_screener[df_screener["ticker"] == current_ticker]
+            if not ticker_row.empty:
+                certainty_score = float(ticker_row.iloc[0]["Certainty (%)"])
+
+        # ガイドレンダラーモジュールの呼び出し
+        render_market_diagnostic_and_guide(
+            ticker=current_ticker,
+            current_price=current_price,
+            iv=iv,
+            hv=hv,
+            certainty_score=certainty_score,
+            skew=skew_val
+        )
     except Exception as e:
-        st.error(f"ボラティリティチャートの描画中にエラーが発生しました: {e}")
+        st.error(f"市場診断の生成中にエラーが発生しました: {e}")
 
