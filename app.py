@@ -312,4 +312,4 @@ if raw_hist is not None:
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
 
-    fig_stock = draw_stock_chart(df_plot, chart_type, overlay_indicator, current_price,
+    fig_stock = draw_stock_chart(df_plot, chart_type, overlay_indicator, current_price)
