@@ -181,8 +181,6 @@ if raw_hist is not None:
                 
                 # 期間（DTE）に応じたボラティリティ調整係数
                 t_years = dte / 365.25
-                
-                # デフォルト値の動的初期化（DTEとIVを反映させた理論値ベース）
                 expected_move_pct = iv * np.sqrt(t_years)
                 
                 bc_buy_strike = round(current_price * 0.95, 1)
@@ -202,7 +200,6 @@ if raw_hist is not None:
                 atm_put_price = current_price * (0.02 + expected_move_pct * 0.3)
                 
                 if not df_calls_raw.empty:
-                    # ATMに近いストライクのCall/Put価格をマトリックス表示用に取得
                     df_calls_raw["diff"] = (df_calls_raw["strike"] - current_price).abs()
                     atm_call = df_calls_raw.sort_values(by="diff").iloc[0]
                     atm_call_price = atm_call["lastPrice"] if atm_call["lastPrice"] > 0 else atm_call_price
@@ -254,10 +251,9 @@ if raw_hist is not None:
 
                 cc_net_cost = max(1.0, cc_buy_stock - cc_sell_prem)
                 cc_max_profit = (cc_sell_strike - cc_buy_stock) + cc_sell_prem
-                cc_roi = ((cc_max_profit / cc_net_cost) * 100) * (30 / dte) # 月利換算
+                cc_roi = ((cc_max_profit / cc_net_cost) * 100) * (30 / dte)
                 cc_prob = 90.0 - (20.0 * math.tanh(dte / 180)) + (5.0 if iv > hv else 0.0) + (5.0 if skew_val > 3.0 else -5.0)
 
-                # ロング・コール
                 lc_roi = 100.0 + (150.0 * math.log10(dte + 1)) + (50.0 if iv < hv else -30.0)
                 lc_prob = 40.0 - (15.0 * math.tanh(dte / 120)) + (10.0 if iv < hv else -10.0) + (10.0 if skew_val < -2.0 else -5.0)
 
@@ -269,7 +265,6 @@ if raw_hist is not None:
                 lc_roi = float(np.clip(lc_roi, 10.0, 500.0)) if not np.isnan(lc_roi) else 120.0
                 lc_prob = float(np.clip(lc_prob, 5.0, 80.0)) if not np.isnan(lc_prob) else 30.0
 
-                # 各戦略情報をリストに格納
                 recommendations_list.append({
                     "満期日": expiry,
                     "ATM Strike": round(current_price, 1),
@@ -288,7 +283,6 @@ if raw_hist is not None:
             except Exception as e:
                 continue
 
-    # 1つ目の満期日をデフォルトのチャート・詳細表示用として設定
     selected_expiry = None
     if available_expiries:
         selected_expiry = st.selectbox("詳細チャート表示用のオプション満期日を選択してください:", options=available_expiries, index=0)
@@ -330,7 +324,7 @@ if raw_hist is not None:
         sub_indicator = st.selectbox("下段サブ指標の選択:", ["RSI + MACD", "ATR (Volatility Range)"])
 
     # ----------------------------------------------------------------------
-    # CHART 1 & 2: メイン株価チャート ＆ サブ指標（完全物理分離）
+    # CHART 1 & 2: メイン株価チャート ＆ サブ指標
     # ----------------------------------------------------------------------
     st.markdown("### テクニカル分析チャート")
 
@@ -435,7 +429,6 @@ if raw_hist is not None:
     
     df_ticker_insider = df_raw[df_raw["ticker"] == current_ticker].copy()
     if not df_ticker_insider.empty:
-        # 表示用にカラムを整理
         df_insider_bi = df_ticker_insider.sort_values(by="buy_date", ascending=False).copy()
         df_insider_bi = df_insider_bi.rename(columns={
             "buy_date": "取引日",
@@ -447,10 +440,7 @@ if raw_hist is not None:
             "Certainty (%)": "統計的確実性スコア"
         })
         
-        # 取引タイプの判別
         df_insider_bi["取引タイプ"] = df_insider_bi["取引金額 ($)"].map(lambda x: "購入 (Buy)" if x > 0 else "売却 (Sell)")
-        
-        # フォーマット適用
         df_insider_bi["取引日"] = df_insider_bi["取引日"].dt.strftime('%Y-%m-%d')
         df_insider_bi["取引株数"] = df_insider_bi["取引株数"].map(lambda x: f"{x:,.0f}")
         df_insider_bi["取引単価 ($)"] = df_insider_bi["取引単価 ($)"].map(lambda x: f"${x:,.2f}")
@@ -477,7 +467,6 @@ if raw_hist is not None:
     if recommendations_list:
         df_rec = pd.DataFrame(recommendations_list)
         
-        # ProgressColumn を用いることで、数値とバーが重ならずに美しく表示されます
         st.dataframe(
             df_rec,
             column_config={
@@ -597,19 +586,17 @@ if raw_hist is not None:
             st.sidebar.warning(f"Option strategy error: {opt_err}")
 
     # --- 統計数値の動的計算 ---
-    # 1. ブル・コール・スプレッド
     bc_net_cost = max(0.10, bc_buy_prem - bc_sell_prem)
     bc_max_profit = max(0.10, (bc_sell_strike - bc_buy_strike) - bc_net_cost)
     bc_roi = (bc_max_profit / bc_net_cost) * 100
     bc_prob = 65.0 + (10.0 if iv > hv else -5.0) + (-5.0 if skew_val > 5.0 else 5.0)
 
-    # 2. カバード・コール
     cc_net_cost = max(1.0, cc_buy_stock - cc_sell_prem)
     cc_max_profit = (cc_sell_strike - cc_buy_stock) + cc_sell_prem
     cc_roi = (cc_max_profit / cc_net_cost) * 100
     cc_prob = 80.0 + (5.0 if iv > hv else 0.0) + (5.0 if skew_val > 3.0 else -5.0)
 
-    # 3. ロング・コール
+    # ロング・コール
     lc_roi = 150.0 + (50.0 if iv < hv else -30.0)
     lc_prob = 45.0 + (10.0 if iv < hv else -10.0) + (10.0 if skew_val < -2.0 else -5.0)
 
@@ -675,7 +662,7 @@ if raw_hist is not None:
     ]
 
     ranked_strategies = sorted(strategies_pool, key=lambda x: x["roi"], reverse=True)
-    rank_medals = ["1st 推挙戦略 (Active Strategy)", "2nd 代替戦略 (Alternative Strategy)", "3rd 戦術的戦略 (Tactical Strategy)"]
+    rank_medals = ["1st 推奨戦略 (Active Strategy)", "2nd 代替戦略 (Alternative Strategy)", "3rd 戦術的戦略 (Tactical Strategy)"]
     for idx, strat in enumerate(ranked_strategies[:3]):
         st.html(f"""
             <div class="{strat['class']}">
@@ -691,7 +678,6 @@ if raw_hist is not None:
     best_strat = ranked_strategies[0]["id"]
     st.markdown("#### 損益図（ペイオフ・ダイアグラム）: 満期時株価騰落率 vs 予想投資リターン (%)")
     
-    # X軸の変動範囲を現実的な -30% 〜 +30% に設定して視認性を向上
     stock_changes = np.linspace(-0.30, 0.30, 100)
     underlying_prices = current_price * (1 + stock_changes)
     payoffs = []
@@ -715,10 +701,9 @@ if raw_hist is not None:
             
     breakeven_change = ((breakeven_price / current_price) - 1) * 100
     
-    # グラフ構築
     fig_payoff = gr.Figure()
     
-    # 1. 利益エリア（緑）と損失エリア（赤）の背景塗り分け（アフォーダンス強化）
+    # 1. 利益エリア（緑）と損失エリア（赤）の背景塗り分け
     fig_payoff.add_hrect(y0=0, y1=max(payoffs)*1.2 if max(payoffs) > 0 else 100, fillcolor="rgba(0, 255, 204, 0.03)", line_width=0)
     fig_payoff.add_hrect(y0=min(payoffs)*1.2 if min(payoffs) < 0 else -100, y1=0, fillcolor="rgba(255, 0, 127, 0.03)", line_width=0)
     
@@ -803,7 +788,7 @@ if selected_expiry:
                     <p style="color: #94A3B8; font-size: 11px; margin-top: 5px; margin-bottom: 0;">スキュー値: {skew_val:+.1f}% (状態: {skew_status})</p>
                 </div>
                 <div style="background-color: #111827; padding: 15px; border-radius: 6px; border: 1px solid #1E293B;">
-                    <span style="color: #94A3B8; font-size: 11px; display: block; margin-bottom: 5px;">オプション価格 of 割高・割安度</span>
+                    <span style="color: #94A3B8; font-size: 11px; display: block; margin-bottom: 5px;">オプション価格の割高・割安度</span>
                     <strong style="color: #E2E8F0; font-size: 16px;">{vol_sentiment}</strong>
                     <p style="color: #94A3B8; font-size: 11px; margin-top: 5px; margin-bottom: 0;">IV/HV比率: {iv_hv_ratio:.2f} (IV: {iv*100:.1f}% / HV: {hv*100:.1f}%)</p>
                 </div>
@@ -834,4 +819,19 @@ if selected_expiry:
                         </tr>
                         <tr style="border-bottom: 1px solid #1E293B;">
                             <td style="padding: 6px; font-weight: bold; color: #00FFCC;">IV (予測ボラ)</td>
-                            <td style="padding: 6px;">将来の期待変動率 / プレミアム
+                            <td style="padding: 6px;">将来の期待変動率 / プレミアムの割高・割安</td>
+                            <td style="padding: 6px; color: #FF007F;">割高 (オプション売り手有利。カバード・コール推奨)</td>
+                            <td style="padding: 6px; color: #38BDF8;">割安 (オプション買い手有利。ロング・コール推奨)</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #1E293B;">
+                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (建玉)</td>
+                            <td style="padding: 6px;">未決済の契約総数 / 市場の注目度</td>
+                            <td style="padding: 6px; color: #38BDF8;">強い支持線・抵抗線として機能（壁としての意識）</td>
+                            <td style="padding: 6px;">流動性が低くスプレッドが広いため、取引回避推奨</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    """)
+    
