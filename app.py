@@ -162,24 +162,52 @@ if raw_hist is not None:
     hist_data = compute_technical_indicators(raw_hist)
 
     # ----------------------------------------------------------------------
-    # 【修正】全満期日の推奨オプション戦略データの事前一括構築
+    # 【大幅改良】全満期日の推奨オプション戦略データの動的構築（DTE/IV感応型）
     # ----------------------------------------------------------------------
     recommendations_list = []
     
-    # 有効な満期日が存在する場合、全満期日をループ処理して戦略を算出
     if available_expiries:
         for expiry in available_expiries:
             try:
                 df_calls_raw, df_puts_raw, iv, pcr = fetch_option_chain_by_expiry(current_ticker, expiry, current_price)
                 skew_val, skew_status = calculate_volatility_skew(df_calls_raw, df_puts_raw, current_price)
                 
-                # デフォルト値の準備
-                bc_buy_strike, bc_sell_strike, bc_buy_prem, bc_sell_prem = round(current_price * 0.95, 1), round(current_price * 1.10, 1), round(current_price * 0.08, 2), round(current_price * 0.02, 2)
-                cc_buy_stock, cc_sell_strike, cc_sell_prem = current_price, round(current_price * 1.10, 1), round(current_price * 0.05, 2)
-                lc_strike, lc_prem = round(current_price * 1.05, 1), round(current_price * 0.04, 2)
+                # 満期日までの日数 (DTE) の計算
+                try:
+                    expiry_date = datetime.strptime(expiry, "%Y-%m-%d")
+                    dte = max(1, (expiry_date - datetime.now()).days)
+                except:
+                    dte = 30  # フォールバック
                 
-                # 実際のオプションチェーンから最適ストライクを選定
+                # 期間（DTE）に応じたボラティリティ調整係数
+                t_years = dte / 365.25
+                
+                # デフォルト値の動的初期化（DTEとIVを反映させた理論値ベース）
+                # DTEが長いほど、権利行使価格は現在値から離れる（1.5シグマ等）
+                expected_move_pct = iv * np.sqrt(t_years)
+                
+                bc_buy_strike = round(current_price * 0.95, 1)
+                bc_sell_strike = round(current_price * (1 + expected_move_pct * 0.7), 1)
+                bc_buy_prem = round(current_price * (0.05 + expected_move_pct * 0.3), 2)
+                bc_sell_prem = round(current_price * (0.01 + expected_move_pct * 0.1), 2)
+                
+                cc_buy_stock = current_price
+                cc_sell_strike = round(current_price * (1 + expected_move_pct * 0.5), 1)
+                cc_sell_prem = round(current_price * (0.02 + expected_move_pct * 0.2), 2)
+                
+                lc_strike = round(current_price * (1 + expected_move_pct * 0.3), 1)
+                lc_prem = round(current_price * (0.01 + expected_move_pct * 0.4), 2)
+                
+                # 実際のオプションチェーンが存在する場合は、データを抽出して上書き
+                atm_call_price = current_price * 0.05
+                atm_put_price = current_price * 0.05
+                
                 if not df_calls_raw.empty:
+                    # ATMに近いストライクのCall/Put価格をマトリックス表示用に取得
+                    df_calls_raw["diff"] = (df_calls_raw["strike"] - current_price).abs()
+                    atm_call = df_calls_raw.sort_values(by="diff").iloc[0]
+                    atm_call_price = atm_call["lastPrice"]
+                    
                     calls_itm = df_calls_raw[df_calls_raw["Delta"].between(0.60, 0.75)]
                     if calls_itm.empty:
                         calls_itm = df_calls_raw[df_calls_raw["strike"] < current_price]
@@ -214,23 +242,47 @@ if raw_hist is not None:
                         lc_strike = best_lc_call["strike"]
                         lc_prem = best_lc_call["lastPrice"] if best_lc_call["lastPrice"] > 0 else (current_price * 0.05)
 
-                # 統計数値の動的計算
+                if not df_puts_raw.empty:
+                    df_puts_raw["diff"] = (df_puts_raw["strike"] - current_price).abs()
+                    atm_put = df_puts_raw.sort_values(by="diff").iloc[0]
+                    atm_put_price = atm_put["lastPrice"]
+
+                # --- 統計数値の動的計算（DTEとIV、スキューを反映） ---
+                # 1. ブル・コール・スプレッド
                 bc_net_cost = max(0.10, bc_buy_prem - bc_sell_prem)
                 bc_max_profit = max(0.10, (bc_sell_strike - bc_buy_strike) - bc_net_cost)
                 bc_roi = (bc_max_profit / bc_net_cost) * 100
-                bc_prob = 65.0 + (10.0 if iv > hv else -5.0) + (-5.0 if skew_val > 5.0 else 5.0)
+                
+                # 勝率はDTEが短いほどスプレッドがイン・ザ・マネーで終わる確率が下がるため、DTEでなだらかに変化
+                bc_prob = 50.0 + (15.0 * math.tanh(dte / 90)) + (10.0 if iv > hv else -5.0) + (-5.0 if skew_val > 5.0 else 5.0)
 
+                # 2. カバード・コール
                 cc_net_cost = max(1.0, cc_buy_stock - cc_sell_prem)
                 cc_max_profit = (cc_sell_strike - cc_buy_stock) + cc_sell_prem
-                cc_roi = (cc_max_profit / cc_net_cost) * 100
-                cc_prob = 80.0 + (5.0 if iv > hv else 0.0) + (5.0 if skew_val > 3.0 else -5.0)
+                cc_roi = ((cc_max_profit / cc_net_cost) * 100) * (30 / dte) # 月利換算に調整
+                
+                # カバード・コールはDTEが長いほど権利消滅確率（勝率）が低下する
+                cc_prob = 90.0 - (20.0 * math.tanh(dte / 180)) + (5.0 if iv > hv else 0.0) + (5.0 if skew_val > 3.0 else -5.0)
 
-                lc_roi = 150.0 + (50.0 if iv < hv else -30.0)
-                lc_prob = 45.0 + (10.0 if iv < hv else -10.0) + (10.0 if skew_val < -2.0 else -5.0)
+                # 3. ロング・コール
+                # DTEが長いほど、上値追いの大化け期待（ROI）は高まるが、勝率は時間価値減少(Theta)により低下する
+                lc_roi = 100.0 + (150.0 * math.log10(dte + 1)) + (50.0 if iv < hv else -30.0)
+                lc_prob = 40.0 - (15.0 * math.tanh(dte / 120)) + (10.0 if iv < hv else -10.0) + (10.0 if skew_val < -2.0 else -5.0)
+
+                # 値を安全な範囲にクリップ
+                bc_roi = float(np.clip(bc_roi, 5.0, 300.0))
+                bc_prob = float(np.clip(bc_prob, 10.0, 95.0))
+                cc_roi = float(np.clip(cc_roi, 1.0, 100.0))
+                cc_prob = float(np.clip(cc_prob, 20.0, 98.0))
+                lc_roi = float(np.clip(lc_roi, 10.0, 500.0))
+                lc_prob = float(np.clip(lc_prob, 5.0, 80.0))
 
                 # 各戦略情報をリストに格納
                 recommendations_list.append({
                     "満期日": expiry,
+                    "ATM Strike": round(current_price, 1),
+                    "Call Price": atm_call_price,
+                    "Put Price": atm_put_price,
                     "ブル・コール ROI (%)": bc_roi,
                     "ブル・コール 勝率 (%)": bc_prob,
                     "カバード・コール ROI (%)": cc_roi,
@@ -239,7 +291,7 @@ if raw_hist is not None:
                     "ロング・コール 勝率 (%)": lc_prob,
                     "IV (%)": iv * 100,
                     "PCR": pcr,
-                    "スキュー (歪み)": skew_val
+                    "スキュー": skew_val
                 })
             except Exception as e:
                 continue
@@ -385,10 +437,10 @@ if raw_hist is not None:
     st.markdown("---")
 
     # ==============================================================================
-    # 【新規統合】満期日ごとのオプション戦略比較マトリックス (データバー付き)
+    # 【超統合】T-Shape & 満期日別オプション推奨戦略マトリックス (データバー付き)
     # ==============================================================================
-    st.subheader("📅 満期日別オプション推奨戦略マトリックス")
-    st.markdown("すべての満期日における各戦略の期待リターン(ROI)と予測勝率を一覧表示しています。バー表示により、期間ごとの最適な戦略を視覚的に比較できます。")
+    st.subheader("📅 超統合オプション・チェーン＆推奨戦略マトリックス")
+    st.markdown("すべての満期日におけるATM（等価格）のCall/Put取引価格と、その満期日を対象とした各戦略の期待リターン(ROI)・予測勝率を1つのマトリックスに統合しました。")
 
     if recommendations_list:
         df_rec = pd.DataFrame(recommendations_list)
@@ -398,6 +450,9 @@ if raw_hist is not None:
             df_rec,
             column_config={
                 "満期日": st.column_config.TextColumn("満期日", width="medium"),
+                "ATM Strike": st.column_config.NumberColumn("ATM Strike", format="$%.1f"),
+                "Call Price": st.column_config.NumberColumn("Call Price (ATM)", format="$%.2f"),
+                "Put Price": st.column_config.NumberColumn("Put Price (ATM)", format="$%.2f"),
                 "ブル・コール ROI (%)": st.column_config.ProgressColumn(
                     "ブル・コール ROI",
                     help="ブル・コール・スプレッドの想定投資リターン",
@@ -414,7 +469,7 @@ if raw_hist is not None:
                 ),
                 "カバード・コール ROI (%)": st.column_config.ProgressColumn(
                     "カバード・コール ROI",
-                    help="カバード・コールの想定投資リターン",
+                    help="カバード・コールの想定投資リターン (月利換算)",
                     format="%.1f%%",
                     min_value=0.0,
                     max_value=100.0,
@@ -442,7 +497,7 @@ if raw_hist is not None:
                 ),
                 "IV (%)": st.column_config.NumberColumn("IV", format="%.1f%%"),
                 "PCR": st.column_config.NumberColumn("PCR", format="%.2f"),
-                "スキュー (歪み)": st.column_config.NumberColumn("スキュー", format="%+.1f%%")
+                "スキュー": st.column_config.NumberColumn("スキュー", format="%+.1f%%")
             },
             hide_index=True,
             use_container_width=True
@@ -635,10 +690,10 @@ else:
     st.stop()
 
 # ==============================================================================
-# 5. T-SHAPE OPTION CHAIN MATRIX
+# 5. T-SHAPE OPTION CHAIN MATRIX (GUIDE PANEL ONLY)
 # ==============================================================================
 st.markdown("---")
-st.markdown(f"### オプション・チェーン: [{current_ticker}] T-Shape マトリックス")
+st.markdown(f"### オプション・チェーン: [{current_ticker}] 分析ガイド")
 
 if selected_expiry:
     st.html("""
@@ -678,21 +733,3 @@ if selected_expiry:
             </div>
         </div>
     """)
-
-    if hist_data is not None and not df_calls_raw.empty:
-        df_c = df_calls_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
-        df_p = df_puts_raw[["strike", "lastPrice", "volume", "openInterest", "impliedVolatility", "Delta"]].copy()
-        
-        df_t_shape = pd.merge(df_c, df_p, on="strike", suffixes=("_call", "_put"))
-        df_t_shape = df_t_shape.sort_values(by="strike").reset_index(drop=True)
-        
-        # T-Shape マトリックスを美しく表示
-        st.dataframe(
-            df_t_shape.rename(columns={
-                "Delta_call": "Delta (Call)", "impliedVolatility_call": "IV (Call)", "openInterest_call": "OI (Call)", "volume_call": "Vol (Call)", "lastPrice_call": "Price (Call)",
-                "strike": "Strike (権利行使価格)",
-                "lastPrice_put": "Price (Put)", "volume_put": "Vol (Put)", "openInterest_put": "OI (Put)", "impliedVolatility_put": "IV (Put)", "Delta_put": "Delta (Put)"
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
