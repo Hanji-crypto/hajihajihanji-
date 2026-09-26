@@ -344,17 +344,25 @@ if raw_hist is not None:
     except Exception as e:
         st.error(f"サブ指標チャートの描画中にエラーが発生しました: {e}")
 
-    # 3. ボラティリティチャートの描画と出力
+       # 3. ボラティリティチャートの描画と出力
     try:
-        # エラーが発生した箇所：引数の数を確認し、安全にフォールバックします
-        fig_vol = draw_volatility_chart(df_plot, xaxis_range)
+        # エラーメッセージから判明した引数をすべて正しく渡します
+        fig_vol = draw_volatility_chart(
+            df_plot,            # 第1引数 (hist_dataのサブセット)
+            hist_data,          # hist_data
+            display_window,     # display_window
+            iv,                 # iv
+            hv,                 # hv
+            hist_data,          # df_raw (生データとしてhist_dataを代入)
+            selected_ticker,    # current_ticker (選択中のティッカー)
+            xaxis_range         # xaxis_range
+        )
         st.plotly_chart(fig_vol, use_container_width=True)
-    except TypeError:
-        # 引数エラー（TypeError）が発生した場合、df_plotのみで再試行
-        try:
-            fig_vol = draw_volatility_chart(df_plot)
-            st.plotly_chart(fig_vol, use_container_width=True)
-        except Exception as e:
-            st.error(f"ボラティリティチャートの描画に失敗しました: {e}")
     except Exception as e:
-        st.error(f"ボラティリティチャートの描画中にエラーが発生しました: {e}")
+        # 万が一、引数の順序や変数名に相違があった場合のセーフガード
+        try:
+            # 予備のシンプルな呼び出し
+            fig_vol = draw_volatility_chart(df_plot, xaxis_range)
+            st.plotly_chart(fig_vol, use_container_width=True)
+        except Exception as inner_e:
+            st.error(f"ボラティリティチャートの描画に失敗しました: {e} / {inner_e}")
