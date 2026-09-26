@@ -345,80 +345,12 @@ if raw_hist is not None:
         st.error(f"サブ指標チャートの描画中にエラーが発生しました: {e}")
 
     # 3. ボラティリティチャートの描画と出力
-    try:
-        import inspect
-
-        # 1. 安全なティッカー名の取得
-        current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
-
-        # 2. 'ticker' カラムを補完した安全なデータフレームの作成
-        df_raw_safe = hist_data.copy()
-        if 'ticker' not in df_raw_safe.columns:
-            df_raw_safe['ticker'] = current_ticker_var
-
-        df_plot_safe = df_plot.copy() if 'df_plot' in locals() else df_raw_safe.copy()
-        if 'ticker' not in df_plot_safe.columns:
-            df_plot_safe['ticker'] = current_ticker_var
-
-
-    # 3. ボラティリティチャートの描画と出力
-    try:
-        import inspect
-        import pandas as pd
-
-        # 1. 安全なティッカー名と現在日付の取得
-        current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
-        current_date_safe = pd.Timestamp.now()
-
-        # 2. データのディープコピーと必須カラムの安全な補完（ベストプラクティス：データ整合性の確保）
-        df_raw_safe = hist_data.copy()
-        df_plot_safe = df_plot.copy() if 'df_plot' in locals() else df_raw_safe.copy()
-
-        for df_temp in [df_raw_safe, df_plot_safe]:
-            # 'ticker' カラムの補完
-            if 'ticker' not in df_temp.columns:
-                df_temp['ticker'] = current_ticker_var
-            # 'buy_date' カラムの補完（エラーの原因を直接解決）
-            if 'buy_date' not in df_temp.columns:
-                # インデックスがDatetimeIndexの場合はその最小値、そうでなければ現在時刻
-                if isinstance(df_temp.index, pd.DatetimeIndex) and not df_temp.empty:
-                    df_temp['buy_date'] = df_temp.index.min()
-                else:
-                    df_temp['buy_date'] = current_date_safe
-
-    # 3. ボラティリティチャートの描画と出力
-    try:
-        import inspect
-        import pandas as pd
-
-        # 1. 安全なティッカー名と現在日付の取得
-        current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
-        current_date_safe = pd.Timestamp.now()
-
-        # 2. データのディープコピーと必須カラムの安全な補完
-        df_raw_safe = hist_data.copy()
-        df_plot_safe = df_plot.copy() if 'df_plot' in locals() else df_raw_safe.copy()
-
-        for df_temp in [df_raw_safe, df_plot_safe]:
-            # 'ticker' カラムの補完
-            if 'ticker' not in df_temp.columns:
-                df_temp['ticker'] = current_ticker_var
-            # 'buy_date' カラムの補完
-            if 'buy_date' not in df_temp.columns:
-                if isinstance(df_temp.index, pd.DatetimeIndex) and not df_temp.empty:
-                    df_temp['buy_date'] = df_temp.index.min()
-                else:
-                    df_temp['buy_date'] = current_date_safe
-
-    # 3. ボラティリティチャートの描画と出力
     import inspect
     import pandas as pd
 
-    # 1. 安全なティッカー名と現在日付の取得
     current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
     current_date_safe = pd.Timestamp.now()
 
-    # 2. データのディープコピーと必須カラムの安全な補完
     df_raw_safe = hist_data.copy()
     df_plot_safe = df_plot.copy() if 'df_plot' in locals() else df_raw_safe.copy()
 
@@ -431,7 +363,6 @@ if raw_hist is not None:
             else:
                 df_temp['buy_date'] = current_date_safe
 
-    # 3. 渡す可能性のあるすべての引数プール
     arg_pool = {
         'df_plot': df_plot_safe,
         'hist_data': df_raw_safe,
@@ -443,7 +374,6 @@ if raw_hist is not None:
         'xaxis_range': xaxis_range if 'xaxis_range' in locals() else None
     }
 
-    # 4. 関数の引数定義を動的に解析し、必要な引数だけをマッピング
     sig = inspect.signature(draw_volatility_chart)
     sig_params = list(sig.parameters.keys())
 
@@ -461,7 +391,5 @@ if raw_hist is not None:
             else:
                 final_args.append(None)
 
-    # 5. 構文エラーの温床となる try-except を使わずに、安全に描画を実行
     fig_vol = draw_volatility_chart(*final_args)
     st.plotly_chart(fig_vol, use_container_width=True)
-
