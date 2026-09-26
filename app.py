@@ -423,32 +423,43 @@ if raw_hist is not None:
     st.markdown("---")
 
     # ==============================================================================
-    # 【復元】インサイダー取引 BIマトリックス
+    # 【復元・バグ修正】インサイダー取引 BIマトリックス
     # ==============================================================================
     st.subheader(f"🐋 [{current_ticker}] インサイダー取引アクティビティ BIマトリックス")
     
     df_ticker_insider = df_raw[df_raw["ticker"] == current_ticker].copy()
     if not df_ticker_insider.empty:
         df_insider_bi = df_ticker_insider.sort_values(by="buy_date", ascending=False).copy()
-        df_insider_bi = df_insider_bi.rename(columns={
-            "buy_date": "取引日",
+        
+        # 取引タイプの判別
+        df_insider_bi["trade_type"] = df_insider_bi["net_value"].map(lambda x: "購入 (Buy)" if x > 0 else "売却 (Sell)")
+        
+        # 先に値のフォーマット処理（KeyErrorを完全に防止）
+        df_insider_bi["formatted_date"] = df_insider_bi["buy_date"].dt.strftime('%Y-%m-%d')
+        df_insider_bi["formatted_shares"] = df_insider_bi["shares"].map(lambda x: f"{x:,.0f}")
+        df_insider_bi["formatted_price"] = df_insider_bi["price"].map(lambda x: f"${x:,.2f}")
+        df_insider_bi["formatted_net_value"] = df_insider_bi["net_value"].map(lambda x: f"${x:+,.0f}" if x != 0 else "$0")
+        df_insider_bi["formatted_certainty"] = df_insider_bi["Certainty (%)"].map(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
+        
+        # 表示用データフレームの構築とリネーム
+        df_bi_display = df_insider_bi[[
+            "formatted_date", "insider", "position", "trade_type", 
+            "formatted_shares", "formatted_price", "formatted_net_value", "formatted_certainty"
+        ]].copy()
+        
+        df_bi_display = df_bi_display.rename(columns={
+            "formatted_date": "取引日",
             "insider": "インサイダー氏名",
             "position": "役職",
-            "shares": "取引株数",
-            "price": "取引単価 ($)",
-            "net_value": "取引金額 ($)",
-            "Certainty (%)": "統計的確実性スコア"
+            "trade_type": "取引タイプ",
+            "formatted_shares": "取引株数",
+            "formatted_price": "取引単価 ($)",
+            "formatted_net_value": "取引金額 ($)",
+            "formatted_certainty": "統計的確実性スコア"
         })
         
-        df_insider_bi["取引タイプ"] = df_insider_bi["取引金額 ($)"].map(lambda x: "購入 (Buy)" if x > 0 else "売却 (Sell)")
-        df_insider_bi["取引日"] = df_insider_bi["取引日"].dt.strftime('%Y-%m-%d')
-        df_insider_bi["取引株数"] = df_insider_bi["取引株数"].map(lambda x: f"{x:,.0f}")
-        df_insider_bi["取引単価 ($)"] = df_insider_bi["取引単価 ($)"].map(lambda x: f"${x:,.2f}")
-        df_insider_bi["取引金額 ($)"] = df_insider_bi["取引金額 ($)"].map(lambda x: f"${x:+,.0f}" if x != 0 else "$0")
-        df_insider_bi["統計的確実性スコア"] = df_insider_bi["統計的確実性スコア"].map(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
-        
         st.dataframe(
-            df_insider_bi[["取引日", "インサイダー氏名", "役職", "取引タイプ", "取引株数", "取引単価 ($)", "取引金額 ($)", "統計的確実性スコア"]],
+            df_bi_display,
             use_container_width=True,
             hide_index=True,
             height=200
@@ -662,7 +673,7 @@ if raw_hist is not None:
     ]
 
     ranked_strategies = sorted(strategies_pool, key=lambda x: x["roi"], reverse=True)
-    rank_medals = ["1st 推奨戦略 (Active Strategy)", "2nd 代替戦略 (Alternative Strategy)", "3rd 戦術的戦略 (Tactical Strategy)"]
+    rank_medals = ["1st 推挙戦略 (Active Strategy)", "2nd 代替戦略 (Alternative Strategy)", "3rd 戦術的戦略 (Tactical Strategy)"]
     for idx, strat in enumerate(ranked_strategies[:3]):
         st.html(f"""
             <div class="{strat['class']}">
@@ -756,7 +767,7 @@ else:
     st.stop()
 
 # ==============================================================================
-# 5. 【大幅改良】動的オプション戦略・診断パネル (分析ガイドのアップグレード)
+# 5. 動的オプション戦略・診断パネル (分析ガイドのアップグレード)
 # ==============================================================================
 st.markdown("---")
 st.markdown(f"### 🐳 Whale-Eye 投資シグナル＆市場環境診断")
@@ -834,4 +845,3 @@ if selected_expiry:
             </div>
         </div>
     """)
-    
