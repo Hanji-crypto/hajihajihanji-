@@ -411,7 +411,7 @@ if raw_hist is not None:
 
 
     # ==============================================================================
-    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (復元 & 引数エラー対策)
+    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (復元 & 反復エラー対策)
     # ==============================================================================
     if recommendations_list:
         st.markdown("---")
@@ -460,12 +460,14 @@ if raw_hist is not None:
             options=["ブル・コール・スプレッド", "カバード・コール", "ロング・コール"]
         )
 
-        # 各戦略に応じたパラメータプールを構築
+        # 1. 基本パラメータプール（Noneを排除し、安全なデフォルト値を設定）
         payoff_args_pool = {
             'current_price': current_price,
             'iv': iv,
+            'xaxis_range': [current_price * 0.8, current_price * 1.2], # イテレート可能なデフォルト範囲
         }
 
+        # 2. 戦略ごとのパラメータ設定（Noneの代わりに0.0や安全な数値を設定）
         if selected_strategy == "ブル・コール・スプレッド":
             payoff_args_pool.update({
                 'strategy_name': "Bull Call Spread",
@@ -486,12 +488,12 @@ if raw_hist is not None:
             payoff_args_pool.update({
                 'strategy_name': "Long Call",
                 'strike_long': round(current_price * 1.02, 1),
-                'strike_short': None,
+                'strike_short': 0.0,  # Noneの代わりに0.0を設定してイテレートエラーを回避
                 'premium_paid': round(current_price * 0.04, 2),
                 'premium_received': 0.0
             })
 
-        # 【課題#1の解決策】draw_payoff_chart の引数定義を動的に解析して安全に実行
+        # 3. 動的シグネチャ解析と「非None型」バインディング
         try:
             payoff_sig = inspect.signature(draw_payoff_chart)
             payoff_sig_params = list(payoff_sig.parameters.keys())
@@ -501,8 +503,13 @@ if raw_hist is not None:
                 if param_name in payoff_args_pool:
                     final_payoff_args.append(payoff_args_pool[param_name])
                 else:
-                    # デフォルト値がない必須引数でプールにない場合のセーフガード
-                    final_payoff_args.append(None)
+                    # 関数が要求する未知の引数に対するセーフガード
+                    if 'range' in param_name.lower() or 'list' in param_name.lower():
+                        final_payoff_args.append([current_price * 0.8, current_price * 1.2]) # リスト型を保証
+                    elif 'name' in param_name.lower() or 'strategy' in param_name.lower():
+                        final_payoff_args.append("Strategy")
+                    else:
+                        final_payoff_args.append(0.0) # 数値型を保証
 
             fig_payoff = draw_payoff_chart(*final_payoff_args)
             
@@ -510,4 +517,5 @@ if raw_hist is not None:
                 st.plotly_chart(fig_payoff, use_container_width=True)
         except Exception as e:
             st.error(f"損益図の描画中にエラーが発生しました: {e}")
+
 
