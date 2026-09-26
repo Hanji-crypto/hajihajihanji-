@@ -316,9 +316,5 @@ if raw_hist is not None:
     df_plot, 
     chart_type, 
     overlay_indicator, 
-    current_price,
-    future_dates=future_dates,
-    upper_band=upper_band_curve,  # 関数側の引数名に合わせてください
-    lower_band=lower_band_curve   # 関数側の引数名に合わせてください
+    current_price
 )
-
