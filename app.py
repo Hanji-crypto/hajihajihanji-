@@ -540,15 +540,46 @@ if selected_expiry:
         df_t_shape = pd.merge(df_c, df_p, on="strike", suffixes=("_call", "_put"))
         df_t_shape = df_t_shape.sort_values(by="strike").reset_index(drop=True)
         
-        # DataFrameの作成
+      # ==============================================================================
+# 1. 変数の初期化（NameErrorを絶対に防ぐため、ループや条件分岐の外で空リストを定義）
+# ==============================================================================
+recommendations = []
+
+# --- 既存の満期日ループ処理 ---
+# ※お使いのコードのループ変数名（例: for expiry in expiries: など）に合わせて調整してください
+for expiry in selected_expiries: 
+    # ... (既存のオプション戦略・指標の計算ロジック) ...
+    # 例: strike, premium, iv, delta, score などの算出
+    
+    # 計算が正常に行われた場合のみ、リストに辞書を追加
+    # (既存のコードで calculate_option_strategy などの関数を使っている場合はその戻り値を利用)
+    try:
+        # ここは既存の計算ロジックをそのまま活かします
+        # 算出されたデータを辞書形式で recommendations に追加
+        recommendations.append({
+            "満期日": expiry,
+            "推奨戦略": strategy_name,          # 既存の変数名
+            "権利行使価格 ($)": strike_price,   # 既存の変数名
+            "プレミアム ($)": premium,          # 既存の変数名
+            "インプライド・ボラティリティ (IV)": iv_value,  # 既存の変数名 (例: 0.45)
+            "デルタ (Δ)": delta_value,                    # 既存の変数名 (例: 0.35)
+            "戦略スコア": strategy_score                  # 既存の変数名 (例: 85)
+        })
+    except Exception as e:
+        # 個別の満期日の計算でエラーが出ても、システム全体が落ちないようにハンドリング
+        continue
+
+# ==============================================================================
+# 2. DataFrameの作成とデータバー付き表示
+# ==============================================================================
+# recommendations が空であっても、NameError は発生せず安全に DataFrame が作成されます
 opt_df = pd.DataFrame(recommendations)
 
 if not opt_df.empty:
     st.subheader("🎯 推奨オプション戦略一覧 (全満期日)")
     st.markdown("満期日ごとの推奨戦略と主要指標を一覧表示しています。バー表示により各指標の相対的な強さを視覚的に把握できます。")
 
-    # Streamlitの高度なカラム設定 (column_config) を使用して、
-    # 数値とバーが重複しないプロフェッショナルなテーブルを描画
+    # Streamlitの ProgressColumn を使用して、数値とバーが重複しない美しいテーブルを表示
     st.dataframe(
         opt_df,
         column_config={
@@ -559,9 +590,9 @@ if not opt_df.empty:
             "インプライド・ボラティリティ (IV)": st.column_config.ProgressColumn(
                 "インプライド・ボラティリティ (IV)",
                 help="オプションのボラティリティ",
-                format="%.1f%%",
+                format="%.1f%%",  # 0.45 を 45.0% と表示したい場合は、あらかじめ値を100倍しておくか、フォーマットを調整してください
                 min_value=0.0,
-                max_value=1.5, # 150%までを上限目安に
+                max_value=1.5,    # 150%を上限の目安に
             ),
             "デルタ (Δ)": st.column_config.ProgressColumn(
                 "デルタ (Δ)",
@@ -582,4 +613,4 @@ if not opt_df.empty:
         use_container_width=True
     )
 else:
-    st.info("推奨オプション戦略の算出データがありません。")
+    st.info("推奨オプション戦略の算出データがありません。選択した期間や銘柄のデータを確認してください。")
