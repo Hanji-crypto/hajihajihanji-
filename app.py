@@ -423,7 +423,7 @@ if raw_hist is not None:
     st.markdown("---")
 
     # ==============================================================================
-    # 【復元・バグ修正】インサイダー取引 BIマトリックス
+    # 【復元・バグ修正＆自己修復スキーマ】インサイダー取引 BIマトリックス
     # ==============================================================================
     st.subheader(f"🐋 [{current_ticker}] インサイダー取引アクティビティ BIマトリックス")
     
@@ -431,17 +431,36 @@ if raw_hist is not None:
     if not df_ticker_insider.empty:
         df_insider_bi = df_ticker_insider.sort_values(by="buy_date", ascending=False).copy()
         
+        # カラムの存在チェックと自動修復マッピング
+        shares_col = "shares" if "shares" in df_insider_bi.columns else (
+            "share_count" if "share_count" in df_insider_bi.columns else (
+                "quantity" if "quantity" in df_insider_bi.columns else None
+            )
+        )
+        price_col = "price" if "price" in df_insider_bi.columns else (
+            "unit_price" if "unit_price" in df_insider_bi.columns else None
+        )
+        net_val_col = "net_value" if "net_value" in df_insider_bi.columns else (
+            "amount" if "amount" in df_insider_bi.columns else None
+        )
+        certainty_col = "Certainty (%)" if "Certainty (%)" in df_insider_bi.columns else (
+            "certainty" if "certainty" in df_insider_bi.columns else None
+        )
+
         # 取引タイプの判別
-        df_insider_bi["trade_type"] = df_insider_bi["net_value"].map(lambda x: "購入 (Buy)" if x > 0 else "売却 (Sell)")
+        if net_val_col:
+            df_insider_bi["trade_type"] = df_insider_bi[net_val_col].map(lambda x: "購入 (Buy)" if x > 0 else "売却 (Sell)")
+        else:
+            df_insider_bi["trade_type"] = "情報なし"
         
-        # 先に値のフォーマット処理（KeyErrorを完全に防止）
-        df_insider_bi["formatted_date"] = df_insider_bi["buy_date"].dt.strftime('%Y-%m-%d')
-        df_insider_bi["formatted_shares"] = df_insider_bi["shares"].map(lambda x: f"{x:,.0f}")
-        df_insider_bi["formatted_price"] = df_insider_bi["price"].map(lambda x: f"${x:,.2f}")
-        df_insider_bi["formatted_net_value"] = df_insider_bi["net_value"].map(lambda x: f"${x:+,.0f}" if x != 0 else "$0")
-        df_insider_bi["formatted_certainty"] = df_insider_bi["Certainty (%)"].map(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
+        # 安全にフォーマット適用
+        df_insider_bi["formatted_date"] = df_insider_bi["buy_date"].dt.strftime('%Y-%m-%d') if "buy_date" in df_insider_bi.columns else "N/A"
+        df_insider_bi["formatted_shares"] = df_insider_bi[shares_col].map(lambda x: f"{x:,.0f}") if shares_col else "N/A"
+        df_insider_bi["formatted_price"] = df_insider_bi[price_col].map(lambda x: f"${x:,.2f}") if price_col else "N/A"
+        df_insider_bi["formatted_net_value"] = df_insider_bi[net_val_col].map(lambda x: f"${x:+,.0f}" if x != 0 else "$0") if net_val_col else "N/A"
+        df_insider_bi["formatted_certainty"] = df_insider_bi[certainty_col].map(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A") if certainty_col else "N/A"
         
-        # 表示用データフレームの構築とリネーム
+        # 表示用データフレームの構築
         df_bi_display = df_insider_bi[[
             "formatted_date", "insider", "position", "trade_type", 
             "formatted_shares", "formatted_price", "formatted_net_value", "formatted_certainty"
@@ -673,7 +692,7 @@ if raw_hist is not None:
     ]
 
     ranked_strategies = sorted(strategies_pool, key=lambda x: x["roi"], reverse=True)
-    rank_medals = ["1st 推挙戦略 (Active Strategy)", "2nd 代替戦略 (Alternative Strategy)", "3rd 戦術的戦略 (Tactical Strategy)"]
+    rank_medals = ["1st 推奨戦略 (Active Strategy)", "2nd 代替戦略 (Alternative Strategy)", "3rd 戦術的戦略 (Tactical Strategy)"]
     for idx, strat in enumerate(ranked_strategies[:3]):
         st.html(f"""
             <div class="{strat['class']}">
@@ -832,16 +851,4 @@ if selected_expiry:
                             <td style="padding: 6px; font-weight: bold; color: #00FFCC;">IV (予測ボラ)</td>
                             <td style="padding: 6px;">将来の期待変動率 / プレミアムの割高・割安</td>
                             <td style="padding: 6px; color: #FF007F;">割高 (オプション売り手有利。カバード・コール推奨)</td>
-                            <td style="padding: 6px; color: #38BDF8;">割安 (オプション買い手有利。ロング・コール推奨)</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #1E293B;">
-                            <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (建玉)</td>
-                            <td style="padding: 6px;">未決済の契約総数 / 市場の注目度</td>
-                            <td style="padding: 6px; color: #38BDF8;">強い支持線・抵抗線として機能（壁としての意識）</td>
-                            <td style="padding: 6px;">流動性が低くスプレッドが広いため、取引回避推奨</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    """)
+                            <td style="padding: 6px;
