@@ -386,7 +386,31 @@ if raw_hist is not None:
                 else:
                     df_temp['buy_date'] = current_date_safe
 
-        # 3. 渡す可能性のあるすべての引数プール（ベストプラクティス：明示的なデータマッピング）
+    # 3. ボラティリティチャートの描画と出力
+    try:
+        import inspect
+        import pandas as pd
+
+        # 1. 安全なティッカー名と現在日付の取得
+        current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
+        current_date_safe = pd.Timestamp.now()
+
+        # 2. データのディープコピーと必須カラムの安全な補完
+        df_raw_safe = hist_data.copy()
+        df_plot_safe = df_plot.copy() if 'df_plot' in locals() else df_raw_safe.copy()
+
+        for df_temp in [df_raw_safe, df_plot_safe]:
+            # 'ticker' カラムの補完
+            if 'ticker' not in df_temp.columns:
+                df_temp['ticker'] = current_ticker_var
+            # 'buy_date' カラムの補完
+            if 'buy_date' not in df_temp.columns:
+                if isinstance(df_temp.index, pd.DatetimeIndex) and not df_temp.empty:
+                    df_temp['buy_date'] = df_temp.index.min()
+                else:
+                    df_temp['buy_date'] = current_date_safe
+
+        # 3. 渡す可能性のあるすべての引数プール
         arg_pool = {
             'df_plot': df_plot_safe,
             'hist_data': df_raw_safe,
@@ -398,7 +422,7 @@ if raw_hist is not None:
             'xaxis_range': xaxis_range if 'xaxis_range' in locals() else None
         }
 
-        # 4. 関数の引数定義を動的に解析（ベストプラクティス：実行時整合性の確保）
+        # 4. 関数の引数定義を動的に解析
         sig = inspect.signature(draw_volatility_chart)
         sig_params = list(sig.parameters.keys())
 
@@ -408,7 +432,6 @@ if raw_hist is not None:
             if param_name in arg_pool:
                 final_args.append(arg_pool[param_name])
             else:
-                # 未知の引数に対するフォールバック
                 if 'ticker' in param_name.lower():
                     final_args.append(current_ticker_var)
                 elif 'range' in param_name.lower():
