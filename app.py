@@ -346,25 +346,61 @@ if raw_hist is not None:
 
     # 3. ボラティリティチャートの描画と出力
     try:
-        # ティッカー変数の安全な取得（app.py上部で定義されている変数に合わせる）
+        import inspect
+
+        # 1. 安全なティッカー名の取得
         current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
 
-        # 生データ（df_raw）に 'ticker' カラムがない場合のエラーを防ぐセーフガード
+        # 2. 'ticker' カラムを補完した安全なデータフレームの作成
         df_raw_safe = hist_data.copy()
         if 'ticker' not in df_raw_safe.columns:
             df_raw_safe['ticker'] = current_ticker_var
 
-        # charts.pyの定義順（7つの引数）に完全に一致させて呼び出します
-        fig_vol = draw_volatility_chart(
-            df_raw_safe,        # 1. hist_data (安全なヒストリカルデータ)
-            display_window,     # 2. display_window
-            iv,                 # 3. iv
-            hv,                 # 4. hv
-            df_raw_safe,        # 5. df_raw
-            current_ticker_var, # 6. current_ticker
-            xaxis_range         # 7. xaxis_range
-        )
+        df_plot_safe = df_plot.copy() if 'df_plot' in locals() else df_raw_safe.copy()
+        if 'ticker' not in df_plot_safe.columns:
+            df_plot_safe['ticker'] = current_ticker_var
+
+        # 3. 渡す可能性のあるすべての引数プールを定義
+        arg_pool = {
+            'df_plot': df_plot_safe,
+            'hist_data': df_raw_safe,
+            'display_window': display_window,
+            'iv': iv,
+            'hv': hv,
+            'df_raw': df_raw_safe,
+            'current_ticker': current_ticker_var,
+            'xaxis_range': xaxis_range
+        }
+
+        # 4. 関数のシグネチャ（引数定義）を動的に解析
+        sig = inspect.signature(draw_volatility_chart)
+        sig_params = list(sig.parameters.keys())
+
+        # 5. 関数が要求する引数だけを、定義されている順番通りに並べ替えて抽出
+        final_args = []
+        for param_name in sig_params:
+            if param_name in arg_pool:
+                final_args.append(arg_pool[param_name])
+            else:
+                # 定義されているがプールにない引数がある場合、安全なデフォルト値を推測して追加
+                if 'ticker' in param_name.lower():
+                    final_args.append(current_ticker_var)
+                elif 'range' in param_name.lower():
+                    final_args.append(xaxis_range)
+                elif 'df' in param_name.lower() or 'data' in param_name.lower():
+                    final_args.append(df_raw_safe)
+                else:
+                    final_args.append(None)
+
+        # 6. 動的に構築した引数リストで関数を実行
+        fig_vol = draw_volatility_chart(*final_args)
         st.plotly_chart(fig_vol, use_container_width=True)
+
     except Exception as e:
-        st.error(f"ボラティリティチャートの描画に失敗しました: {e}")
+        # 万が一のフォールバック：最もシンプルな引数で試行
+        try:
+            fig_vol = draw_volatility_chart(hist_data, xaxis_range)
+            st.plotly_chart(fig_vol, use_container_width=True)
+        except Exception as inner_e:
+            st.error(f"ボラティリティチャートの描画に失敗しました: {e} (詳細: {inner_e})")
 
