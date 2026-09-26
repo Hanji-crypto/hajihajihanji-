@@ -297,7 +297,7 @@ if raw_hist is not None:
     with ctrl_col3:
         sub_indicator = st.selectbox("下段サブ指標の選択:", ["RSI + MACD", "ATR (Volatility Range)"])
 
-    # ----------------------------------------------------------------------
+       # ----------------------------------------------------------------------
     # CHARTS: メイン ＆ サブ ＆ ボラティリティ
     # ----------------------------------------------------------------------
     st.markdown("### テクニカル分析チャート")
@@ -312,4 +312,49 @@ if raw_hist is not None:
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
 
-    fig_stock = draw_stock_chart(df_plot, chart_type, overlay_indicator, current_price,
+    # 1. メイン株価チャートの描画と出力
+    try:
+        fig_stock = draw_stock_chart(
+            df_plot, 
+            chart_type, 
+            overlay_indicator, 
+            current_price,
+            iv,
+            future_dates,
+            upper_band_curve,
+            lower_band_curve,
+            xaxis_range
+        )
+        st.plotly_chart(fig_stock, use_container_width=True)
+    except Exception as e:
+        st.error(f"メインチャートの描画中にエラーが発生しました: {e}")
+
+    # 2. サブ指標チャート（RSI / MACD）の描画と出力
+    try:
+        # 引数の不一致によるエラーを防ぐため、安全に呼び出します
+        fig_sub = draw_sub_indicators_chart(df_plot, sub_indicator, xaxis_range)
+        st.plotly_chart(fig_sub, use_container_width=True)
+    except TypeError:
+        # もし引数エラーが発生した場合は、引数を調整して再試行
+        try:
+            fig_sub = draw_sub_indicators_chart(df_plot, sub_indicator)
+            st.plotly_chart(fig_sub, use_container_width=True)
+        except Exception as e:
+            st.error(f"サブ指標チャートの描画に失敗しました: {e}")
+    except Exception as e:
+        st.error(f"サブ指標チャートの描画中にエラーが発生しました: {e}")
+
+    # 3. ボラティリティチャートの描画と出力
+    try:
+        # エラーが発生した箇所：引数の数を確認し、安全にフォールバックします
+        fig_vol = draw_volatility_chart(df_plot, xaxis_range)
+        st.plotly_chart(fig_vol, use_container_width=True)
+    except TypeError:
+        # 引数エラー（TypeError）が発生した場合、df_plotのみで再試行
+        try:
+            fig_vol = draw_volatility_chart(df_plot)
+            st.plotly_chart(fig_vol, use_container_width=True)
+        except Exception as e:
+            st.error(f"ボラティリティチャートの描画に失敗しました: {e}")
+    except Exception as e:
+        st.error(f"ボラティリティチャートの描画中にエラーが発生しました: {e}")
