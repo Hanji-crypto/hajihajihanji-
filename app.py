@@ -410,40 +410,58 @@ if raw_hist is not None:
                 else:
                     df_temp['buy_date'] = current_date_safe
 
-        # 3. 渡す可能性のあるすべての引数プール
-        arg_pool = {
-            'df_plot': df_plot_safe,
-            'hist_data': df_raw_safe,
-            'display_window': display_window if 'display_window' in locals() else 30,
-            'iv': iv if 'iv' in locals() else 0.2,
-            'hv': hv if 'hv' in locals() else 0.2,
-            'df_raw': df_raw_safe,
-            'current_ticker': current_ticker_var,
-            'xaxis_range': xaxis_range if 'xaxis_range' in locals() else None
-        }
+    # 3. ボラティリティチャートの描画と出力
+    import inspect
+    import pandas as pd
 
-        # 4. 関数の引数定義を動的に解析
-        sig = inspect.signature(draw_volatility_chart)
-        sig_params = list(sig.parameters.keys())
+    # 1. 安全なティッカー名と現在日付の取得
+    current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
+    current_date_safe = pd.Timestamp.now()
 
-        # 5. 関数が要求する引数だけを、定義されている順番通りに抽出
-        final_args = []
-        for param_name in sig_params:
-            if param_name in arg_pool:
-                final_args.append(arg_pool[param_name])
+    # 2. データのディープコピーと必須カラムの安全な補完
+    df_raw_safe = hist_data.copy()
+    df_plot_safe = df_plot.copy() if 'df_plot' in locals() else df_raw_safe.copy()
+
+    for df_temp in [df_raw_safe, df_plot_safe]:
+        if 'ticker' not in df_temp.columns:
+            df_temp['ticker'] = current_ticker_var
+        if 'buy_date' not in df_temp.columns:
+            if isinstance(df_temp.index, pd.DatetimeIndex) and not df_temp.empty:
+                df_temp['buy_date'] = df_temp.index.min()
             else:
-                if 'ticker' in param_name.lower():
-                    final_args.append(current_ticker_var)
-                elif 'range' in param_name.lower():
-                    final_args.append(arg_pool['xaxis_range'])
-                elif 'df' in param_name.lower() or 'data' in param_name.lower():
-                    final_args.append(df_raw_safe)
-                else:
-                    final_args.append(None)
+                df_temp['buy_date'] = current_date_safe
 
-        # 6. 動的に構築した引数リストで関数を実行
-        fig_vol = draw_volatility_chart(*final_args)
-        st.plotly_chart(fig_vol, use_container_width=True)
+    # 3. 渡す可能性のあるすべての引数プール
+    arg_pool = {
+        'df_plot': df_plot_safe,
+        'hist_data': df_raw_safe,
+        'display_window': display_window if 'display_window' in locals() else 30,
+        'iv': iv if 'iv' in locals() else 0.2,
+        'hv': hv if 'hv' in locals() else 0.2,
+        'df_raw': df_raw_safe,
+        'current_ticker': current_ticker_var,
+        'xaxis_range': xaxis_range if 'xaxis_range' in locals() else None
+    }
 
-    except Exception as e:
-        st.error(f"ボラティリティチャートの描画に失敗しました: {e}")
+    # 4. 関数の引数定義を動的に解析し、必要な引数だけをマッピング
+    sig = inspect.signature(draw_volatility_chart)
+    sig_params = list(sig.parameters.keys())
+
+    final_args = []
+    for param_name in sig_params:
+        if param_name in arg_pool:
+            final_args.append(arg_pool[param_name])
+        else:
+            if 'ticker' in param_name.lower():
+                final_args.append(current_ticker_var)
+            elif 'range' in param_name.lower():
+                final_args.append(arg_pool['xaxis_range'])
+            elif 'df' in param_name.lower() or 'data' in param_name.lower():
+                final_args.append(df_raw_safe)
+            else:
+                final_args.append(None)
+
+    # 5. 構文エラーの温床となる try-except を使わずに、安全に描画を実行
+    fig_vol = draw_volatility_chart(*final_args)
+    st.plotly_chart(fig_vol, use_container_width=True)
+
