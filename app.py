@@ -344,6 +344,8 @@ if raw_hist is not None:
     except Exception as e:
         st.error(f"サブ指標チャートの描画中にエラーが発生しました: {e}")
 
+
+
     # 3. ボラティリティチャートの描画と出力
     import inspect
     import pandas as pd
@@ -351,14 +353,13 @@ if raw_hist is not None:
     current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
     current_date_safe = pd.Timestamp.now()
 
-    # 1. インサイダー生データ(df_raw)から該当ティッカーのデータを安全に抽出
+    # インサイダー生データ(df_raw)から該当ティッカーのデータを安全に抽出
     if 'df_raw' in locals() and isinstance(df_raw, pd.DataFrame) and not df_raw.empty:
-        # df_raw から選択中のティッカーのデータをフィルタリング
         df_ticker_raw = df_raw[df_raw['ticker'] == current_ticker_var].copy()
     else:
         df_ticker_raw = pd.DataFrame()
 
-    # 2. 関数内部の groupby や集計で KeyError を防ぐためのカラム補完
+    # 関数内部の groupby や集計で KeyError を防ぐためのカラム補完
     required_columns = {
         'buy_date': current_date_safe,
         'insider': 'Unknown',
@@ -373,7 +374,6 @@ if raw_hist is not None:
             else:
                 df_ticker_raw[col] = default_val
 
-    # 3. 渡す可能性のあるすべての引数プール
     df_plot_safe = df_plot.copy() if 'df_plot' in locals() else hist_data.copy()
     
     arg_pool = {
@@ -382,12 +382,11 @@ if raw_hist is not None:
         'display_window': display_window if 'display_window' in locals() else 30,
         'iv': iv if 'iv' in locals() else 0.2,
         'hv': hv if 'hv' in locals() else 0.2,
-        'df_raw': df_ticker_raw,  # インサイダー生データとして補完済みのデータを渡す
+        'df_raw': df_ticker_raw,
         'current_ticker': current_ticker_var,
         'xaxis_range': xaxis_range if 'xaxis_range' in locals() else None
     }
 
-    # 4. 関数の引数定義を動的に解析し、必要な引数だけをマッピング
     sig = inspect.signature(draw_volatility_chart)
     sig_params = list(sig.parameters.keys())
 
@@ -405,11 +404,9 @@ if raw_hist is not None:
             else:
                 final_args.append(None)
 
-    # 5. チャート描画を実行
-    try:
-        fig_vol = draw_volatility_chart(*final_args)
-        st.plotly_chart(fig_vol, use_container_width=True)
-
+    # 構文エラーの温床となるtry-exceptを排除し、安全に呼び出し
+    fig_vol = draw_volatility_chart(*final_args)
+    st.plotly_chart(fig_vol, use_container_width=True)
 
     # ==============================================================================
     # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (復元)
@@ -418,9 +415,7 @@ if raw_hist is not None:
         st.markdown("---")
         st.subheader("Whale-Eye 推奨オプション戦略")
 
-        # 最も条件の良い満期日のデータを取得（1番目の満期日をデフォルトとする）
         rec = recommendations_list[0]
-
         col_strat1, col_strat2, col_strat3 = st.columns(3)
 
         with col_strat1:
@@ -449,7 +444,7 @@ if raw_hist is not None:
             st.html(f"""
                 <div class="strategy-card-warning">
                     <h4 style="color: #A855F7; margin-top:0;">🚀 ロング・コール (単体買い)</h4>
-                    <p style="font-size: 12px; color: #94A3B8;">爆発的な急上昇（カタリスト直前）を狙う高リスク戦略</p>
+                    <p style="font-size: 12px; color: #94A3B8;">爆発的な急上昇を狙う高リスク戦略</p>
                     <p><b>想定勝率:</b> <span style="color: #A855F7; font-family: monospace;">{rec['ロング・コール 勝率 (%)']:.1f}%</span></p>
                     <p><b>期待ROI:</b> <span style="color: #A855F7; font-family: monospace;">{rec['ロング・コール ROI (%)']:.1f}%</span></p>
                     <p style="font-size: 11px; color: #64748B;">※ボラティリティが歴史的に低く、インサイダーの急激な買いがトリガー</p>
@@ -463,55 +458,50 @@ if raw_hist is not None:
             options=["ブル・コール・スプレッド", "カバード・コール", "ロング・コール"]
         )
 
-        try:
-            # 各戦略に応じたストライクとプレミアムの動的設定
-            if selected_strategy == "ブル・コール・スプレッド":
-                # スクリーニングマトリックスやインサイダーの平均取得単価を参考にストライクを決定
-                strike_long = round(current_price * 0.95, 1)
-                strike_short = round(current_price * 1.10, 1)
-                premium_paid = round(current_price * 0.05, 2)
-                premium_received = round(current_price * 0.01, 2)
-                
-                fig_payoff = draw_payoff_chart(
-                    strategy_name="Bull Call Spread",
-                    current_price=current_price,
-                    iv=iv,
-                    strike_long=strike_long,
-                    strike_short=strike_short,
-                    premium_paid=premium_paid,
-                    premium_received=premium_received
-                )
-            elif selected_strategy == "カバード・コール":
-                strike_short = round(current_price * 1.05, 1)
-                premium_received = round(current_price * 0.03, 2)
-                
-                fig_payoff = draw_payoff_chart(
-                    strategy_name="Covered Call",
-                    current_price=current_price,
-                    iv=iv,
-                    strike_long=current_price, # 原資産価格
-                    strike_short=strike_short,
-                    premium_paid=0.0,
-                    premium_received=premium_received
-                )
-            else: # ロング・コール
-                strike_long = round(current_price * 1.02, 1)
-                premium_paid = round(current_price * 0.04, 2)
-                
-                fig_payoff = draw_payoff_chart(
-                    strategy_name="Long Call",
-                    current_price=current_price,
-                    iv=iv,
-                    strike_long=strike_long,
-                    strike_short=None,
-                    premium_paid=premium_paid,
-                    premium_received=0.0
-                )
+        if selected_strategy == "ブル・コール・スプレッド":
+            strike_long = round(current_price * 0.95, 1)
+            strike_short = round(current_price * 1.10, 1)
+            premium_paid = round(current_price * 0.05, 2)
+            premium_received = round(current_price * 0.01, 2)
+            
+            fig_payoff = draw_payoff_chart(
+                strategy_name="Bull Call Spread",
+                current_price=current_price,
+                iv=iv,
+                strike_long=strike_long,
+                strike_short=strike_short,
+                premium_paid=premium_paid,
+                premium_received=premium_received
+            )
+        elif selected_strategy == "カバード・コール":
+            strike_short = round(current_price * 1.05, 1)
+            premium_received = round(current_price * 0.03, 2)
+            
+            fig_payoff = draw_payoff_chart(
+                strategy_name="Covered Call",
+                current_price=current_price,
+                iv=iv,
+                strike_long=current_price,
+                strike_short=strike_short,
+                premium_paid=0.0,
+                premium_received=premium_received
+            )
+        else:
+            strike_long = round(current_price * 1.02, 1)
+            premium_paid = round(current_price * 0.04, 2)
+            
+            fig_payoff = draw_payoff_chart(
+                strategy_name="Long Call",
+                current_price=current_price,
+                iv=iv,
+                strike_long=strike_long,
+                strike_short=None,
+                premium_paid=premium_paid,
+                premium_received=0.0
+            )
 
-            if fig_payoff:
-                st.plotly_chart(fig_payoff, use_container_width=True)
-        except Exception as e:
-            st.error(f"損益図の描画中にエラーが発生しました: {e}")
+        if fig_payoff:
+            st.plotly_chart(fig_payoff, use_container_width=True)
 
     # ==============================================================================
     # 6. MARKET DIAGNOSTIC & GUIDE (復元)
@@ -519,23 +509,17 @@ if raw_hist is not None:
     st.markdown("---")
     st.subheader("Whale-Eye 統合市場診断・インテリジェンス・ガイド")
     
-    try:
-        # インサイダー確実性スコアの取得
-        certainty_score = 50.0
-        if not df_screener.empty:
-            ticker_row = df_screener[df_screener["ticker"] == current_ticker]
-            if not ticker_row.empty:
-                certainty_score = float(ticker_row.iloc[0]["Certainty (%)"])
+    certainty_score = 50.0
+    if not df_screener.empty:
+        ticker_row = df_screener[df_screener["ticker"] == current_ticker]
+        if not ticker_row.empty:
+            certainty_score = float(ticker_row.iloc[0]["Certainty (%)"])
 
-        # ガイドレンダラーモジュールの呼び出し
-        render_market_diagnostic_and_guide(
-            ticker=current_ticker,
-            current_price=current_price,
-            iv=iv,
-            hv=hv,
-            certainty_score=certainty_score,
-            skew=skew_val
-        )
-    except Exception as e:
-        st.error(f"市場診断の生成中にエラーが発生しました: {e}")
-
+    render_market_diagnostic_and_guide(
+        ticker=current_ticker,
+        current_price=current_price,
+        iv=iv,
+        hv=hv,
+        certainty_score=certainty_score,
+        skew=skew_val
+    )
