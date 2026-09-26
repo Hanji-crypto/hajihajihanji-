@@ -346,34 +346,25 @@ if raw_hist is not None:
 
     # 3. ボラティリティチャートの描画と出力
     try:
-        # ティッカー変数の安全な取得
-        current_ticker_var = locals().get('ticker', locals().get('selected_ticker', ''))
-        if not current_ticker_var and 'df_plot' in locals() and 'ticker' in df_plot.columns:
-            # df_plotの中にtickerカラムがあればそこから取得
-            current_ticker_var = df_plot['ticker'].iloc[0] if not df_plot['ticker'].empty else 'SPY'
-        elif not current_ticker_var:
-            current_ticker_var = 'SPY'
+        # ティッカー変数の安全な取得（app.py上部で定義されている変数に合わせる）
+        current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
 
-        # 生データ（df_raw）にtickerカラムがないと言われた場合の対策として、コピーにカラムを追加
+        # 生データ（df_raw）に 'ticker' カラムがない場合のエラーを防ぐセーフガード
         df_raw_safe = hist_data.copy()
         if 'ticker' not in df_raw_safe.columns:
             df_raw_safe['ticker'] = current_ticker_var
 
-        df_plot_safe = df_plot.copy()
-        if 'ticker' not in df_plot_safe.columns:
-            df_plot_safe['ticker'] = current_ticker_var
-
-        # キーワード引数を使って、安全にマッピングして呼び出します
+        # charts.pyの定義順（7つの引数）に完全に一致させて呼び出します
         fig_vol = draw_volatility_chart(
-            df_plot=df_plot_safe,
-            hist_data=hist_data,
-            display_window=display_window,
-            iv=iv,
-            hv=hv,
-            df_raw=df_raw_safe,
-            current_ticker=current_ticker_var,
-            xaxis_range=xaxis_range
+            df_raw_safe,        # 1. hist_data (安全なヒストリカルデータ)
+            display_window,     # 2. display_window
+            iv,                 # 3. iv
+            hv,                 # 4. hv
+            df_raw_safe,        # 5. df_raw
+            current_ticker_var, # 6. current_ticker
+            xaxis_range         # 7. xaxis_range
         )
         st.plotly_chart(fig_vol, use_container_width=True)
     except Exception as e:
         st.error(f"ボラティリティチャートの描画に失敗しました: {e}")
+
