@@ -540,4 +540,46 @@ if selected_expiry:
         df_t_shape = pd.merge(df_c, df_p, on="strike", suffixes=("_call", "_put"))
         df_t_shape = df_t_shape.sort_values(by="strike").reset_index(drop=True)
         
-        df
+        # DataFrameの作成
+opt_df = pd.DataFrame(recommendations)
+
+if not opt_df.empty:
+    st.subheader("🎯 推奨オプション戦略一覧 (全満期日)")
+    st.markdown("満期日ごとの推奨戦略と主要指標を一覧表示しています。バー表示により各指標の相対的な強さを視覚的に把握できます。")
+
+    # Streamlitの高度なカラム設定 (column_config) を使用して、
+    # 数値とバーが重複しないプロフェッショナルなテーブルを描画
+    st.dataframe(
+        opt_df,
+        column_config={
+            "満期日": st.column_config.TextColumn("満期日", width="medium"),
+            "推奨戦略": st.column_config.TextColumn("推奨戦略", width="medium"),
+            "権利行使価格 ($)": st.column_config.NumberColumn("権利行使価格 ($)", format="$%.2f"),
+            "プレミアム ($)": st.column_config.NumberColumn("プレミアム ($)", format="$%.2f"),
+            "インプライド・ボラティリティ (IV)": st.column_config.ProgressColumn(
+                "インプライド・ボラティリティ (IV)",
+                help="オプションのボラティリティ",
+                format="%.1f%%",
+                min_value=0.0,
+                max_value=1.5, # 150%までを上限目安に
+            ),
+            "デルタ (Δ)": st.column_config.ProgressColumn(
+                "デルタ (Δ)",
+                help="株価の変動に対するオプション価格の感応度",
+                format="%.2f",
+                min_value=-1.0,
+                max_value=1.0,
+            ),
+            "戦略スコア": st.column_config.ProgressColumn(
+                "戦略スコア",
+                help="インサイダー動向とテクニカルから算出した戦略の期待値スコア",
+                format="%d点",
+                min_value=0,
+                max_value=100,
+            )
+        },
+        hide_index=True,
+        use_container_width=True
+    )
+else:
+    st.info("推奨オプション戦略の算出データがありません。")
