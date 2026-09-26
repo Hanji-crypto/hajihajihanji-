@@ -316,5 +316,8 @@ if raw_hist is not None:
     df_plot, 
     chart_type, 
     overlay_indicator, 
-    current_price
+    current_price,
+    future_dates,
+    upper_band_curve,
+    lower_band_curve
 )
