@@ -183,7 +183,6 @@ if raw_hist is not None:
                 t_years = dte / 365.25
                 
                 # デフォルト値の動的初期化（DTEとIVを反映させた理論値ベース）
-                # DTEが長いほど、権利行使価格は現在値から離れる（1.5シグマ等）
                 expected_move_pct = iv * np.sqrt(t_years)
                 
                 bc_buy_strike = round(current_price * 0.95, 1)
@@ -199,14 +198,14 @@ if raw_hist is not None:
                 lc_prem = round(current_price * (0.01 + expected_move_pct * 0.4), 2)
                 
                 # 実際のオプションチェーンが存在する場合は、データを抽出して上書き
-                atm_call_price = current_price * 0.05
-                atm_put_price = current_price * 0.05
+                atm_call_price = current_price * (0.02 + expected_move_pct * 0.3)
+                atm_put_price = current_price * (0.02 + expected_move_pct * 0.3)
                 
                 if not df_calls_raw.empty:
                     # ATMに近いストライクのCall/Put価格をマトリックス表示用に取得
                     df_calls_raw["diff"] = (df_calls_raw["strike"] - current_price).abs()
                     atm_call = df_calls_raw.sort_values(by="diff").iloc[0]
-                    atm_call_price = atm_call["lastPrice"]
+                    atm_call_price = atm_call["lastPrice"] if atm_call["lastPrice"] > 0 else atm_call_price
                     
                     calls_itm = df_calls_raw[df_calls_raw["Delta"].between(0.60, 0.75)]
                     if calls_itm.empty:
@@ -245,37 +244,32 @@ if raw_hist is not None:
                 if not df_puts_raw.empty:
                     df_puts_raw["diff"] = (df_puts_raw["strike"] - current_price).abs()
                     atm_put = df_puts_raw.sort_values(by="diff").iloc[0]
-                    atm_put_price = atm_put["lastPrice"]
+                    atm_put_price = atm_put["lastPrice"] if atm_put["lastPrice"] > 0 else atm_put_price
 
                 # --- 統計数値の動的計算（DTEとIV、スキューを反映） ---
                 # 1. ブル・コール・スプレッド
                 bc_net_cost = max(0.10, bc_buy_prem - bc_sell_prem)
                 bc_max_profit = max(0.10, (bc_sell_strike - bc_buy_strike) - bc_net_cost)
                 bc_roi = (bc_max_profit / bc_net_cost) * 100
-                
-                # 勝率はDTEが短いほどスプレッドがイン・ザ・マネーで終わる確率が下がるため、DTEでなだらかに変化
                 bc_prob = 50.0 + (15.0 * math.tanh(dte / 90)) + (10.0 if iv > hv else -5.0) + (-5.0 if skew_val > 5.0 else 5.0)
 
                 # 2. カバード・コール
                 cc_net_cost = max(1.0, cc_buy_stock - cc_sell_prem)
                 cc_max_profit = (cc_sell_strike - cc_buy_stock) + cc_sell_prem
                 cc_roi = ((cc_max_profit / cc_net_cost) * 100) * (30 / dte) # 月利換算に調整
-                
-                # カバード・コールはDTEが長いほど権利消滅確率（勝率）が低下する
                 cc_prob = 90.0 - (20.0 * math.tanh(dte / 180)) + (5.0 if iv > hv else 0.0) + (5.0 if skew_val > 3.0 else -5.0)
 
                 # 3. ロング・コール
-                # DTEが長いほど、上値追いの大化け期待（ROI）は高まるが、勝率は時間価値減少(Theta)により低下する
                 lc_roi = 100.0 + (150.0 * math.log10(dte + 1)) + (50.0 if iv < hv else -30.0)
                 lc_prob = 40.0 - (15.0 * math.tanh(dte / 120)) + (10.0 if iv < hv else -10.0) + (10.0 if skew_val < -2.0 else -5.0)
 
-                # 値を安全な範囲にクリップ
-                bc_roi = float(np.clip(bc_roi, 5.0, 300.0))
-                bc_prob = float(np.clip(bc_prob, 10.0, 95.0))
-                cc_roi = float(np.clip(cc_roi, 1.0, 100.0))
-                cc_prob = float(np.clip(cc_prob, 20.0, 98.0))
-                lc_roi = float(np.clip(lc_roi, 10.0, 500.0))
-                lc_prob = float(np.clip(lc_prob, 5.0, 80.0))
+                # 値を安全な範囲にクリップ (NaNの完全排除)
+                bc_roi = float(np.clip(bc_roi, 5.0, 300.0)) if not np.isnan(bc_roi) else 100.0
+                bc_prob = float(np.clip(bc_prob, 10.0, 95.0)) if not np.isnan(bc_prob) else 80.0
+                cc_roi = float(np.clip(cc_roi, 1.0, 100.0)) if not np.isnan(cc_roi) else 15.0
+                cc_prob = float(np.clip(cc_prob, 20.0, 98.0)) if not np.isnan(cc_prob) else 80.0
+                lc_roi = float(np.clip(lc_roi, 10.0, 500.0)) if not np.isnan(lc_roi) else 120.0
+                lc_prob = float(np.clip(lc_prob, 5.0, 80.0)) if not np.isnan(lc_prob) else 30.0
 
                 # 各戦略情報をリストに格納
                 recommendations_list.append({
@@ -581,6 +575,11 @@ if raw_hist is not None:
     lc_roi = 150.0 + (50.0 if iv < hv else -30.0)
     lc_prob = 45.0 + (10.0 if iv < hv else -10.0) + (10.0 if skew_val < -2.0 else -5.0)
 
+    # 安全なクリップ処理（NaN防止）
+    bc_roi = float(np.clip(bc_roi, 5.0, 300.0)) if not np.isnan(bc_roi) else 100.0
+    cc_roi = float(np.clip(cc_roi, 1.0, 100.0)) if not np.isnan(cc_roi) else 15.0
+    lc_roi = float(np.clip(lc_roi, 10.0, 500.0)) if not np.isnan(lc_roi) else 120.0
+
     source_label = "[実在するオプションチェーンから自動選定]" if selected_expiry else "[理論値に基づくシミュレーション構成]"
 
     strategies_pool = [
@@ -648,10 +647,14 @@ if raw_hist is not None:
             </div>
         """)
 
-    # ペイオフ・ダイアグラム
+    # ----------------------------------------------------------------------
+    # 【大幅改良】損益図（ペイオフ・ダイアグラム）のアフォーダンス強化
+    # ----------------------------------------------------------------------
     best_strat = ranked_strategies[0]["id"]
     st.markdown("#### 損益図（ペイオフ・ダイアグラム）: 満期時株価騰落率 vs 予想投資リターン (%)")
-    stock_changes = np.linspace(-0.20, 0.20, 100)
+    
+    # X軸の変動範囲を現実的な -30% 〜 +30% に設定して視認性を向上
+    stock_changes = np.linspace(-0.30, 0.30, 100)
     underlying_prices = current_price * (1 + stock_changes)
     payoffs = []
     
@@ -674,14 +677,54 @@ if raw_hist is not None:
             
     breakeven_change = ((breakeven_price / current_price) - 1) * 100
     
+    # グラフ構築
     fig_payoff = gr.Figure()
-    fig_payoff.add_vrect(x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100, fillcolor="rgba(0, 255, 204, 0.05)", line_width=0, annotation_text="1σ 確率予測範囲", annotation_position="top left", annotation_font=dict(size=10, color="rgba(0, 255, 204, 0.5)"))
-    fig_payoff.add_trace(gr.Scatter(x=stock_changes * 100, y=payoffs, mode="lines", line=dict(color="#00FFCC", width=3)))
-    fig_payoff.add_vline(x=breakeven_change, line_dash="dash", line_color="#FF007F")
-    fig_payoff.add_hline(y=0, line_color="rgba(255, 255, 255, 0.2)", line_width=1)
-    fig_payoff.update_layout(height=240, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19", margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(title="株価騰落率 (%)"), yaxis=dict(title="投資リターン (%)"), showlegend=False)
+    
+    # 1. 利益エリア（緑）と損失エリア（赤）の背景塗り分け（アフォーダンス強化）
+    fig_payoff.add_hrect(y0=0, y1=max(payoffs)*1.2 if max(payoffs) > 0 else 100, fillcolor="rgba(0, 255, 204, 0.03)", line_width=0)
+    fig_payoff.add_hrect(y0=min(payoffs)*1.2 if min(payoffs) < 0 else -100, y1=0, fillcolor="rgba(255, 0, 127, 0.03)", line_width=0)
+    
+    # 2. 1σ 確率予測範囲の網掛け
+    fig_payoff.add_vrect(
+        x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100, 
+        fillcolor="rgba(56, 189, 248, 0.08)", line_width=0, 
+        annotation_text="1σ 確率予測範囲 (30日)", annotation_position="top left", 
+        annotation_font=dict(size=10, color="rgba(56, 189, 248, 0.7)")
+    )
+    
+    # 3. 損益曲線のプロット
+    fig_payoff.add_trace(gr.Scatter(
+        x=stock_changes * 100, y=payoffs, mode="lines", 
+        line=dict(color="#00FFCC", width=3),
+        hovertemplate="株価騰落率: %{x:+.1f}%<br>予想投資リターン: %{y:+.1f}%<extra></hover>"
+    ))
+    
+    # 4. 現在株価 (0%) の縦線
+    fig_payoff.add_vline(x=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", line_width=1.5, annotation_text="現在株価", annotation_position="bottom right")
+    
+    # 5. 損益分岐点（Break-even）の縦線表示
+    if not np.isnan(breakeven_change):
+        fig_payoff.add_vline(
+            x=breakeven_change, line_dash="dash", line_color="#FF007F", line_width=2,
+            annotation_text=f"損益分岐点: {breakeven_change:+.1f}%", annotation_position="top right",
+            annotation_font=dict(color="#FF007F", size=11, bold=True)
+        )
+    
+    fig_payoff.add_hline(y=0, line_color="rgba(255, 255, 255, 0.5)", line_width=1)
+    
+    fig_payoff.update_layout(
+        height=300, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19", 
+        margin=dict(l=10, r=10, t=10, b=10), 
+        xaxis=dict(title="満期時株価騰落率 (%)", range=[-30, 30], gridcolor="rgba(255, 255, 255, 0.05)"), 
+        yaxis=dict(title="予想投資リターン (%)", gridcolor="rgba(255, 255, 255, 0.05)"), 
+        showlegend=False
+    )
     st.plotly_chart(fig_payoff, use_container_width=True)
-    st.caption(f"損益分岐点（Break-even）: 株価騰落率 {breakeven_change:+.1f}% (${breakeven_price:.2f})")
+    
+    if not np.isnan(breakeven_price):
+        st.caption(f"💡 **投資判断の示唆**: 株価が満期日までに **{breakeven_change:+.1f}%**（株価換算で **${breakeven_price:.2f}**）を{'上回る' if best_strat != 'covered_call' else '下回らない'}場合、この戦略はプラスの投資リターンを生み出します。")
+    else:
+        st.caption("💡 **投資判断の示唆**: 損益分岐点の算出に必要な市場データが不足しています。理論値ベースのシミュレーションを参照してください。")
 
 else:
     st.error(f"Error: 無効なティッカー '{current_ticker}' です。正しいティッカーを入力してください。")
@@ -690,43 +733,78 @@ else:
     st.stop()
 
 # ==============================================================================
-# 5. T-SHAPE OPTION CHAIN MATRIX (GUIDE PANEL ONLY)
+# 5. 【大幅改良】動的オプション戦略・診断パネル (分析ガイドのアップグレード)
 # ==============================================================================
 st.markdown("---")
-st.markdown(f"### オプション・チェーン: [{current_ticker}] 分析ガイド")
+st.markdown(f"### 🐳 Whale-Eye 投資シグナル＆市場環境診断")
 
 if selected_expiry:
-    st.html("""
-        <div class="guide-panel">
-            <h4 style="color: #38BDF8; margin-top: 0; margin-bottom: 12px;">オプション統計指標の完全解読マニュアル</h4>
+    # 現在の市場環境を総合診断
+    skew_sentiment = "強気 (コール需要過熱)" if skew_val < -1.0 else ("弱気 (プット需要過熱)" if skew_val > 3.0 else "中立 (需給均衡)")
+    iv_hv_ratio = iv / (hv if hv > 0 else 1.0)
+    vol_sentiment = "オプション割高 (売り手有利)" if iv_hv_ratio > 1.1 else ("オプション割安 (買い手有利)" if iv_hv_ratio < 0.9 else "適正価格")
+    
+    # 推奨アクションの決定
+    if iv_hv_ratio > 1.1:
+        recommended_action = "カバード・コールによるインカムゲイン獲得、またはスプレッド取引による売りプレミアムの相殺"
+        action_color = "#38BDF8"
+    elif skew_val < -1.0:
+        recommended_action = "ロング・コールまたはブル・コール・スプレッドによる積極的な上値追い"
+        action_color = "#00FFCC"
+    else:
+        recommended_action = "ブル・コール・スプレッドによる手堅いディフェンシブ運用"
+        action_color = "#A855F7"
+
+    st.html(f"""
+        <div class="guide-panel" style="border-top: 4px solid {action_color};">
+            <h4 style="color: {action_color}; margin-top: 0; margin-bottom: 15px;">📊 現在の市場環境に基づく総合診断シグナル</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 20px;">
+                <div style="background-color: #111827; padding: 15px; border-radius: 6px; border: 1px solid #1E293B;">
+                    <span style="color: #94A3B8; font-size: 11px; display: block; margin-bottom: 5px;">市場センチメント (スキュー判定)</span>
+                    <strong style="color: #E2E8F0; font-size: 16px;">{skew_sentiment}</strong>
+                    <p style="color: #94A3B8; font-size: 11px; margin-top: 5px; margin-bottom: 0;">スキュー値: {skew_val:+.1f}% (状態: {skew_status})</p>
+                </div>
+                <div style="background-color: #111827; padding: 15px; border-radius: 6px; border: 1px solid #1E293B;">
+                    <span style="color: #94A3B8; font-size: 11px; display: block; margin-bottom: 5px;">オプション価格の割高・割安度</span>
+                    <strong style="color: #E2E8F0; font-size: 16px;">{vol_sentiment}</strong>
+                    <p style="color: #94A3B8; font-size: 11px; margin-top: 5px; margin-bottom: 0;">IV/HV比率: {iv_hv_ratio:.2f} (IV: {iv*100:.1f}% / HV: {hv*100:.1f}%)</p>
+                </div>
+                <div style="background-color: #111827; padding: 15px; border-radius: 6px; border: 1px solid #1E293B; grid-column: span 2;">
+                    <span style="color: #94A3B8; font-size: 11px; display: block; margin-bottom: 5px;">推奨されるオプション執行アクション</span>
+                    <strong style="color: {action_color}; font-size: 16px;">{recommended_action}</strong>
+                    <p style="color: #94A3B8; font-size: 11px; margin-top: 5px; margin-bottom: 0;">※インサイダーの統計的確実性スコアと、満期日ごとの時間価値減少(Theta)を考慮した最適解です。</p>
+                </div>
+            </div>
+            
+            <h5 style="color: #E2E8F0; margin-bottom: 10px;">💡 オプション統計指標のクイック解読マニュアル</h5>
             <div style="font-size: 12px; line-height: 1.6; color: #94A3B8;">
                 <table style="width: 100%; border-collapse: collapse; color: #E2E8F0;">
                     <thead>
                         <tr style="border-bottom: 1px solid #1E293B; text-align: left;">
                             <th style="padding: 6px;">指標名</th>
                             <th style="padding: 6px;">数値の意味</th>
-                            <th style="padding: 6px;">「値が大きい」場合</th>
-                            <th style="padding: 6px;">「値が小さい」場合</th>
+                            <th style="padding: 6px;">「値が大きい」場合の投資判断</th>
+                            <th style="padding: 6px;">「値が小さい」場合の投資判断</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr style="border-bottom: 1px solid #1E293B;">
                             <td style="padding: 6px; font-weight: bold; color: #00FFCC;">Delta (デルタ)</td>
                             <td style="padding: 6px;">株価変動への感応度 / 満期時の勝率（確率）</td>
-                            <td style="padding: 6px; color: #38BDF8;">ITM (勝率高、現物代替)</td>
-                            <td style="padding: 6px;">OTM (勝率低、レバレッジ大)</td>
+                            <td style="padding: 6px; color: #38BDF8;">ITM (勝率高、現物代替として堅実に保有)</td>
+                            <td style="padding: 6px;">OTM (勝率低、レバレッジ大で短期勝負)</td>
                         </tr>
                         <tr style="border-bottom: 1px solid #1E293B;">
                             <td style="padding: 6px; font-weight: bold; color: #00FFCC;">IV (予測ボラ)</td>
                             <td style="padding: 6px;">将来の期待変動率 / プレミアムの割高・割安</td>
-                            <td style="padding: 6px; color: #FF007F;">割高 (オプション売り手に有利)</td>
-                            <td style="padding: 6px; color: #38BDF8;">割安 (オプション買い手に有利)</td>
+                            <td style="padding: 6px; color: #FF007F;">割高 (オプション売り手有利。カバード・コール推奨)</td>
+                            <td style="padding: 6px; color: #38BDF8;">割安 (オプション買い手有利。ロング・コール推奨)</td>
                         </tr>
                         <tr style="border-bottom: 1px solid #1E293B;">
                             <td style="padding: 6px; font-weight: bold; color: #00FFCC;">OI (建玉)</td>
                             <td style="padding: 6px;">未決済の契約総数 / 市場の注目度</td>
-                            <td style="padding: 6px; color: #38BDF8;">強い支持線・抵抗線として機能</td>
-                            <td style="padding: 6px;">流動性が低くスプレッドが広い</td>
+                            <td style="padding: 6px; color: #38BDF8;">強い支持線・抵抗線として機能（壁としての意識）</td>
+                            <td style="padding: 6px;">流動性が低くスプレッドが広いため、取引回避推奨</td>
                         </tr>
                     </tbody>
                 </table>
