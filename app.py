@@ -313,13 +313,13 @@ if raw_hist is not None:
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
 
         # 修正後（予測バンドの引数を追加して閉じる）
-    fig_stock = draw_stock_chart(
+        fig_stock = draw_stock_chart(
         df_plot, 
         chart_type, 
         overlay_indicator, 
         current_price,
-        future_dates,
-        upper_band_curve,
-        lower_band_curve
+        future_dates=future_dates,
+        upper_band=upper_band_curve,  # 関数側の引数名に合わせてください
+        lower_band=lower_band_curve   # 関数側の引数名に合わせてください
     )
 
