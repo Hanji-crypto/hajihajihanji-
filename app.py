@@ -351,29 +351,43 @@ if raw_hist is not None:
     current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
     current_date_safe = pd.Timestamp.now()
 
-    df_raw_safe = hist_data.copy()
-    df_plot_safe = df_plot.copy() if 'df_plot' in locals() else df_raw_safe.copy()
+    # 1. インサイダー生データ(df_raw)から該当ティッカーのデータを安全に抽出
+    if 'df_raw' in locals() and isinstance(df_raw, pd.DataFrame) and not df_raw.empty:
+        # df_raw から選択中のティッカーのデータをフィルタリング
+        df_ticker_raw = df_raw[df_raw['ticker'] == current_ticker_var].copy()
+    else:
+        df_ticker_raw = pd.DataFrame()
 
-    for df_temp in [df_raw_safe, df_plot_safe]:
-        if 'ticker' not in df_temp.columns:
-            df_temp['ticker'] = current_ticker_var
-        if 'buy_date' not in df_temp.columns:
-            if isinstance(df_temp.index, pd.DatetimeIndex) and not df_temp.empty:
-                df_temp['buy_date'] = df_temp.index.min()
+    # 2. 関数内部の groupby や集計で KeyError を防ぐためのカラム補完
+    required_columns = {
+        'buy_date': current_date_safe,
+        'insider': 'Unknown',
+        'net_value': 0.0,
+        'ticker': current_ticker_var
+    }
+    
+    for col, default_val in required_columns.items():
+        if col not in df_ticker_raw.columns:
+            if col == 'buy_date' and isinstance(df_ticker_raw.index, pd.DatetimeIndex):
+                df_ticker_raw['buy_date'] = df_ticker_raw.index
             else:
-                df_temp['buy_date'] = current_date_safe
+                df_ticker_raw[col] = default_val
 
+    # 3. 渡す可能性のあるすべての引数プール
+    df_plot_safe = df_plot.copy() if 'df_plot' in locals() else hist_data.copy()
+    
     arg_pool = {
         'df_plot': df_plot_safe,
-        'hist_data': df_raw_safe,
+        'hist_data': hist_data,
         'display_window': display_window if 'display_window' in locals() else 30,
         'iv': iv if 'iv' in locals() else 0.2,
         'hv': hv if 'hv' in locals() else 0.2,
-        'df_raw': df_raw_safe,
+        'df_raw': df_ticker_raw,  # インサイダー生データとして補完済みのデータを渡す
         'current_ticker': current_ticker_var,
         'xaxis_range': xaxis_range if 'xaxis_range' in locals() else None
     }
 
+    # 4. 関数の引数定義を動的に解析し、必要な引数だけをマッピング
     sig = inspect.signature(draw_volatility_chart)
     sig_params = list(sig.parameters.keys())
 
@@ -387,9 +401,14 @@ if raw_hist is not None:
             elif 'range' in param_name.lower():
                 final_args.append(arg_pool['xaxis_range'])
             elif 'df' in param_name.lower() or 'data' in param_name.lower():
-                final_args.append(df_raw_safe)
+                final_args.append(df_ticker_raw)
             else:
                 final_args.append(None)
 
-    fig_vol = draw_volatility_chart(*final_args)
-    st.plotly_chart(fig_vol, use_container_width=True)
+    # 5. チャート描画を実行
+    try:
+        fig_vol = draw_volatility_chart(*final_args)
+        st.plotly_chart(fig_vol, use_container_width=True)
+    except Exception as e:
+        st.error(f"ボラティリティチャートの描画中にエラーが発生しました: {e}")
+
