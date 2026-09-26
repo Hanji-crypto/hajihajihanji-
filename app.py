@@ -311,8 +311,7 @@ if raw_hist is not None:
     future_dates = [plot_dates[-1] + timedelta(days=i) for i in range(1, 31)]
     upper_band_curve = [current_price + (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
     lower_band_curve = [current_price - (current_price * iv * np.sqrt(i / 365.25)) for i in range(1, 31)]
-
-        # 修正後（予測バンドの引数を追加して閉じる）
+# 修正後（予測バンドの引数を追加して閉じる）
         fig_stock = draw_stock_chart(
         df_plot, 
         chart_type, 
