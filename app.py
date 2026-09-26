@@ -411,7 +411,7 @@ if raw_hist is not None:
 
 
     # ==============================================================================
-    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (復元 & 反復エラー対策)
+    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (復元 & キーワード引数化)
     # ==============================================================================
     if recommendations_list:
         st.markdown("---")
@@ -460,58 +460,48 @@ if raw_hist is not None:
             options=["ブル・コール・スプレッド", "カバード・コール", "ロング・コール"]
         )
 
-        # 1. 基本パラメータプール（Noneを排除し、安全なデフォルト値を設定）
-        payoff_args_pool = {
-            'current_price': current_price,
-            'iv': iv,
-            'xaxis_range': [current_price * 0.8, current_price * 1.2], # イテレート可能なデフォルト範囲
+        # 1. パラメータプールの構築（キーワード引数としてマッピングされる辞書）
+        payoff_kwargs = {
+            'current_price': float(current_price),
+            'iv': float(iv),
+            'xaxis_range': [float(current_price) * 0.8, float(current_price) * 1.2] # リスト型
         }
 
-        # 2. 戦略ごとのパラメータ設定（Noneの代わりに0.0や安全な数値を設定）
         if selected_strategy == "ブル・コール・スプレッド":
-            payoff_args_pool.update({
+            payoff_kwargs.update({
                 'strategy_name': "Bull Call Spread",
-                'strike_long': round(current_price * 0.95, 1),
-                'strike_short': round(current_price * 1.10, 1),
-                'premium_paid': round(current_price * 0.05, 2),
-                'premium_received': round(current_price * 0.01, 2)
+                'strike_long': float(round(current_price * 0.95, 1)),
+                'strike_short': float(round(current_price * 1.10, 1)),
+                'premium_paid': float(round(current_price * 0.05, 2)),
+                'premium_received': float(round(current_price * 0.01, 2))
             })
         elif selected_strategy == "カバード・コール":
-            payoff_args_pool.update({
+            payoff_kwargs.update({
                 'strategy_name': "Covered Call",
-                'strike_long': current_price,
-                'strike_short': round(current_price * 1.05, 1),
+                'strike_long': float(current_price),
+                'strike_short': float(round(current_price * 1.05, 1)),
                 'premium_paid': 0.0,
-                'premium_received': round(current_price * 0.03, 2)
+                'premium_received': float(round(current_price * 0.03, 2))
             })
         else: # ロング・コール
-            payoff_args_pool.update({
+            payoff_kwargs.update({
                 'strategy_name': "Long Call",
-                'strike_long': round(current_price * 1.02, 1),
-                'strike_short': 0.0,  # Noneの代わりに0.0を設定してイテレートエラーを回避
-                'premium_paid': round(current_price * 0.04, 2),
+                'strike_long': float(round(current_price * 1.02, 1)),
+                'strike_short': 0.0, # イテレートエラーを避けるためのダミー数値
+                'premium_paid': float(round(current_price * 0.04, 2)),
                 'premium_received': 0.0
             })
 
-        # 3. 動的シグネチャ解析と「非None型」バインディング
+        # 2. 動的シグネチャ解析による「名前付き引数（kwargs）」の自動フィルタリング
         try:
             payoff_sig = inspect.signature(draw_payoff_chart)
-            payoff_sig_params = list(payoff_sig.parameters.keys())
+            valid_params = list(payoff_sig.parameters.keys())
 
-            final_payoff_args = []
-            for param_name in payoff_sig_params:
-                if param_name in payoff_args_pool:
-                    final_payoff_args.append(payoff_args_pool[param_name])
-                else:
-                    # 関数が要求する未知の引数に対するセーフガード
-                    if 'range' in param_name.lower() or 'list' in param_name.lower():
-                        final_payoff_args.append([current_price * 0.8, current_price * 1.2]) # リスト型を保証
-                    elif 'name' in param_name.lower() or 'strategy' in param_name.lower():
-                        final_payoff_args.append("Strategy")
-                    else:
-                        final_payoff_args.append(0.0) # 数値型を保証
+            # charts.py 側の引数名に存在するパラメータのみを抽出して渡す
+            filtered_kwargs = {k: v for k, v in payoff_kwargs.items() if k in valid_params}
 
-            fig_payoff = draw_payoff_chart(*final_payoff_args)
+            # 呼び出し（位置引数 *args ではなく、キーワード引数 **kwargs を使うことで位置ズレを防止）
+            fig_payoff = draw_payoff_chart(**filtered_kwargs)
             
             if fig_payoff:
                 st.plotly_chart(fig_payoff, use_container_width=True)
