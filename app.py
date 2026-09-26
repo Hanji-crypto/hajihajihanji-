@@ -408,8 +408,10 @@ if raw_hist is not None:
     fig_vol = draw_volatility_chart(*final_args)
     st.plotly_chart(fig_vol, use_container_width=True)
 
+
+
     # ==============================================================================
-    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (復元)
+    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (復元 & 引数エラー対策)
     # ==============================================================================
     if recommendations_list:
         st.markdown("---")
@@ -458,68 +460,54 @@ if raw_hist is not None:
             options=["ブル・コール・スプレッド", "カバード・コール", "ロング・コール"]
         )
 
+        # 各戦略に応じたパラメータプールを構築
+        payoff_args_pool = {
+            'current_price': current_price,
+            'iv': iv,
+        }
+
         if selected_strategy == "ブル・コール・スプレッド":
-            strike_long = round(current_price * 0.95, 1)
-            strike_short = round(current_price * 1.10, 1)
-            premium_paid = round(current_price * 0.05, 2)
-            premium_received = round(current_price * 0.01, 2)
-            
-            fig_payoff = draw_payoff_chart(
-                strategy_name="Bull Call Spread",
-                current_price=current_price,
-                iv=iv,
-                strike_long=strike_long,
-                strike_short=strike_short,
-                premium_paid=premium_paid,
-                premium_received=premium_received
-            )
+            payoff_args_pool.update({
+                'strategy_name': "Bull Call Spread",
+                'strike_long': round(current_price * 0.95, 1),
+                'strike_short': round(current_price * 1.10, 1),
+                'premium_paid': round(current_price * 0.05, 2),
+                'premium_received': round(current_price * 0.01, 2)
+            })
         elif selected_strategy == "カバード・コール":
-            strike_short = round(current_price * 1.05, 1)
-            premium_received = round(current_price * 0.03, 2)
+            payoff_args_pool.update({
+                'strategy_name': "Covered Call",
+                'strike_long': current_price,
+                'strike_short': round(current_price * 1.05, 1),
+                'premium_paid': 0.0,
+                'premium_received': round(current_price * 0.03, 2)
+            })
+        else: # ロング・コール
+            payoff_args_pool.update({
+                'strategy_name': "Long Call",
+                'strike_long': round(current_price * 1.02, 1),
+                'strike_short': None,
+                'premium_paid': round(current_price * 0.04, 2),
+                'premium_received': 0.0
+            })
+
+        # 【課題#1の解決策】draw_payoff_chart の引数定義を動的に解析して安全に実行
+        try:
+            payoff_sig = inspect.signature(draw_payoff_chart)
+            payoff_sig_params = list(payoff_sig.parameters.keys())
+
+            final_payoff_args = []
+            for param_name in payoff_sig_params:
+                if param_name in payoff_args_pool:
+                    final_payoff_args.append(payoff_args_pool[param_name])
+                else:
+                    # デフォルト値がない必須引数でプールにない場合のセーフガード
+                    final_payoff_args.append(None)
+
+            fig_payoff = draw_payoff_chart(*final_payoff_args)
             
-            fig_payoff = draw_payoff_chart(
-                strategy_name="Covered Call",
-                current_price=current_price,
-                iv=iv,
-                strike_long=current_price,
-                strike_short=strike_short,
-                premium_paid=0.0,
-                premium_received=premium_received
-            )
-        else:
-            strike_long = round(current_price * 1.02, 1)
-            premium_paid = round(current_price * 0.04, 2)
-            
-            fig_payoff = draw_payoff_chart(
-                strategy_name="Long Call",
-                current_price=current_price,
-                iv=iv,
-                strike_long=strike_long,
-                strike_short=None,
-                premium_paid=premium_paid,
-                premium_received=0.0
-            )
+            if fig_payoff:
+                st.plotly_chart(fig_payoff, use_container_width=True)
+        except Exception as e:
+            st.error(f"損益図の描画中にエラーが発生しました: {e}")
 
-        if fig_payoff:
-            st.plotly_chart(fig_payoff, use_container_width=True)
-
-    # ==============================================================================
-    # 6. MARKET DIAGNOSTIC & GUIDE (復元)
-    # ==============================================================================
-    st.markdown("---")
-    st.subheader("Whale-Eye 統合市場診断・インテリジェンス・ガイド")
-    
-    certainty_score = 50.0
-    if not df_screener.empty:
-        ticker_row = df_screener[df_screener["ticker"] == current_ticker]
-        if not ticker_row.empty:
-            certainty_score = float(ticker_row.iloc[0]["Certainty (%)"])
-
-    render_market_diagnostic_and_guide(
-        ticker=current_ticker,
-        current_price=current_price,
-        iv=iv,
-        hv=hv,
-        certainty_score=certainty_score,
-        skew=skew_val
-    )
