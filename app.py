@@ -411,7 +411,7 @@ if raw_hist is not None:
 
 
     # ==============================================================================
-    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (8引数完全網羅版)
+    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (Plotlyバグ回避パッチ版)
     # ==============================================================================
     if recommendations_list:
         st.markdown("---")
@@ -465,12 +465,10 @@ if raw_hist is not None:
             breakeven_price = rec.get('breakeven_price', locals().get('breakeven_price', current_price))
             best_strat = rec.get('best_strat', rec.get('推奨戦略', 'Bull Call Spread'))
 
-            # 万が一データが不足している場合の、最低限のダミーシミュレーションデータの生成（フォールバック）
+            # データ不足時の自動フォールバック
             if payoffs is None or stock_changes is None:
                 import numpy as np
-                # -20% から +20% までの株価変化率
                 stock_changes = np.linspace(-0.2, 0.2, 50).tolist()
-                # ブル・コール・スプレッドを模した簡易ペイオフ
                 strike_l = current_price * 1.0
                 strike_s = current_price * 1.1
                 payoffs = []
@@ -482,7 +480,7 @@ if raw_hist is not None:
                 breakeven_change = 0.02
                 breakeven_price = current_price * 1.02
 
-            # 2. 判明した全8引数を網羅した完璧な辞書（kwargs）を構築
+            # 2. 全8引数を網羅した完璧な辞書（kwargs）を構築
             payoff_kwargs = {
                 'current_price': float(current_price),
                 'iv': float(iv),
@@ -494,16 +492,35 @@ if raw_hist is not None:
                 'best_strat': best_strat
             }
 
-            # 3. 動的シグネチャ解析による「名前付き引数（kwargs）」の自動フィルタリング
+            # 3. 【重要】Plotly の Font バリデーションバグを回避する一時的なモンキーパッチ
+            # charts.py 内で font=dict(bold=...) が呼ばれた際、エラーにせず自動的に weight='bold' に変換する
+            import plotly.graph_objs as go
+            
+            # 元の Font クラスの初期化メソッドを保存
+            original_font_init = go.layout.annotation.Font.__init__
+            
+            def patched_font_init(self, *args, **kwargs):
+                # もし引数に 'bold' が含まれていたら、それを 'weight' に変換して 'bold' を削除
+                if 'bold' in kwargs:
+                    if kwargs['bold']:
+                        kwargs['weight'] = 'bold'
+                    del kwargs['bold']
+                original_font_init(self, *args, **kwargs)
+                
+            # パッチを適用
+            go.layout.annotation.Font.__init__ = patched_font_init
+
+            # 4. 動的シグネチャ解析による「名前付き引数（kwargs）」の自動フィルタリング
             payoff_sig = inspect.signature(draw_payoff_chart)
             valid_params = list(payoff_sig.parameters.keys())
-
-            # charts.py 側の引数名に存在するパラメータのみを抽出して渡す
             filtered_kwargs = {k: v for k, v in payoff_kwargs.items() if k in valid_params}
 
-            # 4. 呼び出し
+            # 5. 呼び出し
             fig_payoff = draw_payoff_chart(**filtered_kwargs)
             
+            # パッチを元に戻す（他の描画に影響を与えないためのクリーンアップ）
+            go.layout.annotation.Font.__init__ = original_font_init
+
             if fig_payoff:
                 st.plotly_chart(fig_payoff, use_container_width=True)
                 
