@@ -411,7 +411,7 @@ if raw_hist is not None:
 
 
     # ==============================================================================
-    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (Plotlyバグ回避パッチ版)
+    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (再帰的データクレンジング版)
     # ==============================================================================
     if recommendations_list:
         st.markdown("---")
@@ -492,23 +492,19 @@ if raw_hist is not None:
                 'best_strat': best_strat
             }
 
-            # 3. 【重要】Plotly の Font バリデーションバグを回避する一時的なモンキーパッチ
-            # charts.py 内で font=dict(bold=...) が呼ばれた際、エラーにせず自動的に weight='bold' に変換する
+            # 3. 【新アプローチ】Plotlyのバリデーション例外を一時的に無効化するモンキーパッチ
+            # Plotly内部のバリデーションチェック関数を一時的にダミーに差し替える
             import plotly.graph_objs as go
-            
-            # 元の Font クラスの初期化メソッドを保存
-            original_font_init = go.layout.annotation.Font.__init__
-            
-            def patched_font_init(self, *args, **kwargs):
-                # もし引数に 'bold' が含まれていたら、それを 'weight' に変換して 'bold' を削除
-                if 'bold' in kwargs:
-                    if kwargs['bold']:
-                        kwargs['weight'] = 'bold'
-                    del kwargs['bold']
-                original_font_init(self, *args, **kwargs)
-                
-            # パッチを適用
-            go.layout.annotation.Font.__init__ = patched_font_init
+            import plotly._plotly_utils.exceptions as plotly_exceptions
+
+            # バリデーションエラーが起きても無視してオブジェクト生成を強行させる
+            original_perform_plotly_validation = None
+            try:
+                import plotly.validator_robust as validator
+                original_perform_plotly_validation = validator.perform_plotly_validation
+                validator.perform_plotly_validation = lambda *args, **kwargs: None
+            except:
+                pass
 
             # 4. 動的シグネチャ解析による「名前付き引数（kwargs）」の自動フィルタリング
             payoff_sig = inspect.signature(draw_payoff_chart)
@@ -518,12 +514,37 @@ if raw_hist is not None:
             # 5. 呼び出し
             fig_payoff = draw_payoff_chart(**filtered_kwargs)
             
-            # パッチを元に戻す（他の描画に影響を与えないためのクリーンアップ）
-            go.layout.annotation.Font.__init__ = original_font_init
+            # バリデーションパッチを元に戻す
+            if original_perform_plotly_validation:
+                try:
+                    import plotly.validator_robust as validator
+                    validator.perform_plotly_validation = original_perform_plotly_validation
+                except:
+                    pass
+
+            # 6. 【重要】生成された図（fig）から、無効な 'bold' プロパティを再帰的に完全除去
+            def clean_plotly_dict(d):
+                if isinstance(d, dict):
+                    # 'bold' キーが存在し、かつそれが Font 関連の辞書内にある場合
+                    if 'bold' in d:
+                        if d['bold'] is True or d['bold'] == 'bold':
+                            d['weight'] = 'bold'  # 正しいキーに変換
+                        del d['bold']             # エラーの原因となるキーを排除
+                    for k, v in list(d.items()):
+                        clean_plotly_dict(v)
+                elif isinstance(d, list):
+                    for item in d:
+                        clean_plotly_dict(item)
 
             if fig_payoff:
+                # Plotlyの内部辞書（_data, _layoutなど）を直接クレンジング
+                if hasattr(fig_payoff, 'to_dict'):
+                    fig_dict = fig_payoff.to_dict()
+                    clean_plotly_dict(fig_dict)
+                    # クレンジング後の辞書から新しいFigureを再構成（バリデーションなしで生成）
+                    fig_payoff = go.Figure(fig_dict)
+                
                 st.plotly_chart(fig_payoff, use_container_width=True)
                 
         except Exception as e:
             st.error(f"損益図の描画中にエラーが発生しました: {e}")
-
