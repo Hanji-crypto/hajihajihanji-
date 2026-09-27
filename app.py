@@ -411,7 +411,7 @@ if raw_hist is not None:
 
 
     # ==============================================================================
-    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (シミュレーションデータ連携版)
+    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (8引数完全網羅版)
     # ==============================================================================
     if recommendations_list:
         st.markdown("---")
@@ -456,14 +456,9 @@ if raw_hist is not None:
         # 損益図（ペイオフ・ダイアグラム）の描画
         st.markdown("### 選択戦略の損益プロファイル (ペイオフ・ダイアグラム)")
         
-        # recommendations_list または現在のコンテキストから必要なオブジェクトを抽出
-        # rec (recommendations_list[0]) の中にシミュレーション結果が格納されていると仮定し、安全に取得
         try:
-            # 辞書またはオブジェクトから必要なパラメータを安全に抽出
+            # 1. シミュレーションデータの安全な抽出
             t_30 = rec.get('T_30', 30)
-            
-            # payoffs, stock_changes などの配列データが rec に格納されているか、
-            # または locals() (グローバル/ローカル変数) に存在するかを確認
             payoffs = rec.get('payoffs', locals().get('payoffs', None))
             stock_changes = rec.get('stock_changes', locals().get('stock_changes', None))
             breakeven_change = rec.get('breakeven_change', locals().get('breakeven_change', 0.0))
@@ -487,15 +482,27 @@ if raw_hist is not None:
                 breakeven_change = 0.02
                 breakeven_price = current_price * 1.02
 
-            # 描画関数の実行
-            fig_payoff = draw_payoff_chart(
-                T_30=t_30,
-                payoffs=payoffs,
-                stock_changes=stock_changes,
-                breakeven_change=breakeven_change,
-                breakeven_price=breakeven_price,
-                best_strat=best_strat
-            )
+            # 2. 判明した全8引数を網羅した完璧な辞書（kwargs）を構築
+            payoff_kwargs = {
+                'current_price': float(current_price),
+                'iv': float(iv),
+                'T_30': t_30,
+                'payoffs': payoffs,
+                'stock_changes': stock_changes,
+                'breakeven_change': breakeven_change,
+                'breakeven_price': breakeven_price,
+                'best_strat': best_strat
+            }
+
+            # 3. 動的シグネチャ解析による「名前付き引数（kwargs）」の自動フィルタリング
+            payoff_sig = inspect.signature(draw_payoff_chart)
+            valid_params = list(payoff_sig.parameters.keys())
+
+            # charts.py 側の引数名に存在するパラメータのみを抽出して渡す
+            filtered_kwargs = {k: v for k, v in payoff_kwargs.items() if k in valid_params}
+
+            # 4. 呼び出し
+            fig_payoff = draw_payoff_chart(**filtered_kwargs)
             
             if fig_payoff:
                 st.plotly_chart(fig_payoff, use_container_width=True)
