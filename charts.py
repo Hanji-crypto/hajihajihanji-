@@ -152,7 +152,9 @@ def draw_payoff_chart(current_price, iv, T_30, payoffs, stock_changes, breakeven
         x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100, 
         fillcolor="rgba(56, 189, 248, 0.08)", line_width=0, 
         annotation_text="1σ 確率予測範囲 (30日)", annotation_position="top left", 
-        annotation_font=dict(size=10, color="rgba(56, 189, 248, 0.7)")
+
+        # 修正後
+        annotation_font=dict(color="#FF007F", size=11, weight="bold")
     )
     
     # 3. 損益曲線のプロット
