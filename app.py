@@ -411,7 +411,7 @@ if raw_hist is not None:
 
 
     # ==============================================================================
-    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (再帰的データクレンジング版)
+    # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (環境依存なし・安全クレンジング版)
     # ==============================================================================
     if recommendations_list:
         st.markdown("---")
@@ -492,40 +492,9 @@ if raw_hist is not None:
                 'best_strat': best_strat
             }
 
-            # 3. 【新アプローチ】Plotlyのバリデーション例外を一時的に無効化するモンキーパッチ
-            # Plotly内部のバリデーションチェック関数を一時的にダミーに差し替える
-            import plotly.graph_objs as go
-            import plotly._plotly_utils.exceptions as plotly_exceptions
-
-            # バリデーションエラーが起きても無視してオブジェクト生成を強行させる
-            original_perform_plotly_validation = None
-            try:
-                import plotly.validator_robust as validator
-                original_perform_plotly_validation = validator.perform_plotly_validation
-                validator.perform_plotly_validation = lambda *args, **kwargs: None
-            except:
-                pass
-
-            # 4. 動的シグネチャ解析による「名前付き引数（kwargs）」の自動フィルタリング
-            payoff_sig = inspect.signature(draw_payoff_chart)
-            valid_params = list(payoff_sig.parameters.keys())
-            filtered_kwargs = {k: v for k, v in payoff_kwargs.items() if k in valid_params}
-
-            # 5. 呼び出し
-            fig_payoff = draw_payoff_chart(**filtered_kwargs)
-            
-            # バリデーションパッチを元に戻す
-            if original_perform_plotly_validation:
-                try:
-                    import plotly.validator_robust as validator
-                    validator.perform_plotly_validation = original_perform_plotly_validation
-                except:
-                    pass
-
-            # 6. 【重要】生成された図（fig）から、無効な 'bold' プロパティを再帰的に完全除去
+            # 3. 再帰的辞書クレンジング関数の定義（'bold' キーを完全に排除）
             def clean_plotly_dict(d):
                 if isinstance(d, dict):
-                    # 'bold' キーが存在し、かつそれが Font 関連の辞書内にある場合
                     if 'bold' in d:
                         if d['bold'] is True or d['bold'] == 'bold':
                             d['weight'] = 'bold'  # 正しいキーに変換
@@ -536,15 +505,54 @@ if raw_hist is not None:
                     for item in d:
                         clean_plotly_dict(item)
 
+            # 4. 動的シグネチャ解析による「名前付き引数（kwargs）」の自動フィルタリング
+            payoff_sig = inspect.signature(draw_payoff_chart)
+            valid_params = list(payoff_sig.parameters.keys())
+            filtered_kwargs = {k: v for k, v in payoff_kwargs.items() if k in valid_params}
+
+            # 5. 呼び出し（エラーが発生してもキャッチして修復する）
+            fig_payoff = None
+            try:
+                # 通常の呼び出しを試みる
+                fig_payoff = draw_payoff_chart(**filtered_kwargs)
+            except ValueError as ve:
+                # もし 'bold' などのバリデーションエラーが発生した場合
+                if 'bold' in str(ve):
+                    # charts.py の draw_payoff_chart 内部でエラーが起きるのを防ぐため、
+                    # 描画処理を安全なダミーデータで再試行するか、
+                    # 描画関数自体をバイパスして、app.py 側で直接 Plotly グラフを構築します。
+                    pass
+                else:
+                    raise ve
+
+            # 6. 描画オブジェクトのクレンジングと表示
             if fig_payoff:
-                # Plotlyの内部辞書（_data, _layoutなど）を直接クレンジング
+                import plotly.graph_objs as go
                 if hasattr(fig_payoff, 'to_dict'):
                     fig_dict = fig_payoff.to_dict()
                     clean_plotly_dict(fig_dict)
-                    # クレンジング後の辞書から新しいFigureを再構成（バリデーションなしで生成）
                     fig_payoff = go.Figure(fig_dict)
                 
                 st.plotly_chart(fig_payoff, use_container_width=True)
+            else:
+                # 万が一、draw_payoff_chart 内部でエラーが発生して fig_payoff が None になった場合の
+                # 100%安全な自前描画フォールバック（アプリを絶対にクラッシュさせない）
+                import plotly.graph_objs as go
+                fig_fallback = go.Figure()
+                fig_fallback.add_trace(go.Scatter(
+                    x=stock_changes, 
+                    y=payoffs, 
+                    mode='lines', 
+                    name=best_strat,
+                    line=dict(color='#00FFCC', width=3)
+                ))
+                fig_fallback.update_layout(
+                    title=f"{best_strat} 損益シミュレーション (フォールバック表示)",
+                    xaxis_title="株価変化率 (%)",
+                    yaxis_title="損益 (USD)",
+                    template="plotly_dark"
+                )
+                st.plotly_chart(fig_fallback, use_container_width=True)
                 
         except Exception as e:
             st.error(f"損益図の描画中にエラーが発生しました: {e}")
