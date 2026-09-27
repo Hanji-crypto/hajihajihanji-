@@ -508,4 +508,3 @@ if raw_hist is not None:
         except Exception as e:
             st.error(f"損益図の描画中にエラーが発生しました: {e}")
 
-
