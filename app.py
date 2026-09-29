@@ -276,7 +276,7 @@ if raw_hist is not None:
                 lc_breakeven_price = lc_strike + lc_prem
                 lc_breakeven_change = (lc_breakeven_price - current_price) / current_price * 100
 
-                    recommendations_list.append({
+                recommendations_list.append({
                 "満期日": expiry, "ATM Strike": round(current_price, 1), "Call Price": atm_call_price, "Put Price": atm_put_price,
                 "ブル・コール ROI (%)": bc_roi, "ブル・コール 勝率 (%)": bc_prob,
                 "カバード・コール ROI (%)": cc_roi, "カバード・コール 勝率 (%)": cc_prob,
