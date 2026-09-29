@@ -346,6 +346,7 @@ if raw_hist is not None:
     with ctrl_col4:
         contract_qty = st.number_input("契約枚数 (Contracts)", min_value=1, max_value=100, value=1, step=1)
 
+
     
        # ----------------------------------------------------------------------
     # CHARTS: メイン ＆ サブ ＆ ボラティリティ
@@ -463,11 +464,20 @@ if raw_hist is not None:
     # ==============================================================================
     # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (環境依存なし・安全クレンジング版)
     # ==============================================================================
-    if recommendations_list:
+       if recommendations_list:
         st.markdown("---")
         st.subheader("Whale-Eye 推奨オプション戦略")
 
         rec = recommendations_list[0]
+
+        # --- 表示戦略の選択（新規追加）---
+        selected_strategy = st.radio(
+            "損益図に表示する戦略を選択:",
+            options=["ブル・コール・スプレッド", "カバード・コール", "ロング・コール"],
+            horizontal=True,
+            key="strategy_selector"
+        )
+
         col_strat1, col_strat2, col_strat3 = st.columns(3)
 
         with col_strat1:
@@ -480,6 +490,9 @@ if raw_hist is not None:
                     <p style="font-size: 11px; color: #64748B;">※インサイダーの買い集めとIV/HVの逆行から算出</p>
                 </div>
             """)
+            bc_max_loss_per_contract = rec.get('ブル・コール Net Debit', 0.0) * 100
+            bc_max_loss_total = bc_max_loss_per_contract * contract_qty
+            st.warning(f"⚠️ 最大損失: **${bc_max_loss_total:,.0f}** (Net Debit: ${bc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
 
         with col_strat2:
             st.html(f"""
@@ -491,6 +504,9 @@ if raw_hist is not None:
                     <p style="font-size: 11px; color: #64748B;">※現物保有リスクをプレミアムでヘッジ</p>
                 </div>
             """)
+            cc_max_loss_per_contract = rec.get('カバード・コール Net Cost', 0.0) * 100
+            cc_max_loss_total = cc_max_loss_per_contract * contract_qty
+            st.warning(f"⚠️ 最大損失: **${cc_max_loss_total:,.0f}** (実質コスト: ${cc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
 
         with col_strat3:
             st.html(f"""
@@ -502,35 +518,28 @@ if raw_hist is not None:
                     <p style="font-size: 11px; color: #64748B;">※歴史的低ボラティリティと買いシグナルがトリガー</p>
                 </div>
             """)
+            lc_max_loss_per_contract = rec.get('ロング・コール Net Debit', 0.0) * 100
+            lc_max_loss_total = lc_max_loss_per_contract * contract_qty
+            st.warning(f"⚠️ 最大損失: **${lc_max_loss_total:,.0f}** (プレミアム全額: ${lc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
 
         # 損益図（ペイオフ・ダイアグラム）の描画
-        st.markdown("### 選択戦略の損益プロファイル (ペイオフ・ダイアグラム)")
-        
+        st.markdown(f"### 「{selected_strategy}」の損益プロファイル (ペイオフ・ダイアグラム)")
+
         try:
-            # 1. シミュレーションデータの安全な抽出
-            t_30 = rec.get('T_30', 30)
-            payoffs = rec.get('payoffs', locals().get('payoffs', None))
-            stock_changes = rec.get('stock_changes', locals().get('stock_changes', None))
-            breakeven_change = rec.get('breakeven_change', locals().get('breakeven_change', 0.0))
-            breakeven_price = rec.get('breakeven_price', locals().get('breakeven_price', current_price))
-            best_strat = rec.get('best_strat', rec.get('推奨戦略', 'Bull Call Spread'))
+            strategy_key_map = {
+                "ブル・コール・スプレッド": "ブル・コール",
+                "カバード・コール": "カバード・コール",
+                "ロング・コール": "ロング・コール",
+            }
+            strat_key = strategy_key_map[selected_strategy]
 
-            # データ不足時の自動フォールバック
-            if payoffs is None or stock_changes is None:
-                import numpy as np
-                stock_changes = np.linspace(-0.2, 0.2, 50).tolist()
-                strike_l = current_price * 1.0
-                strike_s = current_price * 1.1
-                payoffs = []
-                for change in stock_changes:
-                    price_at_expiry = current_price * (1 + change)
-                    payoff_l = max(price_at_expiry - strike_l, 0) - (current_price * 0.03)
-                    payoff_s = max(price_at_expiry - strike_s, 0) - (current_price * 0.01)
-                    payoffs.append(payoff_l - payoff_s)
-                breakeven_change = 0.02
-                breakeven_price = current_price * 1.02
+            t_30 = rec.get('T_30', 30 / 365.25)
+            payoffs = rec.get(f'{strat_key} payoffs')
+            stock_changes = rec.get('stock_changes')
+            breakeven_change = rec.get(f'{strat_key} Breakeven Change')
+            breakeven_price = rec.get(f'{strat_key} Breakeven Price')
+            best_strat = selected_strategy
 
-            # 2. 全8引数を網羅した完璧な辞書（kwargs）を構築
             payoff_kwargs = {
                 'current_price': float(current_price),
                 'iv': float(iv),
@@ -542,67 +551,13 @@ if raw_hist is not None:
                 'best_strat': best_strat
             }
 
-            # 3. 再帰的辞書クレンジング関数の定義（'bold' キーを完全に排除）
-            def clean_plotly_dict(d):
-                if isinstance(d, dict):
-                    if 'bold' in d:
-                        if d['bold'] is True or d['bold'] == 'bold':
-                            d['weight'] = 'bold'  # 正しいキーに変換
-                        del d['bold']             # エラーの原因となるキーを排除
-                    for k, v in list(d.items()):
-                        clean_plotly_dict(v)
-                elif isinstance(d, list):
-                    for item in d:
-                        clean_plotly_dict(item)
-
-            # 4. 動的シグネチャ解析による「名前付き引数（kwargs）」の自動フィルタリング
             payoff_sig = inspect.signature(draw_payoff_chart)
             valid_params = list(payoff_sig.parameters.keys())
             filtered_kwargs = {k: v for k, v in payoff_kwargs.items() if k in valid_params}
 
-            # 5. 呼び出し（エラーが発生してもキャッチして修復する）
-            fig_payoff = None
-            try:
-                # 通常の呼び出しを試みる
-                fig_payoff = draw_payoff_chart(**filtered_kwargs)
-            except ValueError as ve:
-                # もし 'bold' などのバリデーションエラーが発生した場合
-                if 'bold' in str(ve):
-                    # charts.py の draw_payoff_chart 内部でエラーが起きるのを防ぐため、
-                    # 描画処理を安全なダミーデータで再試行するか、
-                    # 描画関数自体をバイパスして、app.py 側で直接 Plotly グラフを構築します。
-                    pass
-                else:
-                    raise ve
+            fig_payoff = draw_payoff_chart(**filtered_kwargs)
+            st.plotly_chart(fig_payoff, use_container_width=True)
 
-            # 6. 描画オブジェクトのクレンジングと表示
-            if fig_payoff:
-                import plotly.graph_objs as go
-                if hasattr(fig_payoff, 'to_dict'):
-                    fig_dict = fig_payoff.to_dict()
-                    clean_plotly_dict(fig_dict)
-                    fig_payoff = go.Figure(fig_dict)
-                
-                st.plotly_chart(fig_payoff, use_container_width=True)
-            else:
-                # 万が一、draw_payoff_chart 内部でエラーが発生して fig_payoff が None になった場合の
-                # 100%安全な自前描画フォールバック（アプリを絶対にクラッシュさせない）
-                import plotly.graph_objs as go
-                fig_fallback = go.Figure()
-                fig_fallback.add_trace(go.Scatter(
-                    x=stock_changes, 
-                    y=payoffs, 
-                    mode='lines', 
-                    name=best_strat,
-                    line=dict(color='#00FFCC', width=3)
-                ))
-                fig_fallback.update_layout(
-                    title=f"{best_strat} 損益シミュレーション (フォールバック表示)",
-                    xaxis_title="株価変化率 (%)",
-                    yaxis_title="損益 (USD)",
-                    template="plotly_dark"
-                )
-                st.plotly_chart(fig_fallback, use_container_width=True)
-                
         except Exception as e:
             st.error(f"損益図の描画中にエラーが発生しました: {e}")
+
