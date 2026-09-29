@@ -438,7 +438,7 @@ if raw_hist is not None:
         'xaxis_range': xaxis_range if 'xaxis_range' in locals() else None
     }
 
-    sig = inspect.signature(draw_volatility_chart)
+        sig = inspect.signature(draw_volatility_chart)
     sig_params = list(sig.parameters.keys())
 
     final_args = []
@@ -458,18 +458,16 @@ if raw_hist is not None:
     # 構文エラーの温床となるtry-exceptを排除し、安全に呼び出し
     fig_vol = draw_volatility_chart(*final_args)
     st.plotly_chart(fig_vol, use_container_width=True)
-
-
-
+    
     # ==============================================================================
     # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (環境依存なし・安全クレンジング版)
     # ==============================================================================
-   if recommendations_list:
+    if recommendations_list:
         st.markdown("---")
         st.subheader("Whale-Eye 推奨オプション戦略")
-    
+
         rec = recommendations_list[0]
-    
+
         # --- 表示戦略の選択（新規追加）---
         selected_strategy = st.radio(
             "損益図に表示する戦略を選択:",
@@ -477,9 +475,9 @@ if raw_hist is not None:
             horizontal=True,
             key="strategy_selector"
         )
-    
+
         col_strat1, col_strat2, col_strat3 = st.columns(3)
-    
+
         with col_strat1:
             st.html(f"""
                 <div class="strategy-card">
@@ -493,7 +491,7 @@ if raw_hist is not None:
             bc_max_loss_per_contract = rec.get('ブル・コール Net Debit', 0.0) * 100
             bc_max_loss_total = bc_max_loss_per_contract * contract_qty
             st.warning(f"⚠️ 最大損失: **${bc_max_loss_total:,.0f}** (Net Debit: ${bc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
-    
+
         with col_strat2:
             st.html(f"""
                 <div class="strategy-card-secondary">
@@ -507,7 +505,7 @@ if raw_hist is not None:
             cc_max_loss_per_contract = rec.get('カバード・コール Net Cost', 0.0) * 100
             cc_max_loss_total = cc_max_loss_per_contract * contract_qty
             st.warning(f"⚠️ 最大損失: **${cc_max_loss_total:,.0f}** (実質コスト: ${cc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
-    
+
         with col_strat3:
             st.html(f"""
                 <div class="strategy-card-warning">
@@ -521,10 +519,10 @@ if raw_hist is not None:
             lc_max_loss_per_contract = rec.get('ロング・コール Net Debit', 0.0) * 100
             lc_max_loss_total = lc_max_loss_per_contract * contract_qty
             st.warning(f"⚠️ 最大損失: **${lc_max_loss_total:,.0f}** (プレミアム全額: ${lc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
-    
+
         # 損益図（ペイオフ・ダイアグラム）の描画
         st.markdown(f"### 「{selected_strategy}」の損益プロファイル (ペイオフ・ダイアグラム)")
-    
+
         try:
             strategy_key_map = {
                 "ブル・コール・スプレッド": "ブル・コール",
@@ -532,14 +530,14 @@ if raw_hist is not None:
                 "ロング・コール": "ロング・コール",
             }
             strat_key = strategy_key_map[selected_strategy]
-    
+
             t_30 = rec.get('T_30', 30 / 365.25)
             payoffs = rec.get(f'{strat_key} payoffs')
             stock_changes = rec.get('stock_changes')
             breakeven_change = rec.get(f'{strat_key} Breakeven Change')
             breakeven_price = rec.get(f'{strat_key} Breakeven Price')
             best_strat = selected_strategy
-    
+
             payoff_kwargs = {
                 'current_price': float(current_price),
                 'iv': float(iv),
@@ -550,14 +548,14 @@ if raw_hist is not None:
                 'breakeven_price': breakeven_price,
                 'best_strat': best_strat
             }
-    
+
             payoff_sig = inspect.signature(draw_payoff_chart)
             valid_params = list(payoff_sig.parameters.keys())
             filtered_kwargs = {k: v for k, v in payoff_kwargs.items() if k in valid_params}
-    
+
             fig_payoff = draw_payoff_chart(**filtered_kwargs)
             st.plotly_chart(fig_payoff, use_container_width=True)
-    
+
         except Exception as e:
             st.error(f"損益図の描画中にエラーが発生しました: {e}")
 
