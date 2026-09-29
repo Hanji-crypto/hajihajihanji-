@@ -252,8 +252,17 @@ if raw_hist is not None:
                     "ブル・コール ROI (%)": bc_roi, "ブル・コール 勝率 (%)": bc_prob,
                     "カバード・コール ROI (%)": cc_roi, "カバード・コール 勝率 (%)": cc_prob,
                     "ロング・コール ROI (%)": lc_roi, "ロング・コール 勝率 (%)": lc_prob,
-                    "IV (%)": iv * 100, "PCR": pcr, "スキュー": skew_val
+                    "IV (%)": iv * 100, "PCR": pcr, "スキュー": skew_val,
+                
+                    # ↓ ここから新規追加（Max Loss / Net Debit / 発注アシスタント用）
+                    "DTE": dte,
+                    "ブル・コール Buy Strike": bc_buy_strike, "ブル・コール Sell Strike": bc_sell_strike,
+                    "ブル・コール Net Debit": bc_net_cost, "ブル・コール Max Profit": bc_max_profit,
+                    "カバード・コール Sell Strike": cc_sell_strike,
+                    "カバード・コール Net Cost": cc_net_cost, "カバード・コール Max Profit": cc_max_profit,
+                    "ロング・コール Strike": lc_strike, "ロング・コール Net Debit": lc_prem,
                 })
+
             except Exception as e:
                 continue
 
