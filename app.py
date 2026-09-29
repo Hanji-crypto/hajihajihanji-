@@ -247,12 +247,60 @@ if raw_hist is not None:
                 lc_roi = float(np.clip(lc_roi, 10.0, 500.0)) if not np.isnan(lc_roi) else 120.0
                 lc_prob = float(np.clip(lc_prob, 5.0, 80.0)) if not np.isnan(lc_prob) else 30.0
 
-                recommendations_list.append({
-                    "満期日": expiry, "ATM Strike": round(current_price, 1), "Call Price": atm_call_price, "Put Price": atm_put_price,
-                    "ブル・コール ROI (%)": bc_roi, "ブル・コール 勝率 (%)": bc_prob,
-                    "カバード・コール ROI (%)": cc_roi, "カバード・コール 勝率 (%)": cc_prob,
-                    "ロング・コール ROI (%)": lc_roi, "ロング・コール 勝率 (%)": lc_prob,
-                    "IV (%)": iv * 100, "PCR": pcr, "スキュー": skew_val,
+                # --- 損益曲線データの生成（本物のストライク・Net Debitを使用）---
+                sim_stock_changes = np.linspace(-0.30, 0.30, 61).tolist()
+
+                bc_payoffs = []
+                for chg in sim_stock_changes:
+                    price_exp = current_price * (1 + chg)
+                    payoff_usd = max(price_exp - bc_buy_strike, 0) - max(price_exp - bc_sell_strike, 0) - bc_net_cost
+                    bc_payoffs.append((payoff_usd / bc_net_cost) * 100)
+                bc_breakeven_price = bc_buy_strike + bc_net_cost
+                bc_breakeven_change = (bc_breakeven_price - current_price) / current_price * 100
+
+                cc_payoffs = []
+                for chg in sim_stock_changes:
+                    price_exp = current_price * (1 + chg)
+                    stock_pl = price_exp - current_price
+                    call_pl = cc_sell_prem - max(price_exp - cc_sell_strike, 0)
+                    payoff_usd = stock_pl + call_pl
+                    cc_payoffs.append((payoff_usd / cc_net_cost) * 100)
+                cc_breakeven_price = current_price - cc_sell_prem
+                cc_breakeven_change = (cc_breakeven_price - current_price) / current_price * 100
+
+                lc_payoffs = []
+                for chg in sim_stock_changes:
+                    price_exp = current_price * (1 + chg)
+                    payoff_usd = max(price_exp - lc_strike, 0) - lc_prem
+                    lc_payoffs.append((payoff_usd / lc_prem) * 100)
+                lc_breakeven_price = lc_strike + lc_prem
+                lc_breakeven_change = (lc_breakeven_price - current_price) / current_price * 100
+
+                    recommendations_list.append({
+                "満期日": expiry, "ATM Strike": round(current_price, 1), "Call Price": atm_call_price, "Put Price": atm_put_price,
+                "ブル・コール ROI (%)": bc_roi, "ブル・コール 勝率 (%)": bc_prob,
+                "カバード・コール ROI (%)": cc_roi, "カバード・コール 勝率 (%)": cc_prob,
+                "ロング・コール ROI (%)": lc_roi, "ロング・コール 勝率 (%)": lc_prob,
+                "IV (%)": iv * 100, "PCR": pcr, "スキュー": skew_val,
+                "DTE": dte, "T_30": dte / 365.25,
+
+                "ブル・コール Buy Strike": bc_buy_strike, "ブル・コール Sell Strike": bc_sell_strike,
+                "ブル・コール Net Debit": bc_net_cost, "ブル・コール Max Profit": bc_max_profit,
+                "ブル・コール payoffs": bc_payoffs, "ブル・コール Breakeven Price": bc_breakeven_price,
+                "ブル・コール Breakeven Change": bc_breakeven_change,
+
+                "カバード・コール Sell Strike": cc_sell_strike,
+                "カバード・コール Net Cost": cc_net_cost, "カバード・コール Max Profit": cc_max_profit,
+                "カバード・コール payoffs": cc_payoffs, "カバード・コール Breakeven Price": cc_breakeven_price,
+                "カバード・コール Breakeven Change": cc_breakeven_change,
+
+                "ロング・コール Strike": lc_strike, "ロング・コール Net Debit": lc_prem,
+                "ロング・コール payoffs": lc_payoffs, "ロング・コール Breakeven Price": lc_breakeven_price,
+                "ロング・コール Breakeven Change": lc_breakeven_change,
+
+                "stock_changes": sim_stock_changes,
+            })
+
                 
                     # ↓ ここから新規追加（Max Loss / Net Debit / 発注アシスタント用）
                     "DTE": dte,
@@ -297,15 +345,18 @@ if raw_hist is not None:
 
     st.markdown("---")
 
-    # コントロールパネル
-    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([3, 3, 4])
+        # コントロールパネル
+    ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([3, 3, 3, 3])
     with ctrl_col1:
         chart_type = st.radio("表示形式", options=["ローソク足", "折れ線"], horizontal=True)
     with ctrl_col2:
         overlay_indicator = st.selectbox("重ね合わせ指標の選択:", ["Bollinger Bands", "EMA (20/50)", "Ichimoku", "None"])
     with ctrl_col3:
         sub_indicator = st.selectbox("下段サブ指標の選択:", ["RSI + MACD", "ATR (Volatility Range)"])
+    with ctrl_col4:
+        contract_qty = st.number_input("契約枚数 (Contracts)", min_value=1, max_value=100, value=1, step=1)
 
+    
        # ----------------------------------------------------------------------
     # CHARTS: メイン ＆ サブ ＆ ボラティリティ
     # ----------------------------------------------------------------------
