@@ -299,7 +299,7 @@ if raw_hist is not None:
                 "ロング・コール Breakeven Change": lc_breakeven_change,
 
                 "stock_changes": sim_stock_changes,
-            })
+                })
 
             
                 # ↓ ここから新規追加（Max Loss / Net Debit / 発注アシスタント用）
