@@ -438,7 +438,7 @@ if raw_hist is not None:
         'xaxis_range': xaxis_range if 'xaxis_range' in locals() else None
     }
 
-        sig = inspect.signature(draw_volatility_chart)
+    sig = inspect.signature(draw_volatility_chart)
     sig_params = list(sig.parameters.keys())
 
     final_args = []
@@ -458,7 +458,7 @@ if raw_hist is not None:
     # 構文エラーの温床となるtry-exceptを排除し、安全に呼び出し
     fig_vol = draw_volatility_chart(*final_args)
     st.plotly_chart(fig_vol, use_container_width=True)
-    
+
     # ==============================================================================
     # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (環境依存なし・安全クレンジング版)
     # ==============================================================================
