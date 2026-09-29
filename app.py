@@ -465,99 +465,99 @@ if raw_hist is not None:
     # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (環境依存なし・安全クレンジング版)
     # ==============================================================================
    if recommendations_list:
-    st.markdown("---")
-    st.subheader("Whale-Eye 推奨オプション戦略")
-
-    rec = recommendations_list[0]
-
-    # --- 表示戦略の選択（新規追加）---
-    selected_strategy = st.radio(
-        "損益図に表示する戦略を選択:",
-        options=["ブル・コール・スプレッド", "カバード・コール", "ロング・コール"],
-        horizontal=True,
-        key="strategy_selector"
-    )
-
-    col_strat1, col_strat2, col_strat3 = st.columns(3)
-
-    with col_strat1:
-        st.html(f"""
-            <div class="strategy-card">
-                <h4 style="color: #00FFCC; margin-top:0;">📈 ブル・コール・スプレッド</h4>
-                <p style="font-size: 12px; color: #94A3B8;">上昇トレンドかつ高ボラティリティ局面で有効</p>
-                <p><b>想定勝率:</b> <span style="color: #00FFCC; font-family: monospace;">{rec.get('ブル・コール 勝率 (%)', 0.0):.1f}%</span></p>
-                <p><b>期待ROI:</b> <span style="color: #00FFCC; font-family: monospace;">{rec.get('ブル・コール ROI (%)', 0.0):.1f}%</span></p>
-                <p style="font-size: 11px; color: #64748B;">※インサイダーの買い集めとIV/HVの逆行から算出</p>
-            </div>
-        """)
-        bc_max_loss_per_contract = rec.get('ブル・コール Net Debit', 0.0) * 100
-        bc_max_loss_total = bc_max_loss_per_contract * contract_qty
-        st.warning(f"⚠️ 最大損失: **${bc_max_loss_total:,.0f}** (Net Debit: ${bc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
-
-    with col_strat2:
-        st.html(f"""
-            <div class="strategy-card-secondary">
-                <h4 style="color: #38BDF8; margin-top:0;">🛡️ カバード・コール</h4>
-                <p style="font-size: 12px; color: #94A3B8;">緩やかな上昇またはレンジ相場でインカムを狙う</p>
-                <p><b>想定勝率:</b> <span style="color: #38BDF8; font-family: monospace;">{rec.get('カバード・コール 勝率 (%)', 0.0):.1f}%</span></p>
-                <p><b>期待ROI (年換算):</b> <span style="color: #38BDF8; font-family: monospace;">{rec.get('カバード・コール ROI (%)', 0.0):.1f}%</span></p>
-                <p style="font-size: 11px; color: #64748B;">※現物保有リスクをプレミアムでヘッジ</p>
-            </div>
-        """)
-        cc_max_loss_per_contract = rec.get('カバード・コール Net Cost', 0.0) * 100
-        cc_max_loss_total = cc_max_loss_per_contract * contract_qty
-        st.warning(f"⚠️ 最大損失: **${cc_max_loss_total:,.0f}** (実質コスト: ${cc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
-
-    with col_strat3:
-        st.html(f"""
-            <div class="strategy-card-warning">
-                <h4 style="color: #A855F7; margin-top:0;">🚀 ロング・コール (単体買い)</h4>
-                <p style="font-size: 12px; color: #94A3B8;">爆発的な急上昇を狙う高リスク戦略</p>
-                <p><b>想定勝率:</b> <span style="color: #A855F7; font-family: monospace;">{rec.get('ロング・コール 勝率 (%)', 0.0):.1f}%</span></p>
-                <p><b>期待ROI:</b> <span style="color: #A855F7; font-family: monospace;">{rec.get('ロング・コール ROI (%)', 0.0):.1f}%</span></p>
-                <p style="font-size: 11px; color: #64748B;">※歴史的低ボラティリティと買いシグナルがトリガー</p>
-            </div>
-        """)
-        lc_max_loss_per_contract = rec.get('ロング・コール Net Debit', 0.0) * 100
-        lc_max_loss_total = lc_max_loss_per_contract * contract_qty
-        st.warning(f"⚠️ 最大損失: **${lc_max_loss_total:,.0f}** (プレミアム全額: ${lc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
-
-    # 損益図（ペイオフ・ダイアグラム）の描画
-    st.markdown(f"### 「{selected_strategy}」の損益プロファイル (ペイオフ・ダイアグラム)")
-
-    try:
-        strategy_key_map = {
-            "ブル・コール・スプレッド": "ブル・コール",
-            "カバード・コール": "カバード・コール",
-            "ロング・コール": "ロング・コール",
-        }
-        strat_key = strategy_key_map[selected_strategy]
-
-        t_30 = rec.get('T_30', 30 / 365.25)
-        payoffs = rec.get(f'{strat_key} payoffs')
-        stock_changes = rec.get('stock_changes')
-        breakeven_change = rec.get(f'{strat_key} Breakeven Change')
-        breakeven_price = rec.get(f'{strat_key} Breakeven Price')
-        best_strat = selected_strategy
-
-        payoff_kwargs = {
-            'current_price': float(current_price),
-            'iv': float(iv),
-            'T_30': t_30,
-            'payoffs': payoffs,
-            'stock_changes': stock_changes,
-            'breakeven_change': breakeven_change,
-            'breakeven_price': breakeven_price,
-            'best_strat': best_strat
-        }
-
-        payoff_sig = inspect.signature(draw_payoff_chart)
-        valid_params = list(payoff_sig.parameters.keys())
-        filtered_kwargs = {k: v for k, v in payoff_kwargs.items() if k in valid_params}
-
-        fig_payoff = draw_payoff_chart(**filtered_kwargs)
-        st.plotly_chart(fig_payoff, use_container_width=True)
-
-    except Exception as e:
-        st.error(f"損益図の描画中にエラーが発生しました: {e}")
+        st.markdown("---")
+        st.subheader("Whale-Eye 推奨オプション戦略")
+    
+        rec = recommendations_list[0]
+    
+        # --- 表示戦略の選択（新規追加）---
+        selected_strategy = st.radio(
+            "損益図に表示する戦略を選択:",
+            options=["ブル・コール・スプレッド", "カバード・コール", "ロング・コール"],
+            horizontal=True,
+            key="strategy_selector"
+        )
+    
+        col_strat1, col_strat2, col_strat3 = st.columns(3)
+    
+        with col_strat1:
+            st.html(f"""
+                <div class="strategy-card">
+                    <h4 style="color: #00FFCC; margin-top:0;">📈 ブル・コール・スプレッド</h4>
+                    <p style="font-size: 12px; color: #94A3B8;">上昇トレンドかつ高ボラティリティ局面で有効</p>
+                    <p><b>想定勝率:</b> <span style="color: #00FFCC; font-family: monospace;">{rec.get('ブル・コール 勝率 (%)', 0.0):.1f}%</span></p>
+                    <p><b>期待ROI:</b> <span style="color: #00FFCC; font-family: monospace;">{rec.get('ブル・コール ROI (%)', 0.0):.1f}%</span></p>
+                    <p style="font-size: 11px; color: #64748B;">※インサイダーの買い集めとIV/HVの逆行から算出</p>
+                </div>
+            """)
+            bc_max_loss_per_contract = rec.get('ブル・コール Net Debit', 0.0) * 100
+            bc_max_loss_total = bc_max_loss_per_contract * contract_qty
+            st.warning(f"⚠️ 最大損失: **${bc_max_loss_total:,.0f}** (Net Debit: ${bc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
+    
+        with col_strat2:
+            st.html(f"""
+                <div class="strategy-card-secondary">
+                    <h4 style="color: #38BDF8; margin-top:0;">🛡️ カバード・コール</h4>
+                    <p style="font-size: 12px; color: #94A3B8;">緩やかな上昇またはレンジ相場でインカムを狙う</p>
+                    <p><b>想定勝率:</b> <span style="color: #38BDF8; font-family: monospace;">{rec.get('カバード・コール 勝率 (%)', 0.0):.1f}%</span></p>
+                    <p><b>期待ROI (年換算):</b> <span style="color: #38BDF8; font-family: monospace;">{rec.get('カバード・コール ROI (%)', 0.0):.1f}%</span></p>
+                    <p style="font-size: 11px; color: #64748B;">※現物保有リスクをプレミアムでヘッジ</p>
+                </div>
+            """)
+            cc_max_loss_per_contract = rec.get('カバード・コール Net Cost', 0.0) * 100
+            cc_max_loss_total = cc_max_loss_per_contract * contract_qty
+            st.warning(f"⚠️ 最大損失: **${cc_max_loss_total:,.0f}** (実質コスト: ${cc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
+    
+        with col_strat3:
+            st.html(f"""
+                <div class="strategy-card-warning">
+                    <h4 style="color: #A855F7; margin-top:0;">🚀 ロング・コール (単体買い)</h4>
+                    <p style="font-size: 12px; color: #94A3B8;">爆発的な急上昇を狙う高リスク戦略</p>
+                    <p><b>想定勝率:</b> <span style="color: #A855F7; font-family: monospace;">{rec.get('ロング・コール 勝率 (%)', 0.0):.1f}%</span></p>
+                    <p><b>期待ROI:</b> <span style="color: #A855F7; font-family: monospace;">{rec.get('ロング・コール ROI (%)', 0.0):.1f}%</span></p>
+                    <p style="font-size: 11px; color: #64748B;">※歴史的低ボラティリティと買いシグナルがトリガー</p>
+                </div>
+            """)
+            lc_max_loss_per_contract = rec.get('ロング・コール Net Debit', 0.0) * 100
+            lc_max_loss_total = lc_max_loss_per_contract * contract_qty
+            st.warning(f"⚠️ 最大損失: **${lc_max_loss_total:,.0f}** (プレミアム全額: ${lc_max_loss_per_contract:,.0f}/枚 × {contract_qty}枚)")
+    
+        # 損益図（ペイオフ・ダイアグラム）の描画
+        st.markdown(f"### 「{selected_strategy}」の損益プロファイル (ペイオフ・ダイアグラム)")
+    
+        try:
+            strategy_key_map = {
+                "ブル・コール・スプレッド": "ブル・コール",
+                "カバード・コール": "カバード・コール",
+                "ロング・コール": "ロング・コール",
+            }
+            strat_key = strategy_key_map[selected_strategy]
+    
+            t_30 = rec.get('T_30', 30 / 365.25)
+            payoffs = rec.get(f'{strat_key} payoffs')
+            stock_changes = rec.get('stock_changes')
+            breakeven_change = rec.get(f'{strat_key} Breakeven Change')
+            breakeven_price = rec.get(f'{strat_key} Breakeven Price')
+            best_strat = selected_strategy
+    
+            payoff_kwargs = {
+                'current_price': float(current_price),
+                'iv': float(iv),
+                'T_30': t_30,
+                'payoffs': payoffs,
+                'stock_changes': stock_changes,
+                'breakeven_change': breakeven_change,
+                'breakeven_price': breakeven_price,
+                'best_strat': best_strat
+            }
+    
+            payoff_sig = inspect.signature(draw_payoff_chart)
+            valid_params = list(payoff_sig.parameters.keys())
+            filtered_kwargs = {k: v for k, v in payoff_kwargs.items() if k in valid_params}
+    
+            fig_payoff = draw_payoff_chart(**filtered_kwargs)
+            st.plotly_chart(fig_payoff, use_container_width=True)
+    
+        except Exception as e:
+            st.error(f"損益図の描画中にエラーが発生しました: {e}")
 
