@@ -333,6 +333,9 @@ if raw_hist is not None:
     with m_col5: st.metric("1σ 上昇上限 (30日)", f"${upper_1sigma:.2f}")
     with m_col6: st.metric("1σ 下落下限 (30日)", f"${lower_1sigma:.2f}")
 
+    # ★ここに追加★
+    render_market_diagnostic_and_guide(selected_expiry, skew_val, skew_status, iv, hv)
+    
     st.markdown("---")
 
         # コントロールパネル
