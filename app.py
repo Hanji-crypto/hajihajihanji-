@@ -459,6 +459,7 @@ if raw_hist is not None:
     fig_vol = draw_volatility_chart(*final_args)
     st.plotly_chart(fig_vol, use_container_width=True)
 
+
     # ==============================================================================
     # 5. OPTION STRATEGY RECOMMENDATIONS & PAYOFF DIAGRAM (環境依存なし・安全クレンジング版)
     # ==============================================================================
@@ -558,4 +559,3 @@ if raw_hist is not None:
 
         except Exception as e:
             st.error(f"損益図の描画中にエラーが発生しました: {e}")
-
