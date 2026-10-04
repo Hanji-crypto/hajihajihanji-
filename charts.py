@@ -172,7 +172,8 @@ def draw_payoff_chart(current_price, iv, T_30, payoffs, stock_changes, breakeven
         fig.add_vline(
             x=breakeven_change, line_dash="dash", line_color="#FF007F", line_width=2,
             annotation_text=f"損益分岐点: {breakeven_change:+.1f}%", annotation_position="top right",
-            annotation_font=dict(color="#FF007F", size=11, bold=True)
+            annotation_font=dict(color="#FF007F", size=11, weight="bold")
+
         )
     
     fig.add_hline(y=0, line_color="rgba(255, 255, 255, 0.5)", line_width=1)
