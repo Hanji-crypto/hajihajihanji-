@@ -1,4 +1,5 @@
 import plotly.graph_objects as gr
+import pandas as pd
 import numpy as np
 from datetime import timedelta
 
@@ -67,7 +68,7 @@ def draw_sub_indicators_chart(df_plot, sub_indicator, xaxis_range):
         high_low = df_plot['High'] - df_plot['Low']
         high_close = (df_plot['High'] - df_plot['Close'].shift()).abs()
         low_close = (df_plot['Low'] - df_plot['Close'].shift()).abs()
-        ranges = gr.concat([high_low, high_close, low_close], axis=1)
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
         true_range = ranges.max(axis=1)
         atr = true_range.rolling(14).mean()
         fig.add_trace(gr.Scatter(x=df_plot.index, y=atr, mode="lines", line=dict(color="#FF8C00", width=1.5), name="ATR (14)"))
@@ -152,8 +153,6 @@ def draw_payoff_chart(current_price, iv, T_30, payoffs, stock_changes, breakeven
         x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100, 
         fillcolor="rgba(56, 189, 248, 0.08)", line_width=0, 
         annotation_text="1σ 確率予測範囲 (30日)", annotation_position="top left", 
-
-        # 修正後
         annotation_font=dict(color="#FF007F", size=11, weight="bold")
     )
     
@@ -173,7 +172,6 @@ def draw_payoff_chart(current_price, iv, T_30, payoffs, stock_changes, breakeven
             x=breakeven_change, line_dash="dash", line_color="#FF007F", line_width=2,
             annotation_text=f"損益分岐点: {breakeven_change:+.1f}%", annotation_position="top right",
             annotation_font=dict(color="#FF007F", size=11, weight="bold")
-
         )
     
     fig.add_hline(y=0, line_color="rgba(255, 255, 255, 0.5)", line_width=1)
