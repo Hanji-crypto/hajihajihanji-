@@ -431,6 +431,7 @@ if raw_hist is not None:
     df_plot_safe = df_plot.copy() if 'df_plot' in locals() else hist_data.copy()
     
     arg_pool = {
+        'plot_dates': plot_dates,  # ★追加★
         'df_plot': df_plot_safe,
         'hist_data': hist_data,
         'display_window': display_window if 'display_window' in locals() else 30,
