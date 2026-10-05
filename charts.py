@@ -1,5 +1,4 @@
 import plotly.graph_objects as gr
-import pandas as pd
 import numpy as np
 from datetime import timedelta
 
@@ -68,7 +67,7 @@ def draw_sub_indicators_chart(df_plot, sub_indicator, xaxis_range):
         high_low = df_plot['High'] - df_plot['Low']
         high_close = (df_plot['High'] - df_plot['Close'].shift()).abs()
         low_close = (df_plot['Low'] - df_plot['Close'].shift()).abs()
-        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        ranges = gr.concat([high_low, high_close, low_close], axis=1)
         true_range = ranges.max(axis=1)
         atr = true_range.rolling(14).mean()
         fig.add_trace(gr.Scatter(x=df_plot.index, y=atr, mode="lines", line=dict(color="#FF8C00", width=1.5), name="ATR (14)"))
@@ -96,7 +95,7 @@ def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw,
     df_insider_daily = df_ticker_raw.groupby(["buy_date", "insider"])["net_value"].sum().reset_index()
     df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
 
-    if not df_insider_daily.empty:
+        if not df_insider_daily.empty:
         unique_insiders = df_insider_daily["insider"].unique().tolist()
         color_palette = ["#AA00FF", "#00FFCC", "#38BDF8", "#FFD700", "#FF007F", "#FF8C00"]
         date_counts = {}
@@ -114,21 +113,32 @@ def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw,
                 
             idx_for_color = unique_insiders.index(insider)
             color = color_palette[idx_for_color % len(color_palette)]
-            offset_y = 6.0 - (date_counts[b_date] * 12.0)
+
+            # ★変更点: X軸直下の専用バンド（-5 ～ -22付近）に配置
+            offset_y = -5.0 - (date_counts[b_date] * 7.0)
             
             symbol = "star" if val > 0 else "triangle-down"
             trade_label = "購入" if val > 0 else "売却"
             hover_text = f"インサイダー: {row['insider']}<br>取引: {trade_label}<br>金額: ${abs(val):,.0f}"
+            
+            # ★追加: マーカー直下に表示する短縮ラベル（取引者名の先頭部分）
+            short_name = insider if len(insider) <= 10 else insider[:9] + "…"
             
             show_in_legend = insider not in registered_legends
             if show_in_legend:
                 registered_legends.add(insider)
             
             fig.add_trace(gr.Scatter(
-                x=[b_date], y=[offset_y], mode="markers",
+                x=[b_date], y=[offset_y],
+                mode="markers+text",  # ★変更点: テキストも同時表示
                 marker=dict(symbol=symbol, size=14, color=color, line=dict(color="#FFFFFF", width=1.2)),
-                text=[hover_text], hoverinfo="text", legendgroup=insider, name=f"🐋 {insider} ({trade_label})", showlegend=show_in_legend
+                text=[short_name],
+                textposition="bottom center",
+                textfont=dict(size=9, color=color),
+                hovertext=[hover_text], hoverinfo="text",
+                legendgroup=insider, name=f"🐋 {insider} ({trade_label})", showlegend=show_in_legend
             ))
+
             
     fig.update_layout(
         height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
@@ -153,6 +163,8 @@ def draw_payoff_chart(current_price, iv, T_30, payoffs, stock_changes, breakeven
         x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100, 
         fillcolor="rgba(56, 189, 248, 0.08)", line_width=0, 
         annotation_text="1σ 確率予測範囲 (30日)", annotation_position="top left", 
+
+        # 修正後
         annotation_font=dict(color="#FF007F", size=11, weight="bold")
     )
     
@@ -172,6 +184,7 @@ def draw_payoff_chart(current_price, iv, T_30, payoffs, stock_changes, breakeven
             x=breakeven_change, line_dash="dash", line_color="#FF007F", line_width=2,
             annotation_text=f"損益分岐点: {breakeven_change:+.1f}%", annotation_position="top right",
             annotation_font=dict(color="#FF007F", size=11, weight="bold")
+
         )
     
     fig.add_hline(y=0, line_color="rgba(255, 255, 255, 0.5)", line_width=1)
