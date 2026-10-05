@@ -87,9 +87,22 @@ def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw,
     fig.add_trace(gr.Scatter(x=plot_dates, y=hist_data["HV_20"].iloc[-display_window:], mode="lines", line=dict(color="#FF007F", width=1.5), name="HV (%)"))
     fig.add_trace(gr.Scatter(x=plot_dates, y=hist_data["IV_Sim"].iloc[-display_window:], mode="lines", line=dict(color="#00C5FF", width=1.5), name="IV (%)"))
 
+    # --- ★ここから修正: 日付の型を強制的に統一する処理 ---
+    hist_dates_normalized = pd.to_datetime(hist_data.index)
+    if hist_dates_normalized.tz is not None:
+        hist_dates_normalized = hist_dates_normalized.tz_localize(None)
+    hist_dates_normalized = hist_dates_normalized.normalize()
+
     df_ticker_raw = df_raw[df_raw["ticker"] == current_ticker].copy()
     df_insider_daily = df_ticker_raw.groupby(["buy_date", "insider"])["net_value"].sum().reset_index()
-    df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_data.index)]
+
+    df_insider_daily["buy_date"] = pd.to_datetime(df_insider_daily["buy_date"])
+    if df_insider_daily["buy_date"].dt.tz is not None:
+        df_insider_daily["buy_date"] = df_insider_daily["buy_date"].dt.tz_localize(None)
+    df_insider_daily["buy_date"] = df_insider_daily["buy_date"].dt.normalize()
+
+    df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_dates_normalized)]
+    # --- ★修正ここまで ---
 
     if not df_insider_daily.empty:
         unique_insiders = df_insider_daily["insider"].unique().tolist()
