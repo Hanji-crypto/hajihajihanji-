@@ -272,7 +272,8 @@ if raw_hist is not None:
                 for chg in sim_stock_changes:
                     price_exp = current_price * (1 + chg)
                     payoff_usd = max(price_exp - lc_strike, 0) - lc_prem
-                    lc_payoffs.append((payoff_usd / lc_prem) * 100)
+                    lc_prem = max(0.05, round(current_price * (0.01 + expected_move_pct * 0.4), 2))
+
                 lc_breakeven_price = lc_strike + lc_prem
                 lc_breakeven_change = (lc_breakeven_price - current_price) / current_price * 100
 
@@ -471,7 +472,11 @@ if raw_hist is not None:
         st.markdown("---")
         st.subheader("Whale-Eye 推奨オプション戦略")
 
-        rec = recommendations_list[0]
+        rec = next(
+    (r for r in recommendations_list if r["満期日"] == selected_expiry),
+    recommendations_list[0]
+)
+
 
         # --- 表示戦略の選択（新規追加）---
         selected_strategy = st.radio(
