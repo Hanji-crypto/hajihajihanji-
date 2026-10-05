@@ -1,3 +1,4 @@
+import streamlit as st
 import plotly.graph_objects as gr
 import pandas as pd
 import numpy as np
@@ -102,7 +103,8 @@ def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw,
     df_insider_daily["buy_date"] = df_insider_daily["buy_date"].dt.normalize()
 
     df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_dates_normalized)]
-    print(f"[DEBUG] 一致したインサイダー取引件数: {len(df_insider_daily)} 件 / 対象ティッカー: {current_ticker}")
+    st.write(f"🔍 DEBUG: 一致したインサイダー件数 = {len(df_insider_daily)} 件 / 対象ティッカー = {current_ticker}")
+
 
     # --- ★修正ここまで ---
 
