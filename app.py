@@ -407,7 +407,7 @@ if raw_hist is not None:
     import inspect
     import pandas as pd
 
-    current_ticker_var = locals().get('ticker', locals().get('selected_ticker', 'SPY'))
+    current_ticker_var = current_ticker
     current_date_safe = pd.Timestamp.now()
 
     # インサイダー生データ(df_raw)から該当ティッカーのデータを安全に抽出
