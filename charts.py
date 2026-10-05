@@ -109,15 +109,12 @@ def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw,
 
             idx_for_color = unique_insiders.index(insider)
             color = color_palette[idx_for_color % len(color_palette)]
-
-            # X軸直下の専用バンド（-5 ～ -22付近）に配置
             offset_y = -5.0 - (date_counts[b_date] * 7.0)
 
             symbol = "star" if val > 0 else "triangle-down"
             trade_label = "購入" if val > 0 else "売却"
             hover_text = f"インサイダー: {row['insider']}<br>取引: {trade_label}<br>金額: ${abs(val):,.0f}"
-
-            short_name = insider if len(insider) <= 10 else insider[:9] + "…"
+            short_name = insider if len(insider) <= 10 else insider[:9] + "..."
 
             show_in_legend = insider not in registered_legends
             if show_in_legend:
@@ -131,7 +128,7 @@ def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw,
                 textposition="bottom center",
                 textfont=dict(size=9, color=color),
                 hovertext=[hover_text], hoverinfo="text",
-                legendgroup=insider, name=f"🐋 {insider} ({trade_label})", showlegend=show_in_legend
+                legendgroup=insider, name=f"insider_{insider}", showlegend=show_in_legend
             ))
 
     fig.update_layout(
@@ -145,11 +142,11 @@ def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw,
     return fig
 
 def draw_payoff_chart(current_price, iv, T_30, payoffs, stock_changes, breakeven_change, breakeven_price, best_strat):
-    """アフォーダンスを極限まで高めた損益図（ペイオフ・ダイアグラム）を描画"""
+    """損益図（ペイオフ・ダイアグラム）を描画"""
     fig = gr.Figure()
 
     fig.add_hrect(y0=0, y1=max(payoffs)*1.2 if max(payoffs) > 0 else 100, fillcolor="rgba(0, 255, 204, 0.03)", line_width=0)
-    fig.add_hrect(y0=min(payoffs)*1.2 if min(payoff    fig.add_hrect(y0=min(payoffs)*1.2 if min(payoffs) < 0 else -100, y1=0, fillcolor="rgba(255, 0, 127, 0.03)", line_width=0)
+    fig.add_hrect(y0=min(payoffs)*1.2 if min(payoffs) < 0 else -100, y1=0, fillcolor="rgba(255, 0, 127, 0.03)", line_width=0)
 
     fig.add_vrect(
         x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100,
@@ -183,4 +180,5 @@ def draw_payoff_chart(current_price, iv, T_30, payoffs, stock_changes, breakeven
         showlegend=False
     )
     return fig
+
 
