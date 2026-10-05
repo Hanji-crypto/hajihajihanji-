@@ -77,7 +77,6 @@ def draw_sub_indicators_chart(df_plot, sub_indicator, xaxis_range):
         yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)")
     )
     return fig
-
 def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw, current_ticker, xaxis_range):
     """ボラティリティ（IV/HV）歴史的推移 ＆ インサイダータイミングを描画"""
     fig = gr.Figure()
@@ -88,7 +87,6 @@ def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw,
     fig.add_trace(gr.Scatter(x=plot_dates, y=hist_data["HV_20"].iloc[-display_window:], mode="lines", line=dict(color="#FF007F", width=1.5), name="HV (%)"))
     fig.add_trace(gr.Scatter(x=plot_dates, y=hist_data["IV_Sim"].iloc[-display_window:], mode="lines", line=dict(color="#00C5FF", width=1.5), name="IV (%)"))
 
-    # --- ★ここから修正: 日付の型を強制的に統一する処理 ---
     hist_dates_normalized = pd.to_datetime(hist_data.index)
     if hist_dates_normalized.tz is not None:
         hist_dates_normalized = hist_dates_normalized.tz_localize(None)
@@ -103,35 +101,39 @@ def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw,
     df_insider_daily["buy_date"] = df_insider_daily["buy_date"].dt.normalize()
 
     df_insider_daily = df_insider_daily[df_insider_daily["buy_date"].isin(hist_dates_normalized)]
-    st.write(f"🔍 DEBUG: 一致したインサイダー件数 = {len(df_insider_daily)} 件 / 対象ティッカー = {current_ticker}")
+    df_insider_daily = df_insider_daily.sort_values("buy_date").reset_index(drop=True)
 
+    def format_amount(val):
+        abs_val = abs(val)
+        if abs_val >= 1_000_000:
+            return f"${val/1_000_000:,.1f}M"
+        return f"${val:,.0f}"
 
-    # --- ★修正ここまで ---
+    y_bottom = -25
+    LEFT_EDGE = xaxis_range[0]
+    LANE_SPACING = 26.0
+    LANE_START = -15.0
 
     if not df_insider_daily.empty:
         unique_insiders = df_insider_daily["insider"].unique().tolist()
         color_palette = ["#AA00FF", "#00FFCC", "#38BDF8", "#FFD700", "#FF007F", "#FF8C00"]
-        date_counts = {}
         registered_legends = set()
 
-        for _, row in df_insider_daily.iterrows():
+        for i, row in df_insider_daily.iterrows():
             b_date = row["buy_date"]
             insider = row["insider"]
             val = row["net_value"]
 
-            if b_date not in date_counts:
-                date_counts[b_date] = 0
-            else:
-                date_counts[b_date] += 1
-
             idx_for_color = unique_insiders.index(insider)
             color = color_palette[idx_for_color % len(color_palette)]
-            offset_y = -5.0 - (date_counts[b_date] * 7.0)
+
+            offset_y = LANE_START - (i * LANE_SPACING)
 
             symbol = "star" if val > 0 else "triangle-down"
             trade_label = "購入" if val > 0 else "売却"
-            hover_text = f"インサイダー: {row['insider']}<br>取引: {trade_label}<br>金額: ${abs(val):,.0f}"
-            short_name = insider if len(insider) <= 10 else insider[:9] + "..."
+            amount_text = format_amount(val)
+            hover_text = f"インサイダー: {insider}<br>取引: {trade_label}<br>金額: {amount_text}<br>日付: {b_date.strftime('%Y-%m-%d')}"
+            short_name = insider if len(insider) <= 14 else insider[:13] + "..."
 
             show_in_legend = insider not in registered_legends
             if show_in_legend:
@@ -139,63 +141,43 @@ def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw,
 
             fig.add_trace(gr.Scatter(
                 x=[b_date], y=[offset_y],
-                mode="markers+text",
+                mode="markers",
                 marker=dict(symbol=symbol, size=14, color=color, line=dict(color="#FFFFFF", width=1.2)),
-                text=[short_name],
-                textposition="bottom center",
-                textfont=dict(size=9, color=color),
                 hovertext=[hover_text], hoverinfo="text",
                 legendgroup=insider, name=f"insider_{insider}", showlegend=show_in_legend
             ))
 
+            fig.add_shape(
+                type="line",
+                x0=LEFT_EDGE, x1=b_date,
+                y0=offset_y, y1=offset_y,
+                xref="x", yref="y",
+                line=dict(color=color, width=1, dash="dot")
+            )
+
+            fig.add_annotation(
+                x=LEFT_EDGE, y=offset_y,
+                xref="x", yref="y",
+                text=f"{short_name}<br>{amount_text}",
+                showarrow=False,
+                xanchor="left", yanchor="middle",
+                font=dict(color=color, size=9),
+                bgcolor="rgba(11, 15, 25, 0.75)",
+                borderpad=2
+            )
+
+        n = len(df_insider_daily)
+        y_bottom = LANE_START - ((n - 1) * LANE_SPACING) - 20
+
+    chart_height = 280 + max(0, (len(df_insider_daily) - 2)) * 20 if not df_insider_daily.empty else 280
+
     fig.update_layout(
-        height=280, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+        height=chart_height,
+        template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
         margin=dict(l=10, r=130, t=50, b=10),
         legend=dict(orientation="v", y=1, x=1.02, xanchor="left", yanchor="top"),
         xaxis=dict(title="日付", range=xaxis_range, showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
-        yaxis=dict(title="ボラティリティ (%)", range=[-25, 105], showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
+        yaxis=dict(title="ボラティリティ (%)", range=[y_bottom, 105], showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
         hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace")
     )
     return fig
-
-def draw_payoff_chart(current_price, iv, T_30, payoffs, stock_changes, breakeven_change, breakeven_price, best_strat):
-    """損益図（ペイオフ・ダイアグラム）を描画"""
-    fig = gr.Figure()
-
-    fig.add_hrect(y0=0, y1=max(payoffs)*1.2 if max(payoffs) > 0 else 100, fillcolor="rgba(0, 255, 204, 0.03)", line_width=0)
-    fig.add_hrect(y0=min(payoffs)*1.2 if min(payoffs) < 0 else -100, y1=0, fillcolor="rgba(255, 0, 127, 0.03)", line_width=0)
-
-    fig.add_vrect(
-        x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100,
-        fillcolor="rgba(56, 189, 248, 0.08)", line_width=0,
-        annotation_text="1σ 確率予測範囲 (30日)", annotation_position="top left",
-        annotation_font=dict(color="#FF007F", size=11, weight="bold")
-    )
-
-    fig.add_trace(gr.Scatter(
-        x=stock_changes * 100, y=payoffs, mode="lines",
-        line=dict(color="#00FFCC", width=3),
-        hovertemplate="株価騰落率: %{x:+.1f}%<br>予想投資リターン: %{y:+.1f}%<extra></extra>"
-    ))
-
-    fig.add_vline(x=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", line_width=1.5, annotation_text="現在株価", annotation_position="bottom right")
-
-    if not np.isnan(breakeven_change):
-        fig.add_vline(
-            x=breakeven_change, line_dash="dash", line_color="#FF007F", line_width=2,
-            annotation_text=f"損益分岐点: {breakeven_change:+.1f}%", annotation_position="top right",
-            annotation_font=dict(color="#FF007F", size=11, weight="bold")
-        )
-
-    fig.add_hline(y=0, line_color="rgba(255, 255, 255, 0.5)", line_width=1)
-
-    fig.update_layout(
-        height=300, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(title="満期時株価騰落率 (%)", range=[-30, 30], gridcolor="rgba(255, 255, 255, 0.05)"),
-        yaxis=dict(title="予想投資リターン (%)", gridcolor="rgba(255, 255, 255, 0.05)"),
-        showlegend=False
-    )
-    return fig
-
-
