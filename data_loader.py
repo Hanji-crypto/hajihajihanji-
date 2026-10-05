@@ -94,6 +94,7 @@ def load_and_process_data():
             rename_map[col] = "transaction_type"
 
     df = df.rename(columns=rename_map)
+    df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
 
     # 必須カラムの補完
     required_cols = {

@@ -107,6 +107,8 @@ with col_sel2:
         st.rerun()
 
 current_ticker = st.session_state.selected_ticker
+current_ticker = current_ticker.strip().upper()
+
 
 if not df_screener.empty:
     df_screener_display = df_screener.copy()
