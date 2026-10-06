@@ -181,3 +181,45 @@ def draw_volatility_chart(plot_dates, hist_data, display_window, iv, hv, df_raw,
         hovermode="x unified", hoverlabel=dict(bgcolor="rgba(17, 24, 39, 0.85)", font_size=11, font_family="Consolas, monospace")
     )
     return fig
+    
+def draw_payoff_chart(current_price, iv, T_30, payoffs, stock_changes, breakeven_change, breakeven_price, best_strat):
+    """損益図（ペイオフ・ダイアグラム）を描画"""
+    fig = gr.Figure()
+
+    fig.add_hrect(y0=0, y1=max(payoffs)*1.2 if max(payoffs) > 0 else 100, fillcolor="rgba(0, 255, 204, 0.03)", line_width=0)
+    fig.add_hrect(y0=min(payoffs)*1.2 if min(payoffs) < 0 else -100, y1=0, fillcolor="rgba(255, 0, 127, 0.03)", line_width=0)
+
+    fig.add_vrect(
+        x0=-iv*np.sqrt(T_30)*100, x1=iv*np.sqrt(T_30)*100,
+        fillcolor="rgba(56, 189, 248, 0.08)", line_width=0,
+        annotation_text="1σ 確率予測範囲 (30日)", annotation_position="top left",
+        annotation_font=dict(color="#FF007F", size=11, weight="bold")
+    )
+
+    fig.add_trace(gr.Scatter(
+        x=stock_changes * 100, y=payoffs, mode="lines",
+        line=dict(color="#00FFCC", width=3),
+        hovertemplate="株価騰落率: %{x:+.1f}%<br>予想投資リターン: %{y:+.1f}%<extra></extra>"
+    ))
+
+    fig.add_vline(x=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", line_width=1.5, annotation_text="現在株価", annotation_position="bottom right")
+
+    if not np.isnan(breakeven_change):
+        fig.add_vline(
+            x=breakeven_change, line_dash="dash", line_color="#FF007F", line_width=2,
+            annotation_text=f"損益分岐点: {breakeven_change:+.1f}%", annotation_position="top right",
+            annotation_font=dict(color="#FF007F", size=11, weight="bold")
+        )
+
+    fig.add_hline(y=0, line_color="rgba(255, 255, 255, 0.5)", line_width=1)
+
+    fig.update_layout(
+        height=300, template="plotly_dark", paper_bgcolor="#0B0F19", plot_bgcolor="#0B0F19",
+        margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(title="満期時株価騰落率 (%)", range=[-30, 30], gridcolor="rgba(255, 255, 255, 0.05)"),
+        yaxis=dict(title="予想投資リターン (%)", gridcolor="rgba(255, 255, 255, 0.05)"),
+        showlegend=False
+    )
+    return fig
+    
+    
