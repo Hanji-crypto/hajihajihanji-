@@ -170,6 +170,9 @@ ticker_summary = df_filtered.groupby('ticker').agg({
     'filing_url': 'first'
 }).rename(columns={'insider': 'trades_count'}).reset_index()
 
+# ← 追加：加重平均で正しい「平均取得単価」を計算
+ticker_summary['avg_price'] = ticker_summary['total_value'] / ticker_summary['total_shares']
+
 ticker_summary = ticker_summary.sort_values(by='total_value', ascending=False).head(20).reset_index(drop=True)
 
 if not ticker_summary.empty:
@@ -181,7 +184,9 @@ if not ticker_summary.empty:
     
     # 高密度インタラクティブテーブル
     selected_row = st.dataframe(
-        ticker_summary.style.format({'total_value': '${:,.0f}'}),
+        ticker_summary.style.format({'total_value': '${:,.0f}',
+        'avg_price': '${:,.2f}'   # ← 追加：小数点2桁のドル表示
+        }),
         use_container_width=True,
         height=240, # スマホでもスクロールしやすくするためコンパクトに設定
         column_config={
@@ -189,6 +194,7 @@ if not ticker_summary.empty:
             "total_value": "総買い額",
             "trades_count": "取引件数",
             "sector": "セクター",
+            "avg_price": "平均取得単価",   # ← 追加：日本語ラベル
             "1M リターン": "1M",
             "3M リターン": "3M",
             "6M リターン": "6M",
