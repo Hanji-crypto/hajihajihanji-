@@ -117,6 +117,25 @@ for i in range(6):
                     price = float(row_data.get("Price", 0) or 0)
                     value = shares * price
                     
+                    # --- ★追加：3段階の構造的バリデーション ---
+                    
+                    # ① 価格の妥当性チェック：史上最高値(バークシャーA株)を基準に、
+                    #    現実的な上限$1,000,000を1株価格の絶対的な上限とする
+                    if price <= 0 or price > 1_000_000:
+                        print(f"  ⚠️ 異常値スキップ(価格): {ticker} price=${price:,.2f} filing={filing_url}")
+                        continue
+                    
+                    # ② 株数の妥当性チェック：1回の取引で100億株を超える取得は非現実的
+                    if shares <= 0 or shares > 10_000_000_000:
+                        print(f"  ⚠️ 異常値スキップ(株数): {ticker} shares={shares:,.0f} filing={filing_url}")
+                        continue
+                    
+                    # ③ 取引総額の妥当性チェック：単一取引で100億ドルを超えるものは、
+                    #    インサイダー取引としては非現実的(企業買収クラスの規模)
+                    if value > 10_000_000_000:
+                        print(f"  ⚠️ 異常値スキップ(総額): {ticker} value=${value:,.2f} filing={filing_url}")
+                        continue
+
                     if value < 100:  # 極端なノイズデータ除外
                         continue
                     
