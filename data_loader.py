@@ -82,10 +82,13 @@ def load_and_process_data():
             rename_map[col] = "buy_date"
         elif col_lower in ["filing_date", "file_date"]:
             rename_map[col] = "filing_date"
-        elif col_lower in ["share_price", "price", "price_per_share"]:
+
+        elif col_lower in ["share_price", "price", "price_per_share", "avg_price"]:
             rename_map[col] = "share_price"
-        elif col_lower in ["shares_traded", "shares", "amount", "quantity"]:
+
+        elif col_lower in ["shares_traded", "shares", "amount", "quantity", "total_shares"]:
             rename_map[col] = "shares_traded"
+            
         elif col_lower in ["total_value", "value", "cost", "size"]:
             rename_map[col] = "total_value"
         elif col_lower in ["filing_url", "url", "link", "source"]:
