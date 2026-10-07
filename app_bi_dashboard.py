@@ -165,6 +165,7 @@ st.subheader("📋 スライサー連動・高密度銘柄マトリックス")
 # 銘柄ごとの集計
 ticker_summary = df_filtered.groupby('ticker').agg({
     'total_value': 'sum',
+    'total_shares': 'sum',      # ← この1行を追加
     'insider': 'count',
     'sector': 'first',
     'filing_url': 'first'
