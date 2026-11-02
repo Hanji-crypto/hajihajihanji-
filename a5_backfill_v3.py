@@ -4,12 +4,19 @@ import pandas as pd
 from datetime import datetime, timedelta
 import time
 import argparse
+import os
 
 # --daily: 日次更新用（直近数日のみ）/ 引数なし: 従来どおり過去6ヶ月をバックフィル
 parser = argparse.ArgumentParser()
 parser.add_argument("--daily", action="store_true", help="直近 --lookback-days 日分だけ取得する日次モード")
 parser.add_argument("--lookback-days", type=int, default=5, help="--daily 時にさかのぼる日数（週末・祝日・取り込み遅延の余裕込み）")
+parser.add_argument("--max-minutes", type=float, default=0,
+                    help="この時間(分)を超えたら安全に打ち切って保存する(0=無制限)。再実行すれば取得済みURLをスキップして続きから再開")
 args = parser.parse_args()
+RUN_STARTED = time.time()
+DEADLINE = RUN_STARTED + args.max_minutes * 60 if args.max_minutes > 0 else None
+stopped_by_budget = False
+window_stats = []  # 実行サマリ用: [(start, end, 開示件数, 保存件数, 小口スキップ, 状態)]
 
 # SECへのアイデンティティ設定
 set_identity("OptionScreener eae270@gmail.com")
@@ -71,6 +78,12 @@ for start_dt, end_dt in windows:
         start_time = time.time()
         
         for idx, f in enumerate(filing_list, 1):
+
+            # 時間予算を超えたら、ここまでの結果を保存して正常終了する（ジョブ全体のタイムアウトで全消失するのを防ぐ）
+            if DEADLINE and time.time() > DEADLINE:
+                stopped_by_budget = True
+                print(f"  ⏱️ 時間予算({args.max_minutes:.0f}分)に到達。ここまでを保存して終了します ({idx}/{total_filings})")
+                break
             
             if idx % 100 == 0 or idx == total_filings:
                 elapsed = time.time() - start_time
@@ -192,11 +205,31 @@ for start_dt, end_dt in windows:
             conn.commit()
             
         print(f"  🎉 期間完了: データベースに {saved_segment} 件をコミット！ (小口スキップ: {skipped_by_limit} 件)")
+        window_stats.append((start_dt, end_dt, total_filings, saved_segment, skipped_by_limit,
+                             "時間切れで途中終了" if stopped_by_budget else "完了"))
+        if stopped_by_budget:
+            break
         time.sleep(0.5)
         
     except Exception as e:
         print(f"  ❌ 期間エラー: {e}")
         continue
+
+# --- 実行サマリ(GitHub Actions の Run ページに表示) ---
+elapsed_min = (time.time() - RUN_STARTED) / 60
+latest = cur.execute("SELECT MAX(filing_date), COUNT(*) FROM insider_trades").fetchone()
+summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+if summary_path:
+    lines = [f"## インサイダーデータ更新 ({mode_label})", "",
+             f"- 所要時間: {elapsed_min:.1f} 分" + (f" / 予算 {args.max_minutes:.0f} 分" if DEADLINE else ""),
+             f"- 今回の新規保存: **{saved_total:,}** 件",
+             f"- DB最新の提出日: **{latest[0]}** / 総行数: {latest[1]:,}",
+             "- 状態: " + ("⚠️ 時間予算で途中終了（再実行で続きから再開）" if stopped_by_budget else "✅ 完了"), "",
+             "| 期間 | 開示件数 | 保存 | 小口スキップ | 状態 |", "|---|--:|--:|--:|---|"]
+    for a, b, n, sv, sk, st in window_stats:
+        lines.append(f"| {a} 〜 {b} | {n:,} | {sv:,} | {sk:,} | {st} |")
+    with open(summary_path, "a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
 
 conn.close()
 print("=" * 80)
