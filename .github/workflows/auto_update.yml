@@ -2,12 +2,31 @@ name: Daily Insider Data Update
 
 on:
   schedule:
-    - cron: '0 18 * * *' # 日本時間 毎日午前3:00に自動実行
+    # 04:17 UTC = 日本時間 13:17（米東部の夏時間 00:17 / 冬時間 23:17）
+    # EDGARの受付は米東部22時まで。その後に走らせて当日分の提出を取りこぼさない。
+    # 火〜土(UTC)=米国の月〜金の夜。毎時0分は混み合って遅延しやすいので17分にずらす。
+    - cron: '17 4 * * 2-6'
   workflow_dispatch:      # 🚀 手動でいつでも即時実行できるボタンを設置
+    inputs:
+      mode:
+        description: 'daily = 直近のみ / backfill = 過去6ヶ月をスキャン'
+        type: choice
+        options: [daily, backfill]
+        default: daily
+
+# insider.db をコミット＆プッシュするため書き込み権限が必要
+permissions:
+  contents: write
+
+# 同時実行（手動実行と定期実行の重なり）による push 競合を防ぐ
+concurrency:
+  group: insider-db-update
+  cancel-in-progress: false
 
 jobs:
   update-db:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -16,6 +35,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
 
       - name: Install Dependencies
         run: |
@@ -24,13 +44,22 @@ jobs:
 
       - name: Run Data Fetcher
         run: |
-          python a5_backfill_v3.py --daily
+          if [ "${{ github.event.inputs.mode }}" = "backfill" ]; then
+            python a5_backfill_v3.py
+          else
+            python a5_backfill_v3.py --daily
+          fi
 
       - name: Commit and Push Changes
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add insider.db
-          # 変更がある場合のみコミットしてプッシュ
-          git diff --quiet && git diff --staged --quiet || git commit -m "Auto-update insider.db [skip ci]"
+          if git diff --staged --quiet; then
+            echo "変更なし: コミットをスキップします"
+            exit 0
+          fi
+          git commit -m "Auto-update insider.db [skip ci]"
+          # 他のコミットが先に入っていても失敗しないよう、rebase してから push
+          git pull --rebase origin "${GITHUB_REF_NAME}"
           git push

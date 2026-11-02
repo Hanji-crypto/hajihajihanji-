@@ -3,6 +3,13 @@ import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
 import time
+import argparse
+
+# --daily: 日次更新用（直近数日のみ）/ 引数なし: 従来どおり過去6ヶ月をバックフィル
+parser = argparse.ArgumentParser()
+parser.add_argument("--daily", action="store_true", help="直近 --lookback-days 日分だけ取得する日次モード")
+parser.add_argument("--lookback-days", type=int, default=5, help="--daily 時にさかのぼる日数（週末・祝日・取り込み遅延の余裕込み）")
+args = parser.parse_args()
 
 # SECへのアイデンティティ設定
 set_identity("OptionScreener eae270@gmail.com")
@@ -19,19 +26,33 @@ cur = conn.cursor()
 print("🗄️ 既存のデータをメモリにキャッシュ中...")
 cur.execute("SELECT DISTINCT filing_url FROM insider_trades WHERE filing_url IS NOT NULL")
 existing_urls = set(row[0] for row in cur.fetchall())
+# 重複防止＆高速化用のインデックス（既存データは変更しない）
+cur.execute("CREATE INDEX IF NOT EXISTS idx_insider_trades_filing_url ON insider_trades(filing_url)")
+conn.commit()
 print(f"   -> 取得済みURL数: {len(existing_urls)} 件")
 
 today = datetime.now()
 saved_total = 0
 
+# スキャン対象の期間リスト [(start, end), ...] を作る
+if args.daily:
+    windows = [(
+        (today - timedelta(days=args.lookback_days)).strftime("%Y-%m-%d"),
+        today.strftime("%Y-%m-%d"),
+    )]
+    mode_label = f"日次モード(直近{args.lookback_days}日)"
+else:
+    windows = [(
+        (today - timedelta(days=(i + 1) * 30)).strftime("%Y-%m-%d"),
+        (today - timedelta(days=i * 30)).strftime("%Y-%m-%d"),
+    ) for i in range(6)]
+    mode_label = "過去6ヶ月"
+
 print("=" * 80)
-print(f"🚀 【大口フィルター版】過去6ヶ月のインサイダーデータをスキャン中... (基準: ${MIN_FILING_VALUE_LIMIT:,.0f} 以上)")
+print(f"🚀 【大口フィルター版】{mode_label}のインサイダーデータをスキャン中... (基準: ${MIN_FILING_VALUE_LIMIT:,.0f} 以上)")
 print("=" * 80)
 
-for i in range(6):
-    start_dt = (today - timedelta(days=(i + 1) * 30)).strftime("%Y-%m-%d")
-    end_dt = (today - timedelta(days=i * 30)).strftime("%Y-%m-%d")
-    
+for start_dt, end_dt in windows:
     print(f"\n📅 期間スキャン中: {start_dt} 〜 {end_dt} ...")
     
     try:
