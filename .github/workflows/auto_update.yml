@@ -13,6 +13,10 @@ on:
         type: choice
         options: [daily, backfill]
         default: daily
+      lookback_days:
+        description: 'daily時にさかのぼる日数（取りこぼし期間を埋めるとき増やす。例: 45）'
+        type: string
+        default: '5'
 
 # insider.db をコミット＆プッシュするため書き込み権限が必要
 permissions:
@@ -26,7 +30,9 @@ concurrency:
 jobs:
   update-db:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 350   # GitHub上限(360分)の手前。スクリプト側の時間予算が先に働いて正常終了する
+    env:
+      PYTHONUNBUFFERED: '1'  # ログを即時表示（バッファリングで最後にまとめて出るのを防ぐ）
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -45,12 +51,14 @@ jobs:
       - name: Run Data Fetcher
         run: |
           if [ "${{ github.event.inputs.mode }}" = "backfill" ]; then
-            python a5_backfill_v3.py
+            # 30日分≒約65分。6期間は6時間を超えるため、時間予算で打ち切り→再実行で続きから再開
+            python a5_backfill_v3.py --max-minutes 300
           else
-            python a5_backfill_v3.py --daily
+            python a5_backfill_v3.py --daily --lookback-days "${{ github.event.inputs.lookback_days || '5' }}" --max-minutes 120
           fi
 
       - name: Commit and Push Changes
+        if: ${{ !cancelled() }}   # 取得が失敗/途中終了でも、保存済みの分はコミットする
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
