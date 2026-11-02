@@ -49,6 +49,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Data Fetcher
+        # ステップ単位のタイムアウト。ネットワーク待ちなどで時間予算の判定に戻れず固まっても、
+        # ジョブ全体を強制終了せず後続のコミット手順まで進める（ジョブ全体の打ち切りだと全データが消える）。
+        timeout-minutes: ${{ github.event.inputs.mode == 'backfill' && 330 || 150 }}
         run: |
           if [ "${{ github.event.inputs.mode }}" = "backfill" ]; then
             # 30日分≒約65分。6期間は6時間を超えるため、時間予算で打ち切り→再実行で続きから再開
@@ -56,6 +59,26 @@ jobs:
           else
             python a5_backfill_v3.py --daily --lookback-days "${{ github.event.inputs.lookback_days || '5' }}" --max-minutes 120
           fi
+
+      - name: Show DB Status
+        if: ${{ !cancelled() }}   # 取得が失敗・時間切れでも、DBの到達点をRunのサマリに残す
+        run: |
+          python - <<'PY'
+          import os, sqlite3
+          c = sqlite3.connect("insider.db")
+          latest, rows = c.execute("SELECT MAX(filing_date), COUNT(*) FROM insider_trades").fetchone()
+          recent = c.execute(
+              "SELECT filing_date, COUNT(DISTINCT filing_url), COUNT(*) FROM insider_trades "
+              "GROUP BY filing_date ORDER BY filing_date DESC LIMIT 7").fetchall()
+          lines = ["## DBの到達点", "", f"- 最新の提出日: **{latest}** / 総行数: {rows:,}", "",
+                   "| 提出日 | 書類数 | 明細行 |", "|---|--:|--:|"]
+          lines += [f"| {d} | {u:,} | {n:,} |" for d, u, n in recent]
+          text = "\n".join(lines)
+          print(text)
+          path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if path:
+              open(path, "a", encoding="utf-8").write(text + "\n")
+          PY
 
       - name: Commit and Push Changes
         if: ${{ !cancelled() }}   # 取得が失敗/途中終了でも、保存済みの分はコミットする
