@@ -95,7 +95,7 @@ def batch_calculate_returns(tickers):
         return price_data
     try:
         # 複数銘柄の過去6ヶ月分のデータを一括ダウンロード (並列処理)
-        data = yf.download(tickers, period="6m", group_by='ticker', progress=False, threads=True)
+        data = yf.download(tickers, period="6mo", group_by='ticker', progress=False, threads=True)
         for t in tickers:
             try:
                 if len(tickers) == 1:
