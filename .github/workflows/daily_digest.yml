@@ -3,23 +3,25 @@ name: Daily Insider Digest (mail)
 # 毎朝の日本語メール「昨夜のインサイダー大口買い Top5」を作り、配信する（digest.py）。
 #
 # いつ動くか:
-#   - 22:07 UTC の火〜土 = 日本時間 水〜日の 07:07。
-#     その時点の米国東部は前日 17〜18時なので「米国東部の前営業日」= 直近に取り込み済みの提出日になる
-#     （auto_update.yml が 04:17 UTC に前営業日の分を取り込み、insider.db を main にコミットしている）。
-#     日本時間の月曜 07:00 は米国東部の日曜＝前営業日が金曜で、土曜分と重なるので送らない（cron に入れない）。
-#   - workflow_dispatch: 手動。既定は dry-run（送らない）。日付を指定して作り直せる。
+#   - 21:30 UTC の月〜金 = 日本時間 火〜土の 06:30 = 米国東部の当日の夕方（冬 16:30 / 夏 17:30）。
+#     送る直前に、作業コピーの insider.db へ EDGAR の最新提出フィードから当日分を取り込み、
+#     「米国東部 X時 までの提出分」として Top5 を作る。insider.db はここではコミットしない
+#     （毎日のコミットは今まで通り auto_update.yml が行う）。
+#   - 取り込みが失敗・時間切れ（ステップの上限）なら、取り込み前の insider.db の直近の提出日で作り、本文に遅れを書く。
+#   - 取り込みには時間予算を付け、朝の送信が遅れないようにする（取り込み 12 分で打ち切り、ステップは 15 分で強制終了）。
+#   - workflow_dispatch: 手動。既定は dry-run（送らない）。日付を指定すると取り込みをせず、その日の分で作る。
 #
 # 送るか:
 #   - secrets.BUTTONDOWN_API_KEY がある時だけ Buttondown で送る。無ければ dry-run（HTML・テキストを残すだけ）。
-#   - 対象日のデータが無い日（休場日・取り込み失敗）は送らない。
+#   - 米国東部の休場日・対象日のデータが無い日は送らない。
 #   - どちらでも、文面を実行サマリとアーティファクトに残す。
 on:
   schedule:
-    - cron: '7 22 * * 2-6'
+    - cron: '30 21 * * 1-5'
   workflow_dispatch:
     inputs:
       date:
-        description: '対象の提出日 YYYY-MM-DD（空なら米国東部の前営業日）'
+        description: '対象の提出日 YYYY-MM-DD（空なら送る直前に当日分を取り込んで作る）'
         type: string
         default: ''
       send:
@@ -37,7 +39,7 @@ concurrency:
 jobs:
   digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       PYTHONUNBUFFERED: '1'
       # 値はリポジトリに書かない。Settings → Secrets and variables → Actions で設定する。
@@ -51,7 +53,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main   # 自動更新が main にコミットした最新の insider.db を使う
-          fetch-depth: 20   # 取得時点（insider.db の最終コミット時刻）を git log で読む
+          fetch-depth: 20   # 取り込み前の取得時点（insider.db の最終コミット時刻）を git log で読む
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -64,6 +66,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Ingest today's filings (working copy only, not committed)
+        if: ${{ github.event.inputs.date == '' }}
+        continue-on-error: true   # 失敗しても、取り込み前の insider.db で送る
+        timeout-minutes: 15
+        run: |
+          cp insider.db insider_committed.db
+          python a5_backfill_v3.py --daily --current --lookback-days 2 --max-minutes 12 --status-file ingest_status.json
+
       - name: Build and send digest
         id: digest
         env:
@@ -71,12 +81,19 @@ jobs:
           # 手動実行は send にチェックした時だけ送る。定期実行はキーがあれば送る。
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.send != 'true' && '--dry-run' || '' }}
         run: |
-          python digest.py --out digest_out ${INPUT_DATE:+--date "$INPUT_DATE"} $DRY_RUN
+          if [ -n "$INPUT_DATE" ]; then
+            python digest.py --out digest_out --date "$INPUT_DATE" $DRY_RUN
+          else
+            python digest.py --out digest_out --ingest-status ingest_status.json --fallback-db insider_committed.db $DRY_RUN
+          fi
 
       - name: Upload digest
         if: ${{ always() && hashFiles('digest_out/*') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: digest-${{ steps.digest.outputs.target_date || github.run_id }}
-          path: digest_out/
+          path: |
+            digest_out/
+            ingest_status.json
+          if-no-files-found: ignore
           retention-days: 30

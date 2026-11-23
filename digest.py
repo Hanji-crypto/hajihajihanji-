@@ -3,7 +3,11 @@
 実行: python digest.py [--date YYYY-MM-DD] [--out digest_out] [--dry-run] [--no-8k]
 
 ■ 何を選ぶか
-- 対象日 = 米国東部時間の「前営業日」（EDGAR の営業日 = 土日・米連邦祝日を除く）。--date で上書きできる。
+- 対象日: Actions では送る直前（日本時間 6:30 ごろ = 米国東部の夕方）に、作業コピーの insider.db へ
+  EDGAR の最新提出フィードから当日分を取り込み（取り込みスクリプトの --current。コミットはしない）、
+  米国東部の当日の提出分を「米国東部 X時 までの提出分」と締め時刻つきで載せる。
+  取り込みが失敗したら、取り込み前の insider.db の直近の提出日で作り、本文に遅れを書く。
+  --ingest-status を渡さない時は米国東部の前営業日（EDGAR の営業日 = 土日・米連邦祝日を除く）。--date で上書きできる。
 - insider.db の insider_trades から対象日に提出された行を読み、data_quality.clean_trades の基準で
   除外・補正したうえで、Form 4 の取引コード P（市場での買い）だけを使う。
   取り込み側（a5_backfill_v3.py）は edgartools の common_stock_purchases（= コード P）だけを保存するので、
@@ -252,6 +256,77 @@ def attach_8k(picks: list[CompanyPick], target: date,
     return failed
 
 
+# ---------------------------------------------------------------- 鮮度（どの提出日を、いつ時点まで載せるか）
+@dataclass
+class Freshness:
+    """kind: fresh（送る直前に当日分まで取り込めた）/ partial（時間切れで一部）/ fallback（取り込み失敗）/ manual。"""
+    kind: str
+    target: date | None  # None = 送らない（米国東部の休場日）
+    fetched_at: datetime | None  # 出典の「取得時点」
+    cutoff: datetime | None = None  # この時刻までに EDGAR が受け付けた提出分（fresh / partial）
+
+    def note(self) -> str:
+        if self.kind in ("fresh", "partial") and self.cutoff:
+            c = self.cutoff.astimezone(US_EASTERN)
+            s = (f"米国東部 {c.month}/{c.day} {c:%H:%M} までの提出分です"
+                 f"（日本時間 {self.cutoff.astimezone(JST):%H:%M} に EDGAR から取得。同じ日のそれより後の提出は含みません）。")
+            if self.kind == "partial":
+                s += "取り込みが時間内に終わらず、この時刻までの提出のうち一部が含まれていない可能性があります。"
+            return s
+        if self.kind == "fallback":
+            when = self.fetched_at.astimezone(JST).strftime("%m/%d %H:%M") if self.fetched_at else "不明"
+            return (f"【遅れ】今朝の取り込みに失敗したため、前回の取り込み（日本時間 {when}）時点のデータで作成しています。"
+                    "最新の提出分は含まれていません。")
+        return ""
+
+
+def read_ingest_status(path: str | None) -> dict | None:
+    """取り込みスクリプトの --status-file の結果。無い・読めない・エラーありなら None（＝取り込み失敗）。"""
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            status = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(status, dict) or status.get("error") or not status.get("feed_fetched_at"):
+        return None
+    return status
+
+
+def _parse_utc(s: str) -> datetime:
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def is_business_day(d: date) -> bool:
+    return bool(_EDGAR_BDAY.is_on_offset(pd.Timestamp(d)))
+
+
+def latest_filing_on_or_before(db_path: str, day: date) -> date | None:
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        (v,) = conn.execute("SELECT MAX(filing_date) FROM insider_trades WHERE filing_date <= ?",
+                            (day.isoformat(),)).fetchone()
+    finally:
+        conn.close()
+    return date.fromisoformat(str(v)[:10]) if v else None
+
+
+def resolve_freshness(status: dict | None, ingest_attempted: bool, fallback_db: str,
+                      committed_at: datetime | None, now: datetime | None = None) -> Freshness:
+    """送る直前の取り込みの結果から、載せる提出日と本文の注記を決める。"""
+    now = now or datetime.now(US_EASTERN)
+    if status is not None:
+        cutoff = _parse_utc(status["feed_fetched_at"])
+        day = cutoff.astimezone(US_EASTERN).date()
+        kind = "partial" if status.get("stopped_by_budget") else "fresh"
+        return Freshness(kind, day if is_business_day(day) else None, cutoff, cutoff)
+    if ingest_attempted:  # 失敗: 取り込み前の insider.db の直近の提出日で作る
+        today = now.astimezone(US_EASTERN).date()
+        return Freshness("fallback", latest_filing_on_or_before(fallback_db, today), committed_at)
+    return Freshness("manual", previous_business_day(now), committed_at)
+
+
 # ---------------------------------------------------------------- 文面
 @dataclass
 class DigestConfig:
@@ -324,7 +399,7 @@ def _filing_label(url: str) -> str:
 
 
 def build_digest(picks: list[CompanyPick], target: date, fetched_at: datetime | None,
-                 config: DigestConfig, unsubscribe: str) -> Digest:
+                 config: DigestConfig, unsubscribe: str, freshness_note: str = "") -> Digest:
     """件名・プレーンテキスト・HTML を作る。picks は空でない前提（空の日は送らない）。"""
     subject = f"昨夜のインサイダー大口買い Top5（{_md(target.isoformat())} 提出分）"
     total = sum(p.total_value for p in picks)
@@ -339,7 +414,7 @@ def build_digest(picks: list[CompanyPick], target: date, fetched_at: datetime | 
         "配信停止: このメールに「配信停止」と返信してください。"
 
     # --- プレーンテキスト
-    t = [subject, "", summary, ""]
+    t = [subject, "", summary] + ([freshness_note] if freshness_note else []) + [""]
     for p in picks:
         t += [
             f"{p.rank}. {p.company}（{p.ticker}）",
@@ -398,6 +473,9 @@ def build_digest(picks: list[CompanyPick], target: date, fetched_at: datetime | 
         '<div style="max-width:640px;margin:0 auto;">'
         f'<h1 style="font-size:20px;margin:0 0 8px;">{e(subject)}</h1>'
         f'<p style="margin:0 0 16px;">{e(summary)}</p>'
+        + (f'<p style="margin:0 0 16px;padding:8px 12px;border-radius:6px;font-size:13px;'
+           f'background:{"#FEF3C7" if freshness_note.startswith("【遅れ】") else "#F3F4F6"};">{e(freshness_note)}</p>'
+           if freshness_note else "")
         + "".join(cards)
         + f'<div style="border-top:1px solid #E5E7EB;margin-top:16px;padding-top:8px;font-size:12px;color:#6B7280;">{footer}</div>'
         "</div></body></html>"
@@ -473,23 +551,40 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default="digest_out")
     ap.add_argument("--dry-run", action="store_true", help="キーがあっても送らない")
     ap.add_argument("--no-8k", action="store_true", help="8-K を SEC に問い合わせない")
+    ap.add_argument("--ingest-status",
+                    help="送る直前の取り込み（--current --status-file）の結果。成功なら米国東部の当日分を締め時刻つきで、"
+                         "失敗（無い・エラー）なら --fallback-db の直近の提出日で作り、本文に遅れを書く")
+    ap.add_argument("--fallback-db", help="取り込み前の insider.db の写し（取り込み失敗時に使う。既定は --db）")
     args = ap.parse_args(argv)
 
-    target = date.fromisoformat(args.date) if args.date else previous_business_day()
+    committed_at = last_updated_at(args.db)  # insider.db を最後にコミットした時刻（作業コピーへの取り込みは含まない）
+    if args.date:
+        fresh = Freshness("manual", date.fromisoformat(args.date), committed_at)
+    else:
+        fresh = resolve_freshness(read_ingest_status(args.ingest_status), bool(args.ingest_status),
+                                  args.fallback_db or args.db, committed_at)
+    db = args.fallback_db if fresh.kind == "fallback" and args.fallback_db else args.db
+    _set_output("freshness", fresh.kind)
+    if fresh.target is None:
+        _set_output("status", "skipped")
+        _write_summary(["## インサイダー大口買い Top5", "",
+                        f"- 米国東部の休場日（またはデータなし）のため送りません（取り込み: {fresh.kind}）。"])
+        return 0
+    target = fresh.target
     since = (pd.Timestamp(target) - pd.Timedelta(days=CLUSTER_WINDOW_DAYS - 1)).date()
-    picks = select_top(load_raw(args.db, since, target), target)
+    picks = select_top(load_raw(db, since, target), target)
     _set_output("target_date", target.isoformat())
     if not picks:
         _set_output("status", "skipped")
         _write_summary(["## インサイダー大口買い Top5", "",
-                        f"- 対象日 {target.isoformat()}（米国東部の前営業日）の市場での買いがありません。送りません（休場日・取り込み前など）。"])
+                        f"- 対象日 {target.isoformat()} の市場での買いがありません。送りません（休場日・取り込み前など。取り込み: {fresh.kind}）。"])
         return 0
 
     failed_8k = [] if args.no_8k else attach_8k(picks, target)
     config = DigestConfig.from_env()
     via_buttondown = bool(os.environ.get("BUTTONDOWN_API_KEY", "").strip()) and not args.dry_run
     unsubscribe = config.unsubscribe_url or (BUTTONDOWN_UNSUBSCRIBE if via_buttondown else "")
-    digest = build_digest(picks, target, last_updated_at(args.db), config, unsubscribe)
+    digest = build_digest(picks, target, fresh.fetched_at, config, unsubscribe, fresh.note())
 
     banned = banned_terms_in(digest.subject, digest.text, digest.html)
     if banned:  # 社名などに偶然入った時も、人が確かめるまで送らない
@@ -504,6 +599,7 @@ def main(argv=None) -> int:
                               ("DIGEST_DASHBOARD_URL", config.dashboard_url)) if not v]
     lines = ["## インサイダー大口買い Top5", "",
              f"- 対象日: **{target.isoformat()}** / 件名: {digest.subject}",
+             f"- 鮮度: **{fresh.kind}** {fresh.note()}",
              f"- 配信: **{result.mode}** — {result.detail}"]
     if missing:
         lines.append(f"- 未設定: {', '.join(missing)}（文面には「未設定」と出ます）")

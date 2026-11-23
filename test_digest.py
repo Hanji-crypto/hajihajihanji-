@@ -238,3 +238,121 @@ def test_main_skips_empty_day(tmp_path, monkeypatch):
     assert dg.main(["--db", str(db), "--date", "2026-11-21", "--out", str(tmp_path / "o"), "--no-8k"]) == 0
     assert "status=skipped" in out.read_text()
     assert not (tmp_path / "o").exists()
+
+
+# ---------------------------------------------------------------- 鮮度（送る直前の取り込み）
+def _status(fetched="2026-11-23T21:32:00Z", **kw):
+    return {"mode": "current", "feed_fetched_at": fetched, "stopped_by_budget": False, "error": None, **kw}
+
+
+def test_fresh_ingest_targets_today_with_cutoff():
+    f = dg.resolve_freshness(_status(), True, "unused.db", None)
+    assert f.kind == "fresh" and f.target == date(2026, 11, 23)  # 米国東部 11/23（月）16:32
+    note = f.note()
+    assert "米国東部 11/23 16:32 までの提出分" in note and "日本時間 06:32" in note
+    assert "それより後の提出は含みません" in note
+
+
+def test_partial_ingest_says_some_may_be_missing():
+    f = dg.resolve_freshness(_status(stopped_by_budget=True), True, "unused.db", None)
+    assert f.kind == "partial" and f.target == date(2026, 11, 23)
+    assert "一部が含まれていない可能性" in f.note()
+
+
+def test_fresh_ingest_on_us_holiday_is_skipped():
+    f = dg.resolve_freshness(_status("2026-11-26T21:30:00Z"), True, "unused.db", None)  # 感謝祭
+    assert f.target is None
+
+
+def _db(path, dates):
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE insider_trades (id INTEGER, filing_date TEXT, insider TEXT, position TEXT, ticker TEXT,"
+                 " company TEXT, cik TEXT, avg_price REAL, buy_date TEXT, total_shares REAL, total_value REAL, filing_url TEXT)")
+    for i, (d, tk, v) in enumerate(dates, 1):
+        conn.execute("INSERT INTO insider_trades VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (i, d, "Jane Doe", "Director", tk, f"{tk} Inc.", "0000320193", 10.0, d, v / 10.0, v,
+                      f"https://www.sec.gov/Archives/edgar/data/1/0000000001-26-{i:06d}-index.html"))
+    conn.commit()
+    conn.close()
+    return str(path)
+
+
+def test_failed_ingest_falls_back_to_latest_committed_day(tmp_path):
+    db = _db(tmp_path / "c.db", [("2026-11-19", "OLD", 100_000), ("2026-11-20", "NEW", 200_000)])
+    committed = datetime(2026, 11, 22, 13, 20, tzinfo=dg.JST)
+    f = dg.resolve_freshness(None, True, db, committed, now=datetime(2026, 11, 23, 16, 30, tzinfo=US_EASTERN))
+    assert f.kind == "fallback" and f.target == date(2026, 11, 20)
+    assert f.note().startswith("【遅れ】") and "日本時間 11/22 13:20" in f.note()
+    assert "最新の提出分は含まれていません" in f.note()
+
+
+def test_without_ingest_uses_previous_business_day():
+    f = dg.resolve_freshness(None, False, "unused.db", None, now=datetime(2026, 11, 23, 16, 30, tzinfo=US_EASTERN))
+    assert f.kind == "manual" and f.target == date(2026, 11, 20) and f.note() == ""
+
+
+def test_read_ingest_status(tmp_path):
+    import json
+
+    assert dg.read_ingest_status(str(tmp_path / "missing.json")) is None  # 取り込みが強制終了した
+    assert dg.read_ingest_status(None) is None
+    p = tmp_path / "s.json"
+    p.write_text("{broken", encoding="utf-8")
+    assert dg.read_ingest_status(str(p)) is None
+    p.write_text(json.dumps(_status(error="HTTPError: 503")), encoding="utf-8")
+    assert dg.read_ingest_status(str(p)) is None
+    p.write_text(json.dumps(_status(feed_fetched_at=None)), encoding="utf-8")
+    assert dg.read_ingest_status(str(p)) is None
+    p.write_text(json.dumps(_status()), encoding="utf-8")
+    assert dg.read_ingest_status(str(p))["feed_fetched_at"] == "2026-11-23T21:32:00Z"
+
+
+def test_freshness_note_is_in_text_and_html():
+    picks = _top([_row(1, "ABC", 100_000)])
+    note = dg.resolve_freshness(_status(), True, "unused.db", None).note()
+    d = dg.build_digest(picks, D, None, CFG, "", note)
+    assert d.text.splitlines()[3] == note  # 冒頭の要約のすぐ下
+    assert "米国東部 11/23 16:32 までの提出分" in d.html
+    assert dg.banned_terms_in(d.text, d.html) == []
+    late = dg.build_digest(picks, D, None, CFG, "", "【遅れ】テスト")
+    assert "#FEF3C7" in late.html and "【遅れ】テスト" in late.text
+
+
+def _run_main(tmp_path, monkeypatch, status, rows_fresh, rows_committed):
+    import json
+
+    fresh_db = _db(tmp_path / "insider.db", rows_fresh)
+    committed_db = _db(tmp_path / "committed.db", rows_committed)
+    st_path = tmp_path / "status.json"
+    if status is not None:
+        st_path.write_text(json.dumps(status), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "gh_out"))
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.delenv("BUTTONDOWN_API_KEY", raising=False)
+    out = tmp_path / "o"
+    rc = dg.main(["--db", fresh_db, "--fallback-db", committed_db, "--ingest-status", str(st_path),
+                  "--out", str(out), "--no-8k"])
+    return rc, (tmp_path / "gh_out").read_text(), out
+
+
+def test_main_fresh_uses_ingested_today(tmp_path, monkeypatch):
+    rows = [("2026-11-20", "OLD", 900_000), ("2026-11-23", "TOD", 100_000)]
+    rc, gh, out = _run_main(tmp_path, monkeypatch, _status(), rows, rows[:1])
+    assert rc == 0 and "freshness=fresh" in gh and "target_date=2026-11-23" in gh
+    text = (out / "digest.txt").read_text(encoding="utf-8")
+    assert "TOD" in text and "OLD" not in text and "米国東部 11/23 16:32 までの提出分" in text
+    assert (out / "subject.txt").read_text(encoding="utf-8").strip() == "昨夜のインサイダー大口買い Top5（11/23 提出分）"
+
+
+def test_main_failed_ingest_uses_committed_db_and_says_late(tmp_path, monkeypatch):
+    monkeypatch.setattr(dg, "datetime", type("FakeDT", (datetime,), {
+        "now": classmethod(lambda cls, tz=None: datetime(2026, 11, 23, 16, 45, tzinfo=tz))}))
+    # 取り込みが途中で落ちて作業コピーに当日分が半端に入っていても、取り込み前の写しで作る
+    rc, gh, out = _run_main(tmp_path, monkeypatch, None,
+                            [("2026-11-20", "OLD", 900_000), ("2026-11-23", "HALF", 50_000)],
+                            [("2026-11-20", "OLD", 900_000)])
+    assert rc == 0 and "freshness=fallback" in gh and "target_date=2026-11-20" in gh
+    text = (out / "digest.txt").read_text(encoding="utf-8")
+    assert "【遅れ】" in text and "OLD" in text and "HALF" not in text
