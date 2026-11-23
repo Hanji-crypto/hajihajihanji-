@@ -8,6 +8,8 @@ st.set_page_config はここで1回だけ呼び、各ページ側では呼ばな
 import streamlit as st
 
 from access_gate import require_access
+from data_mode import is_edgar_only
+from page_flow import EndPage
 from data_status import render_page_footer, render_page_header
 
 st.set_page_config(
@@ -31,10 +33,14 @@ st.html(
     """
 )
 
+# データモード（data_mode.py）: 招待制ベータの既定は "edgar_only"＝SEC EDGAR の開示だけ。株価（yfinance）は出さない。
+# 3ページとも Form 4 / 8-K だけで成り立つ部分を残し、株価・オプション・ボラティリティの部品はページ側で外す。
+EDGAR_ONLY = is_edgar_only()
+
 pages = [
     st.Page(
         "app.py",
-        title="Whale-Eye: オプション＆インサイダー",
+        title="Whale-Eye: インサイダー" if EDGAR_ONLY else "Whale-Eye: オプション＆インサイダー",
         icon="🐋",
         url_path="whale-eye",
         default=True,
@@ -47,7 +53,7 @@ pages = [
     ),
     st.Page(
         "app_compare_dashboard.py",
-        title="Daily Compare（Form4×騰落率×8-K）",
+        title="Daily Compare（Form4×8-K）" if EDGAR_ONLY else "Daily Compare（Form4×騰落率×8-K）",
         icon="📊",
         url_path="compare",
     ),
@@ -57,7 +63,7 @@ pages = [
 # 入口の間もナビは非表示で登録しておく（/compare などのURLで来た人が、入場後にそのページへ着くように）。
 if not require_access():
     st.navigation(pages, position="hidden")
-    render_page_footer("insider.db")
+    render_page_footer("insider.db", edgar_only=EDGAR_ONLY)
     st.stop()
 
 nav = st.navigation(pages, position="top")
@@ -65,6 +71,8 @@ nav = st.navigation(pages, position="top")
 render_page_header("insider.db")
 try:
     nav.run()
+except EndPage:
+    pass  # ページ側が途中で描画を終えた（page_flow.end_page）。st.stop() だとフッターまで消えるため使わない
 finally:
-    # ページ側が途中で st.stop() しても、出典と免責は必ず出す
-    render_page_footer("insider.db")
+    # ページ側が途中で終えても、出典と免責は必ず出す
+    render_page_footer("insider.db", edgar_only=EDGAR_ONLY)

@@ -20,6 +20,11 @@ from charts import (
     draw_payoff_chart
 )
 from guide_renderer import render_market_diagnostic_and_guide
+from data_mode import is_edgar_only
+from page_flow import end_page
+from edgar_views import render_insider_trades
+
+EDGAR_ONLY = is_edgar_only()  # True の時は株価・オプションの画面を出さず、yfinance も呼ばない（data_mode.py）
 
 # ==============================================================================
 # 1. PAGE CONFIG & DARK THEME STYLE
@@ -48,7 +53,7 @@ try:
     df_raw = load_and_process_data()
 except Exception as e:
     st.error(f"Database Error: {e}")
-    st.stop()
+    end_page()
 
 df_screener = generate_screener(df_raw)
 top_10_tickers = df_screener["ticker"].head(10).tolist() if not df_screener.empty else []
@@ -63,7 +68,7 @@ if "custom_tickers" not in st.session_state:
 # ==============================================================================
 # 3. MAIN TERMINAL LAYOUT
 # ==============================================================================
-st.title("Whale-Eye: Option and Insider Intelligence")
+st.title("Whale-Eye: Insider Intelligence" if EDGAR_ONLY else "Whale-Eye: Option and Insider Intelligence")
 st.markdown("---")
 
 st.subheader("[スクリーナー] 全銘柄多次元スクリーニング・マトリックス")
@@ -126,6 +131,18 @@ if not df_screener.empty:
     )
 
 st.markdown("---")
+
+# ==============================================================================
+# 3.5 EDGAR のみ（招待制ベータ）: 選んだ銘柄の Form 4 取引の一覧で終える
+# ==============================================================================
+if EDGAR_ONLY:
+    st.subheader(f"[{current_ticker}] インサイダー取引（Form 4）")
+    t = df_raw[df_raw["ticker"] == current_ticker]
+    render_insider_trades(
+        t.rename(columns={"shares_traded": "shares", "share_price": "price"}).assign(value=t["net_value"]),
+        "提出日・内部者・役職・株数・取得単価・金額（売りはマイナス）",
+    )
+    end_page()  # 以降（株価・オプション・ボラティリティ）は株価データが要るため出さない
 
 # ==============================================================================
 # 4. REALTIME ANALYSIS & CHARTS

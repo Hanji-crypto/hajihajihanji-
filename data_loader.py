@@ -1,7 +1,6 @@
 import sqlite3
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import os
 from datetime import datetime, timedelta
 
@@ -204,6 +203,8 @@ def fetch_market_data(ticker, period="6mo"):
     yfinanceからリアルタイム株価、HV、および満期日リストを取得する関数。
     """
     try:
+        import yfinance as yf  # full モードの時だけ読み込む（edgar_only では呼ばれない。data_mode.py）
+
         stock = yf.Ticker(ticker)
         hist = stock.history(period=period)
         if hist.empty:
@@ -283,6 +284,8 @@ def fetch_option_chain_by_expiry(ticker, expiry, current_price):
     ブラックショールズ近似デルタを計算して返す関数。
     """
     try:
+        import yfinance as yf  # full モードの時だけ読み込む（edgar_only では呼ばれない。data_mode.py）
+
         stock = yf.Ticker(ticker)
         opt = stock.option_chain(expiry)
         df_calls = opt.calls.copy()

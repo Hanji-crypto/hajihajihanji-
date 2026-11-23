@@ -135,3 +135,17 @@ def items_to_label(items) -> tuple[str, bool]:
     codes = [c.strip() for c in str(items).replace(";", ",").split(",") if c.strip()]
     labels = [ITEM_LABELS.get(c, c) for c in codes if c != "9.01"] or ["8-K"]
     return " / ".join(labels), any(c in HIGH_IMPACT_ITEMS for c in codes)
+
+
+def eight_k_relative(k8: pd.DataFrame, filing_date: pd.Timestamp) -> pd.DataFrame:
+    """8-K の一覧に「Form 4 提出日からの日数」（暦日、提出日より前はマイナス）を付け、新しい順に並べる。
+
+    k8 の列: date, label, high, url（app_compare_dashboard.load_8k の戻り値）。株価を使わない（edgar_only でも使える）。
+    """
+    cols = ["date", "days_from_filing", "label", "high", "url"]
+    if k8 is None or k8.empty:
+        return pd.DataFrame(columns=cols)
+    out = k8.copy()
+    out["date"] = pd.to_datetime(out["date"]).dt.normalize()
+    out["days_from_filing"] = (out["date"] - pd.Timestamp(filing_date).normalize()).dt.days
+    return out.sort_values("date", ascending=False)[cols].reset_index(drop=True)

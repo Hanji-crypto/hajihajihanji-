@@ -1,6 +1,6 @@
 name: CI
 
-# PR と main への push で、単体テストと3ページの起動スモークテストを走らせる。
+# PR と main への push で、単体テストと3ページの起動スモークテスト（full / edgar_only）を走らせる。
 # データ自動更新（auto_update.yml）のコミットは "[skip ci]" 付きなので、ここは走らない。
 on:
   pull_request:
@@ -33,8 +33,11 @@ jobs:
           pip install -r requirements.txt pytest
 
       - name: Unit tests
-        run: python -m pytest -q --ignore=test_smoke_pages.py
+        run: python -m pytest -q --ignore=test_smoke_pages.py --ignore=test_edgar_only_pages.py
 
       - name: Smoke test (AppTest で3ページを起動)
         # 株価・SEC への通信はテスト内で偽物に差し替える（ネットワークに依存しない）
         run: python -m pytest -q test_smoke_pages.py
+
+      - name: Smoke test (edgar_only で3ページを起動し、yfinance が読み込まれないことを確かめる)
+        run: python -m pytest -q test_edgar_only_pages.py

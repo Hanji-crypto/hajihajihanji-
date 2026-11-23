@@ -64,3 +64,12 @@ def test_status_missing_table(tmp_path):
 
 def test_disclaimer_says_not_advice():
     assert "投資助言ではありません" in ds.DISCLAIMER
+
+
+def test_source_caption_edgar_only_names_sec_only(tmp_path):
+    s = ds.get_data_status(_db(tmp_path, ["2026-11-20"]), today=date(2026, 11, 23))
+    full = ds.source_caption(s)
+    assert "SEC EDGAR" in full and "Yahoo Finance" in full
+    edgar = ds.source_caption(s, edgar_only=True)
+    assert "SEC EDGAR" in edgar and "Yahoo" not in edgar and "yfinance" not in edgar
+    assert "Yahoo" not in ds.SOURCE_NOTE_EDGAR_ONLY and "非公式" in ds.SOURCE_NOTE_EDGAR_ONLY

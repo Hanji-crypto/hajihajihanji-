@@ -1,6 +1,9 @@
 """Form 4 提出日 × 騰落率 × 指標推移 × 速報(8-K) を一画面で毎日比較するダッシュボード。
 
 起動: streamlit run streamlit_app.py （「Daily Compare」ページ）
+
+edgar_only（招待制ベータ, data_mode.py）では株価が要る部分（騰落率・ヒートマップ・株価チャート）を外し、
+Form 4 の提出と 8-K（いずれも SEC EDGAR）の比較だけを出す。yfinance は import もしない。
 """
 from datetime import datetime, timedelta
 
@@ -8,11 +11,16 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import yfinance as yf
 from plotly.subplots import make_subplots
 
 import compare_logic as cl
+from data_mode import is_edgar_only
+from page_flow import end_page
 from data_quality import load_trades as clean_load
+
+EDGAR_ONLY = is_edgar_only()
+if not EDGAR_ONLY:
+    import yfinance as yf
 
 DB_PATH = "insider.db"
 BG, PANEL, GRID, TEXT = "#0d1117", "#161b22", "#21262d", "#E0E3EB"
@@ -84,7 +92,9 @@ def load_8k(ticker: str, since: str) -> pd.DataFrame:
     try:
         from edgar import Company, set_identity
 
-        set_identity("OptionScreener eae270@gmail.com")
+        from sec_company import user_agent
+
+        set_identity(user_agent())  # SEC の利用ルール: 名前と連絡先（sec_company.py と同じ識別子）
         filings = Company(ticker).get_filings(form="8-K")
         rows = []
         for f in filings:
@@ -111,18 +121,21 @@ def style(fig: go.Figure, height: int) -> go.Figure:
 
 # ---------------------------------------------------------------- 条件
 st.title("📊 Insider Daily Compare")
-st.caption("Form 4 提出日の終値を 0% として、提出後の騰落率・指標・速報(8-K)を並べて比較します。")
+if EDGAR_ONLY:
+    st.caption("Form 4（インサイダー取引）の提出と、同じ企業の速報(8-K)を提出日で並べて比較します。いずれも SEC EDGAR の開示です。")
+else:
+    st.caption("Form 4 提出日の終値を 0% として、提出後の騰落率・指標・速報(8-K)を並べて比較します。")
 
 try:
     raw = load_trades()
 except Exception as e:
     st.error(f"データベースの読み込みに失敗しました: {e}")
-    st.stop()
+    end_page()
 
 agg_all = cl.aggregate_filings(raw)
 if agg_all.empty:
     st.warning("表示できるデータがありません。")
-    st.stop()
+    end_page()
 
 c1, c2, c3, c4 = st.columns(4)
 with c1:
@@ -133,17 +146,83 @@ with c2:
 with c3:
     top_n = st.slider("比較する件数(購入額上位)", 3, 20, 10)
 with c4:
-    max_days = st.slider("提出後の追跡日数", 5, 60, 20)
+    if EDGAR_ONLY:
+        max_days = st.slider("8-K を見る範囲（提出日の前後, 日）", 7, 90, 30)
+    else:
+        max_days = st.slider("提出後の追跡日数", 5, 60, 20)
 
 latest_filing = agg_all["filing_date"].max()
 agg = agg_all[(agg_all["filing_date"] >= latest_filing - pd.Timedelta(days=span)) & (agg_all["value"] >= min_value)]
 if agg.empty:
     st.info("条件に合うデータがありません。期間を広げるか、最低購入額を下げてください。")
-    st.stop()
+    end_page()
 
 top = agg.nlargest(top_n, "value").reset_index(drop=True)
 tickers = tuple(sorted(agg["ticker"].unique()))
 start = (agg["filing_date"].min() - timedelta(days=5)).strftime("%Y-%m-%d")
+
+if EDGAR_ONLY:
+    # ---------------------------------------------------------------- EDGAR のみ: A. KPI
+    m1, m2, m3, m4 = st.columns(4)
+    latest = agg[agg["filing_date"] == latest_filing]
+    m1.metric("最新の提出日", f"{latest_filing:%Y-%m-%d}")
+    m2.metric("その日の新規 / 購入額", f"{len(latest)} 件 / ${latest['value'].sum():,.0f}")
+    m3.metric("対象の提出件数", f"{len(agg)} 件")
+    m4.metric("対象の購入額合計", f"${agg['value'].sum():,.0f}")
+
+    # ---------------------------------------------------------------- B. 購入額上位の提出一覧
+    st.subheader("① 購入額上位の Form 4 提出（銘柄 × 提出日）")
+    st.caption("金額は Form 4 に記載された内部者の取引価格 × 株数で、市場の株価ではありません。")
+    st.dataframe(
+        top.rename(columns={"ticker": "銘柄", "company": "企業名", "filing_date": "提出日", "value": "購入額 ($)",
+                            "insiders": "内部者の人数", "filing_url": "出典（EDGAR）"})[
+            ["提出日", "銘柄", "企業名", "購入額 ($)", "内部者の人数", "出典（EDGAR）"]],
+        hide_index=True, width="stretch",
+        column_config={"提出日": st.column_config.DateColumn(format="YYYY-MM-DD"),
+                       "購入額 ($)": st.column_config.NumberColumn(format="dollar"),
+                       "出典（EDGAR）": st.column_config.LinkColumn("出典（EDGAR）", display_text="書類を開く")},
+    )
+
+    # ---------------------------------------------------------------- C. 銘柄ごとの Form 4 と 8-K の並び
+    st.subheader("② 銘柄詳細：Form 4 提出日と速報(8-K) を時系列に並べる")
+    options = [f"{cl.label_of(r.ticker, r.filing_date)}  (${r.value:,.0f})" for r in top.itertuples()]
+    choice = st.selectbox("銘柄を選択", options)
+    sel = top.iloc[options.index(choice)]
+    ticker, f_date = sel["ticker"], sel["filing_date"]
+    since = f_date - timedelta(days=max_days)
+    k8 = cl.eight_k_relative(load_8k(ticker, since.strftime("%Y-%m-%d")), f_date)
+    k8 = k8[k8["days_from_filing"].abs() <= max_days]
+    f4 = agg_all[(agg_all["ticker"] == ticker) & (agg_all["filing_date"] >= since)
+                 & (agg_all["filing_date"] <= f_date + timedelta(days=max_days))]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=f4["filing_date"], y=["Form 4（インサイダー買い）"] * len(f4), mode="markers", name="Form 4 提出",
+        marker=dict(symbol="triangle-up", color="#D500F9", size=14, line=dict(color="#fff", width=1)),
+        text=[f"{d:%Y-%m-%d} ${v:,.0f}（{n}人）" for d, v, n in zip(f4["filing_date"], f4["value"], f4["insiders"])],
+        hoverinfo="text"))
+    if not k8.empty:
+        fig.add_trace(go.Scatter(
+            x=k8["date"], y=["速報(8-K)"] * len(k8), mode="markers", name="速報(8-K)",
+            marker=dict(size=[14 if h else 9 for h in k8["high"]], symbol="diamond",
+                        color=[WARN if h else "#8b949e" for h in k8["high"]], line=dict(color="#fff", width=1)),
+            text=[f"{d:%Y-%m-%d}（{n:+d}日）{lbl}" for d, n, lbl in zip(k8["date"], k8["days_from_filing"], k8["label"])],
+            hoverinfo="text"))
+    fig.add_vline(x=f_date, line=dict(color="#D500F9", width=1.5, dash="dot"))
+    fig.update_xaxes(range=[since - timedelta(days=1), f_date + timedelta(days=max_days + 1)])
+    st.plotly_chart(style(fig, 260), width="stretch")
+
+    st.markdown("**速報(8-K)一覧**" + ("" if not k8.empty else "　— 取得できませんでした（SEC接続なし/該当なし）"))
+    if not k8.empty:
+        table = k8.copy()
+        table["提出日からの日数"] = table["days_from_filing"].map(lambda d: f"{d:+d}日")
+        table["重要度"] = table["high"].map({True: "★重要", False: ""})
+        st.dataframe(
+            table.rename(columns={"date": "日付", "label": "内容", "url": "EDGAR"})[["日付", "提出日からの日数", "内容", "重要度", "EDGAR"]],
+            hide_index=True, width="stretch",
+            column_config={"日付": st.column_config.DateColumn(format="YYYY-MM-DD"), "EDGAR": st.column_config.LinkColumn("EDGAR")},
+        )
+    end_page()  # 以降（騰落率・ヒートマップ・株価チャート）は株価が要るため edgar_only では出さない
 
 with st.spinner("株価を取得中..."):
     prices = load_prices(tickers, start)
@@ -152,7 +231,7 @@ rets_all = cl.returns_since_filing(prices, agg, max_days)
 rets_top = cl.returns_since_filing(prices, top, max_days)
 if rets_all.empty:
     st.warning("株価を取得できませんでした。時間をおいて再読み込みしてください。")
-    st.stop()
+    end_page()
 
 # ---------------------------------------------------------------- A. KPI
 k = cl.kpis(agg, rets_all)
