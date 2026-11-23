@@ -1,5 +1,5 @@
 altair==6.3.0
-edgartools
+edgartools==6.3.0
 numpy==2.5.3
 pandas==3.0.5
 plotly==5.24.1

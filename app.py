@@ -122,7 +122,7 @@ if not df_screener.empty:
 
     st.dataframe(
         df_screener_display[["ティッカー", "企業名", "ネット・フロー ($)", "総買い額 ($)", "総売り額 ($)", "平均取得単価 ($)", "主なインサイダー", "直近取引日", "取引回数", "統計的確実性スコア (%)"]],
-        use_container_width=True, hide_index=True, height=240
+        width="stretch", hide_index=True, height=240
     )
 
 st.markdown("---")
@@ -377,7 +377,7 @@ if raw_hist is not None:
             lower_band_curve,
             xaxis_range
         )
-        st.plotly_chart(fig_stock, use_container_width=True)
+        st.plotly_chart(fig_stock, width="stretch")
     except Exception as e:
         st.error(f"メインチャートの描画中にエラーが発生しました: {e}")
 
@@ -385,12 +385,12 @@ if raw_hist is not None:
     try:
         # 引数の不一致によるエラーを防ぐため、安全に呼び出します
         fig_sub = draw_sub_indicators_chart(df_plot, sub_indicator, xaxis_range)
-        st.plotly_chart(fig_sub, use_container_width=True)
+        st.plotly_chart(fig_sub, width="stretch")
     except TypeError:
         # もし引数エラーが発生した場合は、引数を調整して再試行
         try:
             fig_sub = draw_sub_indicators_chart(df_plot, sub_indicator)
-            st.plotly_chart(fig_sub, use_container_width=True)
+            st.plotly_chart(fig_sub, width="stretch")
         except Exception as e:
             st.error(f"サブ指標チャートの描画に失敗しました: {e}")
     except Exception as e:
@@ -459,7 +459,7 @@ if raw_hist is not None:
 
     # 構文エラーの温床となるtry-exceptを排除し、安全に呼び出し
     fig_vol = draw_volatility_chart(*final_args)
-    st.plotly_chart(fig_vol, use_container_width=True)
+    st.plotly_chart(fig_vol, width="stretch")
 
 
     # ==============================================================================
@@ -561,7 +561,7 @@ if raw_hist is not None:
             filtered_kwargs = {k: v for k, v in payoff_kwargs.items() if k in valid_params}
 
             fig_payoff = draw_payoff_chart(**filtered_kwargs)
-            st.plotly_chart(fig_payoff, use_container_width=True)
+            st.plotly_chart(fig_payoff, width="stretch")
 
         except Exception as e:
             st.error(f"損益図の描画中にエラーが発生しました: {e}")

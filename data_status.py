@@ -24,8 +24,15 @@ STALE_BUSINESS_DAYS = 3
 US_EASTERN = ZoneInfo("America/New_York")
 JST = ZoneInfo("Asia/Tokyo")
 DISCLAIMER = (
-    "本アプリは SEC 公開データ（Form 4 など）をもとにした情報提供のみを目的としており、投資助言ではありません。"
+    "本アプリは SEC 公開データ（Form 4 など）をもとにした一般的な情報提供のみを目的としており、"
+    "個別の投資推奨・投資助言ではありません。"
     "データには誤りや遅れが含まれることがあります。投資判断はご自身の責任で行ってください。"
+)
+
+# 出典の表記。SEC・Yahoo の公認・提携に見えないよう「非公式」「関係はありません」を必ず添える（ロゴは使わない）。
+SOURCE_NOTE = (
+    "本アプリは個人が作った非公式のツールで、米国証券取引委員会（SEC）・Yahoo とは関係がなく、"
+    "両者による承認・提携もありません。"
 )
 
 _EDGAR_BDAY = CustomBusinessDay(calendar=USFederalHolidayCalendar())
@@ -130,3 +137,22 @@ def render_page_header(db_path: str) -> None:
         with st.expander("除外・補正の内訳（insider.db の誤データは表示時に除いています）", expanded=False):
             st.markdown("\n".join(f"- {line}" for line in q.summary_lines()))
     st.caption(f"ⓘ {DISCLAIMER}")
+
+
+def source_caption(s: DataStatus, now: datetime | None = None) -> str:
+    """出典と取得時点の1行。SEC は insider.db の最終更新時点、株価は画面の表示時点。"""
+    now = now or datetime.now(timezone.utc)
+    updated = s.updated_at.astimezone(JST).strftime("%Y-%m-%d %H:%M JST") if s.updated_at else "不明"
+    shown = now.astimezone(JST).strftime("%Y-%m-%d %H:%M JST")
+    return (
+        f"出典: U.S. SEC EDGAR（提出書類。Form 4 は {updated} 時点の取り込み、8-K は表示時に取得）"
+        f"／株価: Yahoo Finance（yfinance 経由。{shown} 表示、最大1時間のキャッシュと提供元の遅延あり）"
+    )
+
+
+def render_page_footer(db_path: str) -> None:
+    """全ページ共通のフッター: 出典・取得時点・免責（streamlit_app.py から各ページの後に呼ぶ）。"""
+    s = _cached_status(db_path, datetime.now(US_EASTERN).date())
+    st.divider()
+    st.caption(source_caption(s))
+    st.caption(f"ⓘ {DISCLAIMER} {SOURCE_NOTE}")

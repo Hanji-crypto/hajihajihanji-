@@ -187,7 +187,7 @@ if not ticker_summary.empty:
         ticker_summary.style.format({'total_value': '${:,.0f}',
         'avg_price': '${:,.2f}'   # ← 追加：小数点2桁のドル表示
         }),
-        use_container_width=True,
+        width="stretch",
         height=240, # スマホでもスクロールしやすくするためコンパクトに設定
         column_config={
             "ticker": "銘柄コード",
@@ -330,7 +330,7 @@ if not ticker_trades.empty:
             fig.update_xaxes(tickfont=dict(color="#E0E3EB"), gridcolor="#21262d")
             fig.update_yaxes(tickfont=dict(color="#E0E3EB"), gridcolor="#21262d")
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
         else:
             st.warning("株価データを取得できませんでした。")

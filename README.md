@@ -35,22 +35,37 @@ streamlit run streamlit_app.py
 
 Streamlit Community Cloud に公開する場合も、メインファイルに `streamlit_app.py` を指定します。
 
+### 招待制ベータ（招待コードと同意画面）
+
+secrets に `invite_codes`（文字列のリスト）を置くと、招待コードを入れた人だけが画面を見られます。入場後、セッションごとに1回「日本に住んでいる」「投資助言ではないことを理解した」の同意を求めます（`access_gate.py`）。
+
+- 形は `.streamlit/secrets.toml.example` を参照。ローカルでは `.streamlit/secrets.toml` にコピーして値を入れます（git には入りません）。Streamlit Community Cloud ではアプリの Settings → Secrets に同じ形で貼ります。
+- `invite_codes` が無い時（ローカル開発・CI）は、ゲートも同意画面も出ず、今まで通り表示されます。
+- 招待コード自体は、ソースや README には書かないでください。推測されにくい長めのコードを使い、配るのをやめたコードは secrets から消します（消したコードで入っていた人は入口に戻ります）。
+- ブラウザを再読み込みすると新しいセッションになり、もう一度コードと同意が必要です。
+
 ### テスト
 
 ```bash
 pip install pytest
-pytest test_compare_logic.py
+pytest -q   # 単体テスト・招待ゲートと同意画面・3ページの起動スモークテスト
 ```
 
 ## ファイル構成
 
 | ファイル | 役割 |
 |---|---|
-| `streamlit_app.py` | 入口。ページ設定・共通スタイル・ナビゲーション |
+| `streamlit_app.py` | 入口。ページ設定・共通スタイル・招待ゲート・ナビゲーション・共通のヘッダー/フッター |
+| `access_gate.py` | 招待コードのゲートと初回の同意画面 |
+| `data_status.py` / `data_quality.py` | データの鮮度・出典・免責の表示／誤データの除外・補正 |
 | `app.py` / `app_bi_dashboard.py` / `app_compare_dashboard.py` | 各ページ |
 | `data_loader.py` / `charts.py` / `guide_renderer.py` / `compare_logic.py` | データ読み込み・チャート描画・ガイド表示・比較計算 |
 | `a5_backfill_v3.py` | SEC EDGAR から Form 4 を取り込み `insider.db` を更新するスクリプト（GitHub Actions から実行） |
 | `insider.db` | インサイダー取引データ（自動更新。手で編集しないでください） |
+
+## 出典の表記について
+
+画面のフッターに「出典: U.S. SEC EDGAR（提出書類）／株価: Yahoo Finance（yfinance 経由）」と取得時点を出しています。本アプリは個人が作った非公式のツールで、SEC・Yahoo とは関係がなく、承認・提携も受けていません。SEC のロゴは使いません。
 
 ## 免責事項
 

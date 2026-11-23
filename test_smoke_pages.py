@@ -85,6 +85,7 @@ def test_page_starts(page):
     text = _texts(at)
     assert "データの最新提出日" in text and "最終更新" in text
     assert "投資助言ではありません" in text
+    assert "出典: U.S. SEC EDGAR" in text and "Yahoo Finance" in text  # フッターの出典
     # 無効なティッカーは画面に出ない
     for sb in at.selectbox:
         assert "NONE" not in list(sb.options) and "N/A" not in list(sb.options)
