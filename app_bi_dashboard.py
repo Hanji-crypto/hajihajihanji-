@@ -1,11 +1,12 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import yfinance as yf
 from datetime import datetime, timedelta
+
+from data_quality import load_trades
 
 # ページ設定 (ワイドモード、ダークテーマ)
 # st.set_page_config は入口の streamlit_app.py で一括設定する
@@ -70,13 +71,11 @@ st.markdown("""
 # 1. データの読み込み & クレンジング (キャッシュを強力に適用してスマホでの表示を高速化)
 @st.cache_data(ttl=300) # 5分間キャッシュ
 def load_insider_data():
-    conn = sqlite3.connect(DB_PATH)
-    query = """
-        SELECT filing_date, insider, position, ticker, company, avg_price, buy_date, total_shares, total_value, filing_url
-        FROM insider_trades
-    """
-    df = pd.read_sql_query(query, conn)
-    conn.close()
+    # 無効なティッカー・同じ書類の重複・単位の誤りなどを除外/補正（基準は data_quality.py）
+    df, _ = load_trades(
+        DB_PATH,
+        "id, filing_date, insider, position, ticker, company, avg_price, buy_date, total_shares, total_value, filing_url",
+    )
     
     df['total_value'] = pd.to_numeric(df['total_value'], errors='coerce')
     df['avg_price'] = pd.to_numeric(df['avg_price'], errors='coerce')

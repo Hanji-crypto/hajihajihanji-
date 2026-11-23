@@ -1,0 +1,40 @@
+name: CI
+
+# PR と main への push で、単体テストと3ページの起動スモークテストを走らせる。
+# データ自動更新（auto_update.yml）のコミットは "[skip ci]" 付きなので、ここは走らない。
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Unit tests
+        run: python -m pytest -q --ignore=test_smoke_pages.py
+
+      - name: Smoke test (AppTest で3ページを起動)
+        # 株価・SEC への通信はテスト内で偽物に差し替える（ネットワークに依存しない）
+        run: python -m pytest -q test_smoke_pages.py
