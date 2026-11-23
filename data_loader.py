@@ -5,6 +5,8 @@ import yfinance as yf
 import os
 from datetime import datetime, timedelta
 
+from data_quality import clean_trades
+
 # アップロードされた 'insider.db' を最優先し、なければ 'whale_eye.db' を使用
 if os.path.exists("insider.db"):
     DB_PATH = "insider.db"
@@ -62,7 +64,11 @@ def load_and_process_data():
     query = f"SELECT * FROM {target_table}"
     df = pd.read_sql_query(query, conn)
     conn.close()
-    
+
+    # 無効なティッカー・同じ書類の重複・単位の誤りなどを除外/補正（基準は data_quality.py）
+    if {"ticker", "avg_price", "total_shares", "total_value"} <= set(df.columns):
+        df, _ = clean_trades(df)
+
     if df.empty:
         return df
 

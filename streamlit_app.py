@@ -7,6 +7,8 @@ st.set_page_config はここで1回だけ呼び、各ページ側では呼ばな
 """
 import streamlit as st
 
+from data_status import render_page_header
+
 st.set_page_config(
     page_title="Whale-Eye",
     page_icon="🐋",
@@ -50,4 +52,7 @@ pages = [
     ),
 ]
 
-st.navigation(pages, position="top").run()
+nav = st.navigation(pages, position="top")
+# 全ページ共通: データの最新提出日・最終更新時刻・古さの警告・品質チェック・免責
+render_page_header("insider.db")
+nav.run()

@@ -6,6 +6,8 @@ import time
 import argparse
 import os
 
+from data_quality import accession_from_url, normalize_ticker, purchase_rows
+
 # --daily: 日次更新用（直近数日のみ）/ 引数なし: 従来どおり過去6ヶ月をバックフィル
 parser = argparse.ArgumentParser()
 parser.add_argument("--daily", action="store_true", help="直近 --lookback-days 日分だけ取得する日次モード")
@@ -33,10 +35,12 @@ cur = conn.cursor()
 print("🗄️ 既存のデータをメモリにキャッシュ中...")
 cur.execute("SELECT DISTINCT filing_url FROM insider_trades WHERE filing_url IS NOT NULL")
 existing_urls = set(row[0] for row in cur.fetchall())
+# 共同提出の書類は EDGAR で提出者 CIK ごとに別URLで一覧に載るため、URLではなく受付番号で重複を判定する
+existing_accessions = {a for a in map(accession_from_url, existing_urls) if a}
 # 重複防止＆高速化用のインデックス（既存データは変更しない）
 cur.execute("CREATE INDEX IF NOT EXISTS idx_insider_trades_filing_url ON insider_trades(filing_url)")
 conn.commit()
-print(f"   -> 取得済みURL数: {len(existing_urls)} 件")
+print(f"   -> 取得済みURL数: {len(existing_urls)} 件 / 書類数(受付番号): {len(existing_accessions)} 件")
 
 today = datetime.now()
 saved_total = 0
@@ -109,6 +113,9 @@ for start_dt, end_dt in windows:
             filing_url = f.url if hasattr(f, 'url') else None
             if filing_url in existing_urls:
                 continue
+            accession = getattr(f, "accession_no", None) or accession_from_url(filing_url)
+            if accession and accession in existing_accessions:
+                continue  # 同じ書類を別の提出者URLで取得済み
 
             # --- 高速フィルター2: XML構造を持たないドキュメントの即時スキップ ---
             if not hasattr(f, 'xml') or f.xml is None:
@@ -121,66 +128,43 @@ for start_dt, end_dt in windows:
                     continue
                 
                 purchases = obj.common_stock_purchases
-                
-                # 2. 【最重要】明細をループ処理する前に、この書類の総取引額を高速に計算
-                # 各行の (Shares * Price) の合計を算出
-                total_filing_value = 0.0
-                for _, row_data in purchases.iterrows():
-                    shares = float(row_data.get("Shares", 0) or 0)
-                    price = float(row_data.get("Price", 0) or 0)
-                    total_filing_value += (shares * price)
-                
+
+                # 2. 明細を検証・補正してから、この書類の総取引額を計算する
+                #    （ティッカー無効・ADS単位のずれ・価格欄の誤記・非現実的な金額は data_quality の基準で除く）
+                footnotes = getattr(obj, "footnotes", None)
+                footnotes_text = footnotes.text if footnotes is not None and hasattr(footnotes, "text") else None
+                rows, skipped = purchase_rows(purchases, obj.issuer.ticker, footnotes_text)
+                for reason, n in skipped.items():
+                    if reason != "too_small":
+                        print(f"  ⚠️ 品質基準で除外({reason}): {obj.issuer.ticker} {n} 行 filing={filing_url}")
+                total_filing_value = sum(r["value"] for r in rows)
+
                 # 3. 基準額（$100k）未満であれば、明細のDB格納処理を一切行わずに即スキップ
                 if total_filing_value < MIN_FILING_VALUE_LIMIT:
                     skipped_by_limit += 1
                     continue
-                
+
                 # --- 基準をクリアした大口取引のみ詳細を保存 ---
-                ticker = obj.issuer.ticker
+                ticker = normalize_ticker(obj.issuer.ticker)
                 insider = obj.insider_name
                 position = obj.position
                 company = obj.issuer.name
                 cik = obj.issuer.cik
-                
+
                 if not filing_url:
                     filing_url = f"https://www.sec.gov/edgar/browse/?CIK={cik}"
 
-                for _, row_data in purchases.iterrows():
-                    buy_date = str(row_data.get("Date", ""))[:10]
-                    shares = float(row_data.get("Shares", 0) or 0)
-                    price = float(row_data.get("Price", 0) or 0)
-                    value = shares * price
-                    
-                    # --- ★追加：3段階の構造的バリデーション ---
-                    
-                    # ① 価格の妥当性チェック：史上最高値(バークシャーA株)を基準に、
-                    #    現実的な上限$1,000,000を1株価格の絶対的な上限とする
-                    if price <= 0 or price > 1_000_000:
-                        print(f"  ⚠️ 異常値スキップ(価格): {ticker} price=${price:,.2f} filing={filing_url}")
-                        continue
-                    
-                    # ② 株数の妥当性チェック：1回の取引で100億株を超える取得は非現実的
-                    if shares <= 0 or shares > 10_000_000_000:
-                        print(f"  ⚠️ 異常値スキップ(株数): {ticker} shares={shares:,.0f} filing={filing_url}")
-                        continue
-                    
-                    # ③ 取引総額の妥当性チェック：単一取引で100億ドルを超えるものは、
-                    #    インサイダー取引としては非現実的(企業買収クラスの規模)
-                    if value > 10_000_000_000:
-                        print(f"  ⚠️ 異常値スキップ(総額): {ticker} value=${value:,.2f} filing={filing_url}")
-                        continue
-
-                    if value < 100:  # 極端なノイズデータ除外
-                        continue
-                    
+                for r in rows:
                     bulk_data.append((
                         str(f.filing_date), insider, position, ticker, company, cik,
-                        price, buy_date, shares, value, filing_url
+                        r["price"], r["buy_date"], r["shares"], r["value"], filing_url
                     ))
                     saved_segment += 1
                     saved_total += 1
-                
+
                 existing_urls.add(filing_url)
+                if accession:
+                    existing_accessions.add(accession)
 
                 if len(bulk_data) >= 100:
                     cur.executemany("""

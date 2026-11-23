@@ -2,7 +2,6 @@
 
 起動: streamlit run streamlit_app.py （「Daily Compare」ページ）
 """
-import sqlite3
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -13,6 +12,7 @@ import yfinance as yf
 from plotly.subplots import make_subplots
 
 import compare_logic as cl
+from data_quality import load_trades as clean_load
 
 DB_PATH = "insider.db"
 BG, PANEL, GRID, TEXT = "#0d1117", "#161b22", "#21262d", "#E0E3EB"
@@ -31,15 +31,12 @@ st.markdown(
 # ---------------------------------------------------------------- データ取得
 @st.cache_data(ttl=300)
 def load_trades() -> pd.DataFrame:
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        df = pd.read_sql_query(
-            "SELECT filing_date, insider, ticker, company, total_value, filing_url FROM insider_trades", conn
-        )
-    finally:
-        conn.close()
-    df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
-    return df
+    # 無効なティッカー・同じ書類の重複・単位の誤りなどを除外/補正（基準は data_quality.py）
+    df, _ = clean_load(
+        DB_PATH,
+        "id, filing_date, buy_date, insider, ticker, company, avg_price, total_shares, total_value, filing_url",
+    )
+    return df[["filing_date", "insider", "ticker", "company", "total_value", "filing_url"]].reset_index(drop=True)
 
 
 def _close_series(frame: pd.DataFrame) -> pd.Series:
