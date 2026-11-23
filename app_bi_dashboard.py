@@ -3,10 +3,19 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import yfinance as yf
+import html
 from datetime import datetime, timedelta
 
+from data_mode import is_edgar_only
+from page_flow import end_page
 from data_quality import load_trades
+from edgar_views import render_insider_trades
+
+# edgar_only（招待制ベータ）では株価・騰落率・株価チャートを出さず、yfinance は import もしない（data_mode.py）。
+# セクターは SEC の Submissions API の SIC 大分類で置き換える（sec_company.py）。
+EDGAR_ONLY = is_edgar_only()
+if not EDGAR_ONLY:
+    import yfinance as yf
 
 # ページ設定 (ワイドモード、ダークテーマ)
 # st.set_page_config は入口の streamlit_app.py で一括設定する
@@ -74,7 +83,7 @@ def load_insider_data():
     # 無効なティッカー・同じ書類の重複・単位の誤りなどを除外/補正（基準は data_quality.py）
     df, _ = load_trades(
         DB_PATH,
-        "id, filing_date, insider, position, ticker, company, avg_price, buy_date, total_shares, total_value, filing_url",
+        "id, filing_date, insider, position, ticker, company, cik, avg_price, buy_date, total_shares, total_value, filing_url",
     )
     
     df['total_value'] = pd.to_numeric(df['total_value'], errors='coerce')
@@ -125,7 +134,7 @@ try:
     df_raw = load_insider_data()
 except Exception as e:
     st.error(f"データベースの読み込みに失敗しました。: {e}")
-    st.stop()
+    end_page()
 
 # セクター情報の一括マッピング
 @st.cache_data(ttl=3600)
@@ -133,9 +142,25 @@ def get_sector_info(tickers):
     # API負荷を避けるため、上位50件に制限
     return {t: yf.Ticker(t).info.get('sector', 'Financial Services') for t in tickers[:50]}
 
-unique_tickers = df_raw['ticker'].unique().tolist()
-sector_map = get_sector_info(unique_tickers)
-df_raw['sector'] = df_raw['ticker'].map(sector_map).fillna('Other')
+@st.cache_data(ttl=3600, show_spinner="SEC から業種（SIC）を取得中...")
+def get_sec_sector_info(ciks):
+    from sec_company import company_sic_map
+
+    return company_sic_map(ciks)
+
+
+if EDGAR_ONLY:
+    # SEC への負荷を抑えるため、購入額の上位50社に限る（それ以外は「未分類」）。結果は CIK ごとに1週間キャッシュ。
+    top_ciks = df_raw.groupby('cik')['total_value'].sum().nlargest(50).index.astype(str).tolist()
+    sic_map = get_sec_sector_info(tuple(top_ciks))
+    df_raw['sector'] = df_raw['cik'].astype(str).map(lambda c: sic_map.get(c, {}).get('division')).fillna('未分類')
+    df_raw['industry'] = df_raw['cik'].astype(str).map(lambda c: sic_map.get(c, {}).get('sic_description')).fillna('')
+    if top_ciks and not sic_map:
+        st.caption("⚠️ SEC から業種（SIC）を取得できなかったため、業種はすべて「未分類」で表示しています。時間をおいて再読み込みしてください。")
+else:
+    unique_tickers = df_raw['ticker'].unique().tolist()
+    sector_map = get_sector_info(unique_tickers)
+    df_raw['sector'] = df_raw['ticker'].map(sector_map).fillna('Other')
 
 # --- 🚀 セッション状態管理 🚀 ---
 if 'selected_ticker' not in st.session_state:
@@ -145,7 +170,7 @@ if 'selected_ticker' not in st.session_state:
 # 🎛️ 1. 上部セクター・スライサー
 # ==============================================================================
 st.markdown('<div class="slicer-container">', unsafe_allow_html=True)
-st.subheader("🔍 セクター・スライサー")
+st.subheader("🔍 業種（SEC の SIC 大分類）スライサー" if EDGAR_ONLY else "🔍 セクター・スライサー")
 selected_sectors = st.multiselect(
     "表示するセクターを選択してください（複数選択可能）",
     options=sorted(df_raw['sector'].unique()),
@@ -176,15 +201,16 @@ ticker_summary['avg_price'] = ticker_summary['total_value'] / ticker_summary['to
 ticker_summary = ticker_summary.sort_values(by='total_value', ascending=False).head(20).reset_index(drop=True)
 
 if not ticker_summary.empty:
-    # 期間別リターンを一括計算してテーブルにマージ
-    batch_prices = batch_calculate_returns(ticker_summary['ticker'].tolist())
-    ticker_summary['1M リターン'] = ticker_summary['ticker'].map(lambda x: batch_prices.get(x, {}).get('1M_Ret', 'N/A'))
-    ticker_summary['3M リターン'] = ticker_summary['ticker'].map(lambda x: batch_prices.get(x, {}).get('3M_Ret', 'N/A'))
-    ticker_summary['6M リターン'] = ticker_summary['ticker'].map(lambda x: batch_prices.get(x, {}).get('6M_Ret', 'N/A'))
+    if not EDGAR_ONLY:
+        # 期間別リターンを一括計算してテーブルにマージ（株価が要るため full モードだけ）
+        batch_prices = batch_calculate_returns(ticker_summary['ticker'].tolist())
+        ticker_summary['1M リターン'] = ticker_summary['ticker'].map(lambda x: batch_prices.get(x, {}).get('1M_Ret', 'N/A'))
+        ticker_summary['3M リターン'] = ticker_summary['ticker'].map(lambda x: batch_prices.get(x, {}).get('3M_Ret', 'N/A'))
+        ticker_summary['6M リターン'] = ticker_summary['ticker'].map(lambda x: batch_prices.get(x, {}).get('6M_Ret', 'N/A'))
     
     # 高密度インタラクティブテーブル
     selected_row = st.dataframe(
-        ticker_summary.style.format({'total_value': '${:,.0f}',
+        ticker_summary.style.format({'total_value': '${:,.0f}', 'total_shares': '{:,.0f}',
         'avg_price': '${:,.2f}'   # ← 追加：小数点2桁のドル表示
         }),
         width="stretch",
@@ -192,8 +218,9 @@ if not ticker_summary.empty:
         column_config={
             "ticker": "銘柄コード",
             "total_value": "総買い額",
+            "total_shares": "総株数",
             "trades_count": "取引件数",
-            "sector": "セクター",
+            "sector": "業種（SIC）" if EDGAR_ONLY else "セクター",
             "avg_price": "平均取得単価",   # ← 追加：日本語ラベル
             "1M リターン": "1M",
             "3M リターン": "3M",
@@ -222,13 +249,20 @@ if not ticker_trades.empty:
     current_color = SECTOR_COLORS.get(current_sector, '#8b949e')
     company_name = ticker_trades['company'].iloc[0]
     
-    st.subheader(f"📈 {current_ticker} のリアルタイム分析")
+    st.subheader(f"📈 {current_ticker} のインサイダー分析（Form 4）" if EDGAR_ONLY else f"📈 {current_ticker} のリアルタイム分析")
+    if EDGAR_ONLY:
+        cik = str(ticker_trades['cik'].iloc[0]).lstrip('0')
+        industry = ticker_trades['industry'].iloc[0]
+        links = (f'<a class="source-link" href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=4" target="_blank">📄 EDGAR（Form 4 一覧）</a>'
+                 + (f' <span style="color:#8b949e; font-size: 11px;">SIC 業種: {html.escape(industry)}</span>' if industry else ''))
+    else:
+        links = (f'<a class="source-link" href="https://finviz.com/quote.ashx?t={current_ticker}" target="_blank">📊 Finviz</a>\n'
+                 f'            <a class="source-link" href="https://www.tradingview.com/symbols/{current_ticker}/" target="_blank">📈 TradingView</a>')
     
     # 外部ソースリンク (モバイルで押しやすいようにボタン化)
     st.markdown(f"""
         <div style="margin-bottom: 15px;">
-            <a class="source-link" href="https://finviz.com/quote.ashx?t={current_ticker}" target="_blank">📊 Finviz</a>
-            <a class="source-link" href="https://www.tradingview.com/symbols/{current_ticker}/" target="_blank">📈 TradingView</a>
+            {links}
             <span style="float: right; padding: 4px 10px; border-radius: 20px; background-color: {current_color}22; color: {current_color}; border: 1px solid {current_color}; font-size: 11px; font-weight: bold;">
                 {current_sector}
             </span>
@@ -253,6 +287,13 @@ if not ticker_trades.empty:
     with m3: st.metric("総取得株数", f"{ticker_trades['total_shares'].sum():,.0f} 株")
     with m4: st.metric("平均取得単価", f"${ticker_trades['avg_price'].mean():,.2f}")
     
+    if EDGAR_ONLY:
+        render_insider_trades(
+            ticker_trades.rename(columns={'total_shares': 'shares', 'avg_price': 'price', 'total_value': 'value'}),
+            "Form 4 の取引一覧（提出日・内部者・役職・株数・取得単価・金額・出典）",
+        )
+        end_page()  # 以降は株価チャート（yfinance）。edgar_only では出さない
+
     # チャートコントロール
     cc1, cc2, cc3 = st.columns(3)
     with cc1: chart_style = st.radio("表示形式", ["ローソク足", "折れ線"], key="style_radio_work", horizontal=True)

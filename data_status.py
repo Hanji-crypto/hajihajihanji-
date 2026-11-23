@@ -34,6 +34,11 @@ SOURCE_NOTE = (
     "本アプリは個人が作った非公式のツールで、米国証券取引委員会（SEC）・Yahoo とは関係がなく、"
     "両者による承認・提携もありません。"
 )
+# edgar_only（data_mode.py）では Yahoo のデータを使わないので、出典も SEC だけにする。
+SOURCE_NOTE_EDGAR_ONLY = (
+    "本アプリは個人が作った非公式のツールで、米国証券取引委員会（SEC）とは関係がなく、"
+    "SEC による承認・提携もありません。"
+)
 
 _EDGAR_BDAY = CustomBusinessDay(calendar=USFederalHolidayCalendar())
 
@@ -139,20 +144,20 @@ def render_page_header(db_path: str) -> None:
     st.caption(f"ⓘ {DISCLAIMER}")
 
 
-def source_caption(s: DataStatus, now: datetime | None = None) -> str:
-    """出典と取得時点の1行。SEC は insider.db の最終更新時点、株価は画面の表示時点。"""
+def source_caption(s: DataStatus, now: datetime | None = None, edgar_only: bool = False) -> str:
+    """出典と取得時点の1行。SEC は insider.db の最終更新時点、株価は画面の表示時点。edgar_only では SEC だけ。"""
     now = now or datetime.now(timezone.utc)
     updated = s.updated_at.astimezone(JST).strftime("%Y-%m-%d %H:%M JST") if s.updated_at else "不明"
+    if edgar_only:
+        return f"出典: U.S. SEC EDGAR（提出書類。Form 4 は {updated} 時点の取り込み、8-K と業種（SIC）は表示時に取得）"
+    sec = f"出典: U.S. SEC EDGAR（提出書類。Form 4 は {updated} 時点の取り込み、8-K は表示時に取得）"
     shown = now.astimezone(JST).strftime("%Y-%m-%d %H:%M JST")
-    return (
-        f"出典: U.S. SEC EDGAR（提出書類。Form 4 は {updated} 時点の取り込み、8-K は表示時に取得）"
-        f"／株価: Yahoo Finance（yfinance 経由。{shown} 表示、最大1時間のキャッシュと提供元の遅延あり）"
-    )
+    return sec + f"／株価: Yahoo Finance（yfinance 経由。{shown} 表示、最大1時間のキャッシュと提供元の遅延あり）"
 
 
-def render_page_footer(db_path: str) -> None:
+def render_page_footer(db_path: str, edgar_only: bool = False) -> None:
     """全ページ共通のフッター: 出典・取得時点・免責（streamlit_app.py から各ページの後に呼ぶ）。"""
     s = _cached_status(db_path, datetime.now(US_EASTERN).date())
     st.divider()
-    st.caption(source_caption(s))
-    st.caption(f"ⓘ {DISCLAIMER} {SOURCE_NOTE}")
+    st.caption(source_caption(s, edgar_only=edgar_only))
+    st.caption(f"ⓘ {DISCLAIMER} {SOURCE_NOTE_EDGAR_ONLY if edgar_only else SOURCE_NOTE}")

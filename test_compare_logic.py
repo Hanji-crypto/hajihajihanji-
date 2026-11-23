@@ -43,3 +43,14 @@ def test_all():
 if __name__ == "__main__":
     test_all()
     print("OK")
+
+
+def test_eight_k_relative():
+    k8 = pd.DataFrame({
+        "date": pd.to_datetime(["2026-11-10", "2026-11-25", "2026-11-20"]),
+        "label": ["役員の異動", "決算発表", "その他"], "high": [True, True, False], "url": ["a", "b", "c"],
+    })
+    out = cl.eight_k_relative(k8, pd.Timestamp("2026-11-20"))
+    assert list(out["days_from_filing"]) == [5, 0, -10]  # 新しい順・提出日より前はマイナス
+    assert list(out.columns) == ["date", "days_from_filing", "label", "high", "url"]
+    assert cl.eight_k_relative(pd.DataFrame(columns=["date", "label", "high", "url"]), pd.Timestamp("2026-11-20")).empty
