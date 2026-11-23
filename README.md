@@ -92,7 +92,29 @@ pytest -q   # 単体テスト・招待ゲートと同意画面・3ページの�
 | `app.py` / `app_bi_dashboard.py` / `app_compare_dashboard.py` | 各ページ |
 | `data_loader.py` / `charts.py` / `guide_renderer.py` / `compare_logic.py` | データ読み込み・チャート描画・ガイド表示・比較計算 |
 | `a5_backfill_v3.py` | SEC EDGAR から Form 4 を取り込み `insider.db` を更新するスクリプト（GitHub Actions から実行） |
+| `digest.py` | 毎朝のメール「昨夜のインサイダー大口買い Top5」を作って配信（`.github/workflows/daily_digest.yml` から実行） |
 | `insider.db` | インサイダー取引データ（自動更新。手で編集しないでください） |
+
+## 毎朝のメール（インサイダー大口買い Top5）
+
+`digest.py` が、米国東部の前営業日に提出された Form 4 の市場での買い（取引コード P）を `data_quality.py` の基準で除外・補正したうえで、1社あたりの合計金額の上位5社を日本語のメールにします。株価は使わず、事実（誰が・何株・いくらで・いつ・どの書類）と EDGAR の原典リンク、直近30日の買いの件数、同じ日の 8-K の項目だけを書きます。
+
+```bash
+python digest.py --dry-run                 # 前営業日の分を digest_out/ に HTML とテキストで書き出す（送らない）
+python digest.py --date 2026-11-20 --dry-run --no-8k
+```
+
+GitHub Actions（`daily_digest.yml`）が日本時間の水〜日 07:07 に動きます。設定は Settings → Secrets and variables → Actions で行い、リポジトリには書きません。
+
+| 種類 | 名前 | 内容 |
+|---|---|---|
+| secret | `BUTTONDOWN_API_KEY` | これがある時だけ Buttondown で送る。無ければ dry-run（実行サマリとアーティファクトに文面を残す） |
+| secret | `SEC_USER_AGENT` | SEC へのアクセスに付ける「名前 連絡先」（任意） |
+| variable | `DIGEST_SENDER_NAME` / `DIGEST_SENDER_CONTACT` | メール末尾の送信者の表示 |
+| variable | `DIGEST_DASHBOARD_URL` | ダッシュボードの URL。`{ticker}` を含めると銘柄ごとに差し込む |
+| variable | `DIGEST_UNSUBSCRIBE_URL` | 配信停止のページ（任意。Buttondown で送る時は無ければ Buttondown の停止リンク） |
+
+対象日のデータが無い日（休場日など）は送りません。手動実行（workflow_dispatch）は既定で dry-run です。
 
 ## 出典の表記について
 
