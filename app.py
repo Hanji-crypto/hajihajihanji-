@@ -24,12 +24,7 @@ from guide_renderer import render_market_diagnostic_and_guide
 # ==============================================================================
 # 1. PAGE CONFIG & DARK THEME STYLE
 # ==============================================================================
-st.set_page_config(
-    page_title="Whale-Eye: Option and Insider Intelligence",
-    page_icon="O",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+# st.set_page_config は入口の streamlit_app.py で一括設定する（マルチページでの重複を避ける）
 
 st.html("""
     <style>

@@ -1,6 +1,6 @@
 """Form 4 提出日 × 騰落率 × 指標推移 × 速報(8-K) を一画面で毎日比較するダッシュボード。
 
-起動: streamlit run app_compare_dashboard.py
+起動: streamlit run streamlit_app.py （「Daily Compare」ページ）
 """
 import sqlite3
 from datetime import datetime, timedelta
@@ -18,7 +18,7 @@ DB_PATH = "insider.db"
 BG, PANEL, GRID, TEXT = "#0d1117", "#161b22", "#21262d", "#E0E3EB"
 UP, DOWN, ACCENT, WARN = "#00E676", "#FF1744", "#58a6ff", "#FFB300"
 
-st.set_page_config(page_title="Insider Daily Compare", layout="wide")
+# st.set_page_config は入口の streamlit_app.py で一括設定する
 st.markdown(
     f"""<style>
     .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {{background-color:{BG} !important;}}
