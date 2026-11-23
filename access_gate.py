@@ -58,7 +58,36 @@ def is_valid_code(entered: str | None, codes: list[str]) -> bool:
     return ok
 
 
+# 入口（招待コード・同意画面）の配色。各ページ（app.py など）と同じダークテーマにそろえる。
+# 各ページの配色はページ側の CSS で付けているため、ページを読み込む前の入口では自前で当てる。
+_GATE_CSS = """
+<style>
+.stApp { background-color: #0B0F19; color: #E2E8F0; }
+.stApp h1, .stApp h2, .stApp h3, .stApp p, .stApp label, .stApp li { color: #E2E8F0; }
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p { color: #94A3B8 !important; }
+hr { border-color: #1E293B !important; }
+[data-testid="stForm"] { background-color: #111827; border: 1px solid #1F2937; border-radius: 8px; }
+[data-testid="stTextInputRootElement"], [data-testid="stTextInputRootElement"] > div,
+.stTextInput input { background-color: #0F172A !important; color: #E2E8F0 !important; border-color: #334155 !important; }
+.stTextInput button, .stTextInput svg { color: #94A3B8 !important; background-color: transparent !important; }
+.stApp button[kind^="secondary"], .stApp button[kind^="secondary"] p {
+  background-color: #111827; color: #E2E8F0 !important; border-color: #00FFCC; }
+.stApp button[kind^="secondary"]:hover, .stApp button[kind^="secondary"]:hover p { color: #00FFCC !important; }
+.stApp button[kind="primary"], .stApp button[kind="primary"] p {
+  background-color: #00FFCC; color: #0B0F19 !important; border-color: #00FFCC; font-weight: bold; }
+.stApp button:disabled, .stApp button:disabled p {
+  background-color: #1F2937 !important; color: #64748B !important; border-color: #334155 !important; }
+[data-testid="stCheckbox"] label p { color: #E2E8F0 !important; }
+</style>
+"""
+
+
+def _apply_gate_theme() -> None:
+    st.html(_GATE_CSS)
+
+
 def _render_code_form(codes: list[str]) -> None:
+    _apply_gate_theme()
     st.title("🐋 Whale-Eye 招待制ベータ")
     st.write("このベータは招待制です。お知らせした招待コードを入力してください。")
     with st.form("invite_form"):
@@ -75,6 +104,7 @@ def _render_code_form(codes: list[str]) -> None:
 
 
 def _render_consent() -> None:
+    _apply_gate_theme()
     st.title("🐋 Whale-Eye をご利用の前に")
     st.write("はじめに、次の2点をご確認ください（このセッションで1回だけ表示します）。")
     st.caption(f"ⓘ {DISCLAIMER}")
