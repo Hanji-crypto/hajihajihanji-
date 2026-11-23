@@ -8,7 +8,7 @@ import yfinance as yf
 from datetime import datetime, timedelta
 
 # ページ設定 (ワイドモード、ダークテーマ)
-st.set_page_config(page_title="Insider Trading Workstation Pro", layout="wide")
+# st.set_page_config は入口の streamlit_app.py で一括設定する
 
 DB_PATH = "insider.db"
 
