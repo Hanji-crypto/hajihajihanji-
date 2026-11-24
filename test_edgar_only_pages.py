@@ -164,3 +164,35 @@ def test_workstation_says_when_sec_is_unreachable(monkeypatch):
     assert not at.exception
     assert list(at.multiselect[0].options) == ["未分類"]
     assert any("業種（SIC）を取得できなかった" in str(c.value) for c in at.caption)
+
+
+@pytest.mark.parametrize("page", ["app.py", "app_bi_dashboard.py", "app_compare_dashboard.py"])
+def test_form4_links_are_resolved_html_or_issuer_form4_list(page, tmp_path, monkeypatch):
+    # insider.db の索引ページの URL は EDGAR で開けないものが多い。表示は、解決済みの Form 4 の表示用 HTML か、
+    # 必ず開く発行体の Form 4 一覧だけにする（filing_links.py）。DB の URL をそのまま出さない。
+    import filing_links as fl
+    from data_quality import accession_from_url
+
+    rows = sqlite3.connect("insider.db").execute("SELECT filing_url, cik FROM insider_trades").fetchall()
+    raw_urls = {u for u, _ in rows}
+    issuers = {int(c) for _, c in rows if c}
+    # 1件だけ解決済みにして、表示用 HTML が出ることも確かめる
+    latest = sqlite3.connect("insider.db").execute(
+        "SELECT filing_url, cik FROM insider_trades ORDER BY filing_date DESC, id DESC LIMIT 1").fetchone()
+    acc = accession_from_url(latest[0])
+    xsl = fl.xsl_url(latest[1], acc, "form4.xml")
+    path = tmp_path / "filing_links.json"
+    fl.save_store({"links": {acc: xsl}, "unresolved": {}}, str(path))
+    monkeypatch.setattr(fl, "LINKS_PATH", str(path))
+
+    at = _start(page, data_mode="edgar_only")
+    assert not at.exception
+    values = [v for df in at.dataframe for col in df.value.columns for v in df.value[col].astype(str)]
+    assert not raw_urls & set(values), "DB の索引ページの URL がそのまま出ている"
+    form4 = [v for v in values if "browse-edgar" in v or "/xslF345X0" in v]
+    assert form4, "Form 4 の原典リンクが表示されていない"
+    for v in form4:
+        if "browse-edgar" in v:
+            assert int(v.split("CIK=")[1].split("&")[0]) in issuers and "type=4" in v, v
+        else:
+            assert v == xsl, v

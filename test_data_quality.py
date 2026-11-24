@@ -150,5 +150,62 @@ def test_real_db_screener_has_no_known_errors():
 
     raw = pd.read_sql_query("SELECT * FROM insider_trades", sqlite3.connect(DB))
     out, rep = dq.clean_trades(raw)
-    assert out.groupby("filing_url").ngroups == out["filing_url"].map(dq.accession_from_url).nunique()
+    # 1つの書類（受付番号）に元の URL は1つだけ（表示用の filing_url は未解決だと発行体ごとの一覧になる）
+    assert out.groupby("filing_url_raw").ngroups == out["filing_url_raw"].map(dq.accession_from_url).nunique()
+    assert (out["accession"] == out["filing_url_raw"].map(dq.accession_from_url)).all()
     assert rep.kept_rows + rep.excluded_rows == rep.total_rows
+
+
+# ---------------------------------------------------------------- 原典リンク（filing_links.json → 発行体の Form 4 一覧）
+OWNER = "https://www.sec.gov/Archives/edgar/data/1579179/000119312526473131/0001193125-26-473131-index.html"
+XSL = "https://www.sec.gov/Archives/edgar/data/1341235/000119312526473131/xslF345X05/ownership.xml"
+BROWSE = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=1341235"
+          "&type=4&dateb=&owner=include&count=40")
+
+
+def _aldx():
+    return pd.DataFrame([{"id": 1, "ticker": "ALDX", "cik": "0001341235", "avg_price": 0.81,
+                          "total_shares": 300_000, "total_value": 243_060.0, "filing_url": OWNER}])
+
+
+def test_display_links_use_resolved_html_else_issuer_form4_list():
+    raw = _aldx()
+    out = dq.with_display_filing_urls(raw, links={"0001193125-26-473131": XSL})
+    assert out["filing_url"].tolist() == [XSL]
+    out = dq.with_display_filing_urls(raw, links={})
+    assert out["filing_url"].tolist() == [BROWSE]                           # 未解決は必ず開く Form 4 一覧
+    assert out["filing_url_raw"].tolist() == [OWNER]
+    assert out["accession"].tolist() == ["0001193125-26-473131"]
+    assert raw["filing_url"].tolist() == [OWNER]                            # 元の表（DB の値）は変えない
+    no_cik = dq.with_display_filing_urls(raw.drop(columns="cik"), links={})  # cik 列が無ければ直さない
+    assert no_cik["filing_url"].tolist() == [OWNER]
+    bad = dq.with_display_filing_urls(raw.assign(cik=None), links={})        # CIK が読めなければ元のまま
+    assert bad["filing_url"].tolist() == [OWNER]
+
+
+def test_clean_trades_applies_display_links(tmp_path, monkeypatch):
+    import filing_links as fl
+
+    path = tmp_path / "filing_links.json"
+    fl.save_store({"links": {"0001193125-26-473131": XSL}, "unresolved": {}}, str(path))
+    monkeypatch.setattr(fl, "LINKS_PATH", str(path))
+    out, _ = dq.clean_trades(_aldx())
+    assert out["filing_url"].tolist() == [XSL]
+
+
+def test_load_trades_returns_display_links_and_db_is_unchanged(tmp_path, monkeypatch):
+    import filing_links as fl
+
+    monkeypatch.setattr(fl, "LINKS_PATH", str(tmp_path / "none.json"))     # 未解決
+    db = tmp_path / "t.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE insider_trades (id INTEGER, filing_date TEXT, ticker TEXT, cik TEXT, avg_price REAL,"
+                 " total_shares REAL, total_value REAL, filing_url TEXT)")
+    conn.execute("INSERT INTO insider_trades VALUES (1, '2026-11-24', 'ALDX', '0001341235', 0.81, 300000, 243060, ?)",
+                 (OWNER,))
+    conn.commit()
+    conn.close()
+    df, _ = dq.load_trades(str(db))
+    assert df["filing_url"].tolist() == [BROWSE]
+    (stored,) = sqlite3.connect(db).execute("SELECT filing_url FROM insider_trades").fetchone()
+    assert stored == OWNER

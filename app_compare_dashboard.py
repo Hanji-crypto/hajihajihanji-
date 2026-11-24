@@ -42,7 +42,7 @@ def load_trades() -> pd.DataFrame:
     # 無効なティッカー・同じ書類の重複・単位の誤りなどを除外/補正（基準は data_quality.py）
     df, _ = clean_load(
         DB_PATH,
-        "id, filing_date, buy_date, insider, ticker, company, avg_price, total_shares, total_value, filing_url",
+        "id, filing_date, buy_date, insider, ticker, company, cik, avg_price, total_shares, total_value, filing_url",
     )
     return df[["filing_date", "insider", "ticker", "company", "total_value", "filing_url"]].reset_index(drop=True)
 

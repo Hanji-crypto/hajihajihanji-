@@ -94,6 +94,7 @@ pytest -q   # 単体テスト・招待ゲートと同意画面・3ページの�
 | `a5_backfill_v3.py` | SEC EDGAR から Form 4 を取り込み `insider.db` を更新するスクリプト（GitHub Actions から実行） |
 | `deep_link.py` | メールからの深いリンク（`?ticker=`）でその銘柄を選んだ状態で開く |
 | `digest.py` | 毎朝のメール「昨夜のインサイダー大口買い Top5」を作って配信（`.github/workflows/daily_digest.yml` から実行） |
+| `filing_links.py` / `filing_links.json` | Form 4 の原典リンク（表示用 HTML）を一度だけ解決して保存。未解決は発行体の Form 4 一覧に落とす。既存分は `.github/workflows/backfill_filing_links.yml`（手動・時間予算付き・続きから再開）で埋める |
 | `insider.db` | インサイダー取引データ（自動更新。手で編集しないでください） |
 
 ## 毎朝のメール（インサイダー大口買い Top5）

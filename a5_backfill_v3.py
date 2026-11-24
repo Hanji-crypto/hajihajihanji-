@@ -223,6 +223,26 @@ for start_dt, end_dt in windows:
         fatal_error = f"{type(e).__name__}: {e}"
         continue
 
+# --- 原典リンク(filing_links.json): 今回の期間の書類の Form 4 表示用 HTML を解決して追記する ---
+# insider.db は書き換えない。時間予算の残りの範囲で行い、残りは次回（または backfill_filing_links.yml）が続きから埋める。
+# 失敗しても取り込みの結果には影響させない。
+LINKS_MAX_MINUTES = 15  # 時間予算が無い時の上限
+links_result = None
+try:
+    import filing_links
+
+    links_deadline = DEADLINE or (time.time() + LINKS_MAX_MINUTES * 60)
+    if time.time() < links_deadline:
+        print("\n🔗 原典リンク（Form 4 の表示用 HTML）を解決中...")
+        links_result = filing_links.resolve_pending(
+            DB_PATH, since=min(w[0] for w in windows), deadline=links_deadline)
+        print(f"   -> 解決 {links_result['resolved']} 件 / 開けなかった {links_result['failed']} 件"
+              f" / 残り {links_result['remaining']} 件")
+    else:
+        print("\n🔗 原典リンク: 時間予算の残りが無いため次回に回します")
+except Exception as e:
+    print(f"  ⚠️ 原典リンクの解決に失敗（取り込みには影響なし）: {type(e).__name__}: {e}")
+
 # --- 実行サマリ(GitHub Actions の Run ページに表示) ---
 elapsed_min = (time.time() - RUN_STARTED) / 60
 latest = cur.execute("SELECT MAX(filing_date), COUNT(*) FROM insider_trades").fetchone()
@@ -236,6 +256,9 @@ if summary_path:
              "| 期間 | 開示件数 | 保存 | 小口スキップ | 状態 |", "|---|--:|--:|--:|---|"]
     for a, b, n, sv, sk, st in window_stats:
         lines.append(f"| {a} 〜 {b} | {n:,} | {sv:,} | {sk:,} | {st} |")
+    if links_result:
+        lines += ["", f"- 原典リンク（filing_links.json）: 解決 {links_result['resolved']:,} 件"
+                      f" / 開けなかった {links_result['failed']:,} 件 / 残り {links_result['remaining']:,} 件"]
     with open(summary_path, "a", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
 
