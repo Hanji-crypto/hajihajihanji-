@@ -1,4 +1,5 @@
 """digest.py（毎朝のメール「インサイダー大口買い Top5」）のテスト。実行: pytest test_digest.py"""
+import json
 from datetime import date, datetime
 
 import pandas as pd
@@ -53,19 +54,58 @@ def test_quality_excluded_rows_are_not_selected():
     picks = _top(rows)
     assert [p.ticker for p in picks] == ["DUP", "OK"]
     assert picks[0].total_value == 1_000_000  # 同じ書類の重複は1回だけ数える
-    assert picks[0].filing_urls == [
-        "https://www.sec.gov/Archives/edgar/data/320193/000000000926000001/0000000009-26-000001-index.htm"]
+    assert picks[0].filing_urls == [BROWSE_320193]        # 未解決は発行体の Form 4 一覧
+    assert picks[0].accessions == ["0000000009-26-000001"]
+    assert picks[0].owner_ciks == [1]
 
 
-def test_filing_links_use_the_issuer_cik_folder():
-    # 内部者の CIK のフォルダは EDGAR で 404 になることがある（例: ALDX 0001193125-26-473131）。発行会社のフォルダに直す
-    owner = "https://www.sec.gov/Archives/edgar/data/1579179/000119312526473131/0001193125-26-473131-index.html"
-    issuer = "https://www.sec.gov/Archives/edgar/data/1341235/000119312526473131/0001193125-26-473131-index.htm"
-    picks = _top([_row(1, "ALDX", 243_060, url=owner, cik="0001341235")])
-    assert picks[0].filing_urls == [issuer]
-    assert dg.issuer_filing_url(owner, "0001341235") == issuer
-    assert dg.issuer_filing_url(owner, None) == owner            # CIK が無ければそのまま
-    assert dg.issuer_filing_url("https://example.com/x", "1") == "https://example.com/x"  # 受付番号が読めなければそのまま
+BROWSE_320193 = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=320193"
+                 "&type=4&dateb=&owner=include&count=40")
+OWNER = "https://www.sec.gov/Archives/edgar/data/1579179/000119312526473131/0001193125-26-473131-index.html"
+XSL = "https://www.sec.gov/Archives/edgar/data/1341235/000119312526473131/xslF345X05/ownership.xml"
+TXT = (b"<SEC-DOCUMENT>\n<DOCUMENT>\n<TYPE>4\n<SEQUENCE>1\n<FILENAME>ownership.xml\n<TEXT>\n<XML>...</XML>\n"
+       b"</TEXT>\n</DOCUMENT>\n</SEC-DOCUMENT>\n")
+
+
+def test_resolved_links_come_from_filing_links_json(tmp_path, monkeypatch):
+    path = tmp_path / "filing_links.json"
+    path.write_text(json.dumps({"links": {"0001193125-26-473131": XSL}, "unresolved": {}}), encoding="utf-8")
+    monkeypatch.setattr(dg.filing_links, "LINKS_PATH", str(path))
+    picks = _top([_row(1, "ALDX", 243_060, url=OWNER, cik="0001341235")])
+    assert picks[0].filing_urls == [XSL]
+    assert picks[0].owner_ciks == [1579179]
+
+
+def test_resolve_links_on_the_spot_and_fallback():
+    picks = _top([_row(1, "ALDX", 243_060, url=OWNER, cik="0001341235"),
+                  _row(2, "AAA", 100_000, cik="0000320193")])
+    calls = []
+
+    def fake_get(url):
+        calls.append(url)
+        if url.endswith("0001193125-26-473131.txt") and "/1341235/" in url:
+            return 200, TXT
+        return (200, b"<html>") if url == XSL else (404, b"")
+
+    failed = dg.resolve_links(picks, get=fake_get)
+    aldx = next(p for p in picks if p.ticker == "ALDX")
+    aaa = next(p for p in picks if p.ticker == "AAA")
+    assert aldx.filing_urls == [XSL]                              # 発行体の .txt → XML 名 → 表示用 HTML
+    assert aaa.filing_urls == [BROWSE_320193]                     # 開かなければ Form 4 一覧のまま
+    assert failed == [aaa.accessions[0]]
+    assert calls[0].endswith("/1341235/000119312526473131/0001193125-26-473131.txt")  # 発行体のフォルダから
+    # 解決済みは問い合わせない
+    calls.clear()
+    assert dg.resolve_links([aldx], get=fake_get) == [] and calls == []
+
+
+def test_mail_labels_links():
+    picks = _top([_row(1, "AAA", 100_000, cik="0000320193")])
+    d = dg.build_digest(picks, D, None, CFG, "https://u.example/unsub")
+    assert "Form 4（受付番号 0000000001-26-000001）・発行体の Form 4 一覧" in d.text
+    picks[0].filing_urls = [XSL]
+    d = dg.build_digest(picks, D, None, CFG, "https://u.example/unsub")
+    assert f"Form 4（受付番号 0000000001-26-000001） {XSL}" in d.text
 
 
 def test_non_purchase_codes_are_not_selected():
@@ -247,7 +287,7 @@ def test_main_skips_empty_day(tmp_path, monkeypatch):
     out = tmp_path / "gh_out"
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
-    assert dg.main(["--db", str(db), "--date", "2026-11-21", "--out", str(tmp_path / "o"), "--no-8k"]) == 0
+    assert dg.main(["--db", str(db), "--date", "2026-11-21", "--out", str(tmp_path / "o"), "--no-8k", "--no-resolve-links"]) == 0
     assert "status=skipped" in out.read_text()
     assert not (tmp_path / "o").exists()
 
@@ -345,7 +385,7 @@ def _run_main(tmp_path, monkeypatch, status, rows_fresh, rows_committed):
     monkeypatch.delenv("BUTTONDOWN_API_KEY", raising=False)
     out = tmp_path / "o"
     rc = dg.main(["--db", fresh_db, "--fallback-db", committed_db, "--ingest-status", str(st_path),
-                  "--out", str(out), "--no-8k"])
+                  "--out", str(out), "--no-8k", "--no-resolve-links"])
     return rc, (tmp_path / "gh_out").read_text(), out
 
 

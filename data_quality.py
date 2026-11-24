@@ -181,44 +181,33 @@ def clean_trades(df: pd.DataFrame) -> tuple[pd.DataFrame, QualityReport]:
     report.excluded["value_too_large"] = int(value_bad.sum())
     out = out[~value_bad]
 
-    # 7. 原典リンクを発行会社の CIK のフォルダに組み直す（DB は書き換えず、表示用の値だけ直す）
-    out = with_issuer_filing_urls(out)
+    # 7. 原典リンク: 解決済みの Form 4 の表示用 HTML、無ければ発行体の Form 4 一覧（filing_links.py）。
+    #    DB は書き換えず、表示用の値だけ差し替える。元の URL は filing_url_raw、受付番号は accession に残す。
+    out = with_display_filing_urls(out)
 
     report.kept_rows = len(out)
     return out, report
 
 
-def issuer_filing_url(url, cik):
-    """内部者など別の CIK のフォルダを指す書類の URL を、発行会社の CIK のフォルダの索引ページに組み直す。
+def with_display_filing_urls(df: pd.DataFrame, links: dict[str, str] | None = None) -> pd.DataFrame:
+    """filing_url と cik（発行体）の列があれば、filing_url を表示用の原典リンクに差し替えた写しを返す。
 
-    insider.db の filing_url は、取り込み時の書類の提出者（内部者本人など）の CIK のフォルダを指すことが多く、
-    EDGAR では 404 になる書類がある（例: ALDX 0001193125-26-473131 の 1579179 側）。
-    - 既に発行会社のフォルダを指していれば、そのまま返す（書き方を変えると開けなくなる書類がある）。
-    - 組み直す時の索引ページは「-index.htm」（EDGAR の標準。実測で .html より開ける割合が高い）。
-    - CIK か受付番号が読めない時は元の値のまま。
+    - 解決済み（filing_links.json）なら Form 4 の表示用 HTML、未解決なら必ず開く発行体の Form 4 一覧。
+      DB の索引ページの URL は EDGAR で開けないものが多いため、そのままは出さない（filing_links.py の説明）。
+    - 元の URL は filing_url_raw、受付番号は accession の列に残す（重複の判定・内部者 CIK の読み取りに使う）。
+    - cik 列が無い・CIK が読めない行は元の URL のまま。
     """
-    acc = accession_from_url(url)
-    try:
-        cik_num = int(str(cik).strip())
-    except (TypeError, ValueError):
-        return url
-    if not acc or cik_num <= 0:
-        return url
-    m = _ARCHIVE_CIK.search(url)
-    if m and int(m.group(1)) == cik_num:
-        return url
-    return f"https://www.sec.gov/Archives/edgar/data/{cik_num}/{acc.replace('-', '')}/{acc}-index.htm"
-
-
-_ARCHIVE_CIK = re.compile(r"/Archives/edgar/data/(\d+)/")
-
-
-def with_issuer_filing_urls(df: pd.DataFrame) -> pd.DataFrame:
-    """filing_url と cik（発行会社）の列があれば、filing_url を発行会社のフォルダの URL に置き換えた写しを返す。"""
     if df.empty or not {"filing_url", "cik"} <= set(df.columns):
         return df
+    from filing_links import link_for, load_links
+
+    links = load_links() if links is None else links
     out = df.copy()
-    out["filing_url"] = [issuer_filing_url(u, c) for u, c in zip(out["filing_url"], out["cik"])]
+    raw = out["filing_url"]
+    acc = raw.map(accession_from_url)
+    out["filing_url"] = [link_for(a, c, links, fallback=u) for a, c, u in zip(acc, out["cik"], raw)]
+    out["filing_url_raw"] = raw
+    out["accession"] = acc
     return out
 
 

@@ -1,0 +1,73 @@
+name: Backfill Form 4 source links (manual)
+
+# 既にある insider.db の書類について、原典リンク（Form 4 の表示用 HTML）を解決して filing_links.json に埋める（filing_links.py）。
+#
+# - 手動だけ（workflow_dispatch）。新しい書類は毎日の取り込み（auto_update.yml）が同時に解決するので、これは既存分を一度埋める用。
+# - 1書類あたり SEC へ2リクエスト、毎秒10件未満（実測 約0.9秒/件）。今の DB の約4,600件で70分ほど。
+# - 時間予算（max_minutes）で打ち切り、それまでの分をコミットする。途中で止まっても、もう一度実行すれば続きから再開する
+#   （解決済みは飛ばす。3回開けなかった書類は諦めて、表示は発行体の Form 4 一覧のまま）。
+# - insider.db は読むだけで、書き換えない。コミットするのは filing_links.json だけ。
+on:
+  workflow_dispatch:
+    inputs:
+      max_minutes:
+        description: '時間予算（分）。170 まで。超えたらそこまでを保存して終える'
+        type: string
+        default: '170'
+
+permissions:
+  contents: write   # filing_links.json をコミットする
+
+# auto_update.yml と同じグループ: 同時に走って filing_links.json の push がぶつかるのを防ぐ
+concurrency:
+  group: insider-db-update
+  cancel-in-progress: false
+
+jobs:
+  backfill-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    env:
+      PYTHONUNBUFFERED: '1'
+      # SEC の決まり: 連絡先入りの User-Agent。値はリポジトリに書かない（無ければ sec_company の既定値）
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resolve links
+        # スクリプト側の時間予算が先に働いて正常終了する。固まってもここで止め、次のコミットへ進む（保存は50件ごと）
+        timeout-minutes: 180
+        env:
+          MAX_MINUTES: ${{ github.event.inputs.max_minutes }}
+        run: |
+          m="${MAX_MINUTES:-170}"
+          case "$m" in (*[!0-9]*|'') echo "max_minutes は数字で指定してください: $m"; exit 1;; esac
+          if [ "$m" -gt 170 ]; then m=170; fi
+          python filing_links.py --max-minutes "$m"
+
+      - name: Commit and Push
+        if: ${{ !cancelled() }}   # 時間切れ・失敗でも、保存済みの分はコミットする
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add filing_links.json
+          if git diff --staged --quiet; then
+            echo "変更なし: コミットをスキップします"
+            exit 0
+          fi
+          git commit -m "Backfill Form 4 source links [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main

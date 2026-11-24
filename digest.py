@@ -50,7 +50,8 @@ from typing import Callable
 
 import pandas as pd
 
-from data_quality import accession_from_url, clean_trades, issuer_filing_url
+from data_quality import accession_from_url, clean_trades
+import filing_links
 from data_status import JST, US_EASTERN, _EDGAR_BDAY, last_updated_at
 
 TOP_N = 5
@@ -113,7 +114,9 @@ class CompanyPick:
     total_value: float
     filing_date: str
     trade_dates: tuple[str, str]  # (最初の取引日, 最後の取引日)
-    filing_urls: list[str]
+    filing_urls: list[str]          # 表示用の原典リンク（Form 4 の表示用 HTML か発行体の Form 4 一覧）
+    accessions: list[str | None] = field(default_factory=list)   # filing_urls と同じ並びの受付番号
+    owner_ciks: list[int | None] = field(default_factory=list)   # 同じ並びの、DB の URL のフォルダの CIK（内部者）
     recent_filings_30d: int = 0
     recent_insiders_30d: int = 0
     eight_k: list[dict] = field(default_factory=list)  # [{"items": [...], "url": ...}]
@@ -151,6 +154,50 @@ def purchases_only(df: pd.DataFrame) -> pd.DataFrame:
 
 def _accession(url) -> str:
     return accession_from_url(url) or str(url)
+
+
+def _accessions(df: pd.DataFrame) -> pd.Series:
+    """行ごとの受付番号（clean_trades が accession 列を足していればそれ、無ければ URL から）。"""
+    if "accession" in df.columns:
+        return df["accession"].fillna(df["filing_url"].astype(str))
+    return df["filing_url"].map(_accession)
+
+
+def _filings(g: pd.DataFrame) -> dict:
+    """1社の書類: 受付番号ごとに1本の原典リンク（並びは DB の順）。"""
+    raw = g["filing_url_raw"] if "filing_url_raw" in g.columns else g["filing_url"]
+    seen, urls, accs, owners = set(), [], [], []
+    for url, acc, r in zip(g["filing_url"], _accessions(g), raw):
+        if not isinstance(url, str) or acc in seen:
+            continue
+        seen.add(acc)
+        urls.append(url)
+        accs.append(accession_from_url(r) or accession_from_url(url))
+        owners.append(filing_links.folder_cik(r))
+    return {"filing_urls": urls, "accessions": accs, "owner_ciks": owners}
+
+
+def resolve_links(picks: list[CompanyPick], get=None, deadline: float | None = None) -> list[str]:
+    """filing_links.json に無い書類を、その場で表示用 HTML に解決する（Top5 なので数件・1件2リクエスト）。
+
+    解決できなければ発行体の Form 4 一覧のまま。解決できなかった受付番号を返す。
+    """
+    get = get or filing_links.SecGetter()
+    failed = []
+    for p in picks:
+        for i, acc in enumerate(p.accessions):
+            if not acc or filing_links.is_resolved_link(p.filing_urls[i]):
+                continue
+            if deadline and time.time() > deadline:
+                failed.append(acc)
+                continue
+            owner = p.owner_ciks[i] if i < len(p.owner_ciks) else None
+            url = filing_links.resolve(acc, p.cik, owner, get=get)
+            if url:
+                p.filing_urls[i] = url
+            else:
+                failed.append(acc)
+    return failed
 
 
 def select_top(raw: pd.DataFrame, target: date, n: int = TOP_N) -> list[CompanyPick]:
@@ -196,8 +243,8 @@ def select_top(raw: pd.DataFrame, target: date, n: int = TOP_N) -> list[CompanyP
             total_value=value,
             filing_date=target.isoformat(),
             trade_dates=(trade_dates[0], trade_dates[-1]),
-            filing_urls=list(dict.fromkeys(issuer_filing_url(u, cik) for u in g["filing_url"].dropna().astype(str))),
-            recent_filings_30d=int(r["filing_url"].map(_accession).nunique()),
+            **_filings(g),
+            recent_filings_30d=int(_accessions(r).nunique()),
             recent_insiders_30d=int(r["insider"].fillna("").str.strip().str.upper().nunique()),
         ))
     return picks
@@ -394,9 +441,20 @@ def _eight_k_line(e: dict) -> str:
     return f"{e['form']}: " + ("、".join(labels) if labels else "項目の記載なし")
 
 
-def _filing_label(url: str) -> str:
-    acc = accession_from_url(url)
+def _filing_label(acc: str | None) -> str:
     return f"Form 4（受付番号 {acc}）" if acc else "Form 4"
+
+
+def _filing_links(p: CompanyPick) -> list[tuple[str, str]]:
+    """[(ラベル, URL)]。未解決（発行体の Form 4 一覧）はそれと分かるラベルにする。"""
+    out = []
+    for i, u in enumerate(p.filing_urls):
+        acc = p.accessions[i] if i < len(p.accessions) else accession_from_url(u)
+        label = _filing_label(acc)
+        if not filing_links.is_resolved_link(u) and "browse-edgar" in u:
+            label += "・発行体の Form 4 一覧"
+        out.append((label, u))
+    return out
 
 
 def build_digest(picks: list[CompanyPick], target: date, fetched_at: datetime | None,
@@ -425,7 +483,7 @@ def build_digest(picks: list[CompanyPick], target: date, fetched_at: datetime | 
             f"   {_recent_line(p)}",
         ]
         t += [f"   同じ日の {_eight_k_line(e)}  {e['url']}" for e in p.eight_k]
-        t += [f"   原典: {_filing_label(u)} {u}" for u in p.filing_urls]
+        t += [f"   原典: {label} {u}" for label, u in _filing_links(p)]
         if config.dashboard_link(p.ticker):
             t.append(f"   ダッシュボード: {config.dashboard_link(p.ticker)}")
         t.append("")
@@ -449,7 +507,7 @@ def build_digest(picks: list[CompanyPick], target: date, fetched_at: datetime | 
         ]
         for k in p.eight_k:
             rows.append(("同じ日の 8-K", a(k["url"], _eight_k_line(k))))
-        rows.append(("原典（EDGAR）", "<br>".join(a(u, _filing_label(u)) for u in p.filing_urls)))
+        rows.append(("原典（EDGAR）", "<br>".join(a(u, label) for label, u in _filing_links(p))))
         if config.dashboard_link(p.ticker):
             rows.append(("ダッシュボード", a(config.dashboard_link(p.ticker), f"{p.ticker} を開く")))
         body_rows = "".join(
@@ -552,6 +610,9 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default="digest_out")
     ap.add_argument("--dry-run", action="store_true", help="キーがあっても送らない")
     ap.add_argument("--no-8k", action="store_true", help="8-K を SEC に問い合わせない")
+    ap.add_argument("--no-resolve-links", action="store_true",
+                    help="filing_links.json に無い書類の原典リンクを、その場で SEC に問い合わせて解決しない"
+                         "（発行体の Form 4 一覧のままにする）")
     ap.add_argument("--ingest-status",
                     help="送る直前の取り込み（--current --status-file）の結果。成功なら米国東部の当日分を締め時刻つきで、"
                          "失敗（無い・エラー）なら --fallback-db の直近の提出日で作り、本文に遅れを書く")
@@ -582,6 +643,8 @@ def main(argv=None) -> int:
         return 0
 
     failed_8k = [] if args.no_8k else attach_8k(picks, target)
+    # 原典リンク: filing_links.json に無い書類（当日の取り込み分など）は、その場で表示用 HTML に解決する（最大60秒）
+    failed_links = [] if args.no_resolve_links else resolve_links(picks, deadline=time.time() + 60)
     config = DigestConfig.from_env()
     via_buttondown = bool(os.environ.get("BUTTONDOWN_API_KEY", "").strip()) and not args.dry_run
     unsubscribe = config.unsubscribe_url or (BUTTONDOWN_UNSUBSCRIBE if via_buttondown else "")
@@ -606,6 +669,8 @@ def main(argv=None) -> int:
         lines.append(f"- 未設定: {', '.join(missing)}（文面には「未設定」と出ます）")
     if failed_8k:
         lines.append(f"- 8-K を確認できなかった銘柄: {', '.join(failed_8k)}")
+    if failed_links:
+        lines.append(f"- 表示用 HTML に解決できず、発行体の Form 4 一覧にした書類: {', '.join(failed_links)}")
     lines += ["", "```text", digest.text.rstrip(), "```"]
     _write_summary(lines)
     return 0
