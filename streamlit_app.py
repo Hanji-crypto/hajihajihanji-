@@ -8,6 +8,7 @@ st.set_page_config はここで1回だけ呼び、各ページ側では呼ばな
 import streamlit as st
 
 from access_gate import require_access
+from deep_link import apply_pending, remember_from_query
 from data_mode import is_edgar_only
 from page_flow import EndPage
 from data_status import render_page_footer, render_page_header
@@ -59,6 +60,9 @@ pages = [
     ),
 ]
 
+# メールからの深いリンク（?ticker=KNOP）: 入口の画面より前に覚え、入場後にその銘柄を選んだ状態で開く（deep_link.py）。
+remember_from_query()
+
 # 招待制ベータの入口: 招待コード → 初回の同意。secrets に invite_codes が無ければ素通り（access_gate.py）。
 # 入口の間もナビは非表示で登録しておく（/compare などのURLで来た人が、入場後にそのページへ着くように）。
 if not require_access():
@@ -66,6 +70,7 @@ if not require_access():
     render_page_footer("insider.db", edgar_only=EDGAR_ONLY)
     st.stop()
 
+apply_pending()
 nav = st.navigation(pages, position="top")
 # 全ページ共通: データの最新提出日・最終更新時刻・古さの警告・品質チェック・免責
 render_page_header("insider.db")

@@ -1,7 +1,8 @@
-from edgar import set_identity, get_filings
+from edgar import set_identity, get_filings, get_current_filings
+import json
 import sqlite3
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 import argparse
 import os
@@ -14,6 +15,11 @@ parser.add_argument("--daily", action="store_true", help="直近 --lookback-days
 parser.add_argument("--lookback-days", type=int, default=5, help="--daily 時にさかのぼる日数（週末・祝日・取り込み遅延の余裕込み）")
 parser.add_argument("--max-minutes", type=float, default=0,
                     help="この時間(分)を超えたら安全に打ち切って保存する(0=無制限)。再実行すれば取得済みURLをスキップして続きから再開")
+parser.add_argument("--current", action="store_true",
+                    help="--daily と併用。四半期の索引（夜に更新）ではなく EDGAR の最新提出フィードから取る。"
+                         "米国東部の当日の提出分まで取り込める（毎朝のメール daily_digest.yml 用）")
+parser.add_argument("--status-file", default="",
+                    help="終了時に結果（フィードを取得した時刻・時間切れかどうか・エラー）を JSON で書き出す")
 args = parser.parse_args()
 RUN_STARTED = time.time()
 DEADLINE = RUN_STARTED + args.max_minutes * 60 if args.max_minutes > 0 else None
@@ -22,6 +28,8 @@ window_stats = []  # 実行サマリ用: [(start, end, 開示件数, 保存件�
 
 # SECへのアイデンティティ設定
 set_identity("OptionScreener eae270@gmail.com")
+if os.environ.get("SEC_USER_AGENT", "").strip():  # 実行環境で識別子を差し替える時（任意）
+    set_identity(os.environ["SEC_USER_AGENT"].strip())
 DB_PATH = "insider.db"
 
 # フィルター基準：1つの開示書面における「最低総投資額」 ($100,000 = 10万ドル)
@@ -44,6 +52,22 @@ print(f"   -> 取得済みURL数: {len(existing_urls)} 件 / 書類数(受付番
 
 today = datetime.now()
 saved_total = 0
+feed_fetched_at = None  # --current: 最新提出フィードを取りに行った時刻（UTC）。これより後に受け付けた提出は入らない
+fatal_error = None
+
+
+def utc_iso(ts: float | None = None) -> str:
+    return datetime.fromtimestamp(time.time() if ts is None else ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def list_filings(start_dt, end_dt):
+    """期間内の Form 4 の一覧。--current の時は最新提出フィード（直近の数営業日分）から期間内だけを取る。"""
+    global feed_fetched_at
+    if not args.current:
+        return list(get_filings(form="4", filing_date=f"{start_dt}:{end_dt}"))
+    feed_fetched_at = utc_iso()
+    feed = get_current_filings(form="4", page_size=None)
+    return [f for f in feed if start_dt <= str(f.filing_date)[:10] <= end_dt]
 
 # スキャン対象の期間リスト [(start, end), ...] を作る
 if args.daily:
@@ -51,7 +75,7 @@ if args.daily:
         (today - timedelta(days=args.lookback_days)).strftime("%Y-%m-%d"),
         today.strftime("%Y-%m-%d"),
     )]
-    mode_label = f"日次モード(直近{args.lookback_days}日)"
+    mode_label = f"日次モード(直近{args.lookback_days}日" + ("・最新提出フィード)" if args.current else ")")
 else:
     windows = [(
         (today - timedelta(days=(i + 1) * 30)).strftime("%Y-%m-%d"),
@@ -67,8 +91,7 @@ for start_dt, end_dt in windows:
     print(f"\n📅 期間スキャン中: {start_dt} 〜 {end_dt} ...")
     
     try:
-        filings = get_filings(form="4", filing_date=f"{start_dt}:{end_dt}")
-        filing_list = list(filings)
+        filing_list = list_filings(start_dt, end_dt)
         total_filings = len(filing_list)
         print(f"  -> この期間のForm 4開示件数: {total_filings} 件")
         
@@ -197,6 +220,7 @@ for start_dt, end_dt in windows:
         
     except Exception as e:
         print(f"  ❌ 期間エラー: {e}")
+        fatal_error = f"{type(e).__name__}: {e}"
         continue
 
 # --- 実行サマリ(GitHub Actions の Run ページに表示) ---
@@ -216,6 +240,20 @@ if summary_path:
         fh.write("\n".join(lines) + "\n")
 
 conn.close()
+
+# 毎朝のメール（digest.py）が、取得の締め時刻・時間切れ・失敗を本文に書くための結果
+if args.status_file:
+    with open(args.status_file, "w", encoding="utf-8") as fh:
+        json.dump({
+            "mode": "current" if args.current else ("daily" if args.daily else "backfill"),
+            "started_at": utc_iso(RUN_STARTED),
+            "feed_fetched_at": feed_fetched_at,
+            "finished_at": utc_iso(),
+            "stopped_by_budget": stopped_by_budget,
+            "saved": saved_total,
+            "error": fatal_error,
+        }, fh, ensure_ascii=False)
+
 print("=" * 80)
 print(f"📊 バックフィル完了！ 有意な大口取引データを合計 {saved_total} 件格納しました。")
 print("=" * 80)

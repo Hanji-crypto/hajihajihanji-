@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 毎朝のメール（digest.py）の dry-run 出力
+digest_out/
