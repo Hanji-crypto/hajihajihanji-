@@ -153,6 +153,23 @@ def _accession(url) -> str:
     return accession_from_url(url) or str(url)
 
 
+def issuer_filing_url(url: str, cik) -> str:
+    """書類の索引ページを、発行会社の CIK のフォルダで組み直す。
+
+    insider.db の filing_url は、取り込み時の書類の提出者（内部者本人など）の CIK のフォルダを指すことがあり、
+    EDGAR ではそのフォルダに置かれず 404 になる書類がある。発行会社のフォルダには必ず置かれるため、そちらに直す。
+    CIK か受付番号が読めない時は元の URL のまま。
+    """
+    acc = accession_from_url(url)
+    try:
+        cik_num = int(str(cik).strip())
+    except (TypeError, ValueError):
+        return url
+    if not acc or cik_num <= 0:
+        return url
+    return f"https://www.sec.gov/Archives/edgar/data/{cik_num}/{acc.replace('-', '')}/{acc}-index.html"
+
+
 def select_top(raw: pd.DataFrame, target: date, n: int = TOP_N) -> list[CompanyPick]:
     """品質判定 → P だけ → 対象日の提出分を1社ごとに合計 → 金額の大きい順に n 社。"""
     clean, _ = clean_trades(raw)
@@ -184,18 +201,19 @@ def select_top(raw: pd.DataFrame, target: date, n: int = TOP_N) -> list[CompanyP
         value = float(g["total_value"].sum())
         trade_dates = sorted(str(d)[:10] for d in g["buy_date"].dropna()) or [target.isoformat()]
         r = recent[recent["ticker"] == tk]
+        cik = str(g["cik"].dropna().iat[0]) if "cik" in g.columns and g["cik"].notna().any() else None
         picks.append(CompanyPick(
             rank=rank,
             ticker=tk,
             company=str(g["company"].mode().iat[0]) if g["company"].notna().any() else tk,
-            cik=str(g["cik"].dropna().iat[0]) if "cik" in g.columns and g["cik"].notna().any() else None,
+            cik=cik,
             insiders=insiders,
             shares=shares,
             avg_price=value / shares if shares else 0.0,
             total_value=value,
             filing_date=target.isoformat(),
             trade_dates=(trade_dates[0], trade_dates[-1]),
-            filing_urls=list(dict.fromkeys(g["filing_url"].dropna().astype(str))),
+            filing_urls=list(dict.fromkeys(issuer_filing_url(u, cik) for u in g["filing_url"].dropna().astype(str))),
             recent_filings_30d=int(r["filing_url"].map(_accession).nunique()),
             recent_insiders_30d=int(r["insider"].fillna("").str.strip().str.upper().nunique()),
         ))
