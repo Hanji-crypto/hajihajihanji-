@@ -54,13 +54,13 @@ def test_quality_excluded_rows_are_not_selected():
     assert [p.ticker for p in picks] == ["DUP", "OK"]
     assert picks[0].total_value == 1_000_000  # 同じ書類の重複は1回だけ数える
     assert picks[0].filing_urls == [
-        "https://www.sec.gov/Archives/edgar/data/320193/000000000926000001/0000000009-26-000001-index.html"]
+        "https://www.sec.gov/Archives/edgar/data/320193/000000000926000001/0000000009-26-000001-index.htm"]
 
 
 def test_filing_links_use_the_issuer_cik_folder():
     # 内部者の CIK のフォルダは EDGAR で 404 になることがある（例: ALDX 0001193125-26-473131）。発行会社のフォルダに直す
     owner = "https://www.sec.gov/Archives/edgar/data/1579179/000119312526473131/0001193125-26-473131-index.html"
-    issuer = "https://www.sec.gov/Archives/edgar/data/1341235/000119312526473131/0001193125-26-473131-index.html"
+    issuer = "https://www.sec.gov/Archives/edgar/data/1341235/000119312526473131/0001193125-26-473131-index.htm"
     picks = _top([_row(1, "ALDX", 243_060, url=owner, cik="0001341235")])
     assert picks[0].filing_urls == [issuer]
     assert dg.issuer_filing_url(owner, "0001341235") == issuer

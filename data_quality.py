@@ -181,8 +181,45 @@ def clean_trades(df: pd.DataFrame) -> tuple[pd.DataFrame, QualityReport]:
     report.excluded["value_too_large"] = int(value_bad.sum())
     out = out[~value_bad]
 
+    # 7. 原典リンクを発行会社の CIK のフォルダに組み直す（DB は書き換えず、表示用の値だけ直す）
+    out = with_issuer_filing_urls(out)
+
     report.kept_rows = len(out)
     return out, report
+
+
+def issuer_filing_url(url, cik):
+    """内部者など別の CIK のフォルダを指す書類の URL を、発行会社の CIK のフォルダの索引ページに組み直す。
+
+    insider.db の filing_url は、取り込み時の書類の提出者（内部者本人など）の CIK のフォルダを指すことが多く、
+    EDGAR では 404 になる書類がある（例: ALDX 0001193125-26-473131 の 1579179 側）。
+    - 既に発行会社のフォルダを指していれば、そのまま返す（書き方を変えると開けなくなる書類がある）。
+    - 組み直す時の索引ページは「-index.htm」（EDGAR の標準。実測で .html より開ける割合が高い）。
+    - CIK か受付番号が読めない時は元の値のまま。
+    """
+    acc = accession_from_url(url)
+    try:
+        cik_num = int(str(cik).strip())
+    except (TypeError, ValueError):
+        return url
+    if not acc or cik_num <= 0:
+        return url
+    m = _ARCHIVE_CIK.search(url)
+    if m and int(m.group(1)) == cik_num:
+        return url
+    return f"https://www.sec.gov/Archives/edgar/data/{cik_num}/{acc.replace('-', '')}/{acc}-index.htm"
+
+
+_ARCHIVE_CIK = re.compile(r"/Archives/edgar/data/(\d+)/")
+
+
+def with_issuer_filing_urls(df: pd.DataFrame) -> pd.DataFrame:
+    """filing_url と cik（発行会社）の列があれば、filing_url を発行会社のフォルダの URL に置き換えた写しを返す。"""
+    if df.empty or not {"filing_url", "cik"} <= set(df.columns):
+        return df
+    out = df.copy()
+    out["filing_url"] = [issuer_filing_url(u, c) for u, c in zip(out["filing_url"], out["cik"])]
+    return out
 
 
 # ---------------------------------------------------------------- 取り込み側（a5_backfill_v3.py）用

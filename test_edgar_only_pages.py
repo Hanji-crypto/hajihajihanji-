@@ -164,3 +164,24 @@ def test_workstation_says_when_sec_is_unreachable(monkeypatch):
     assert not at.exception
     assert list(at.multiselect[0].options) == ["未分類"]
     assert any("業種（SIC）を取得できなかった" in str(c.value) for c in at.caption)
+
+
+@pytest.mark.parametrize("page", ["app.py", "app_bi_dashboard.py", "app_compare_dashboard.py"])
+def test_form4_links_point_to_issuer_cik_folder(page):
+    # insider.db の filing_url は内部者の CIK のフォルダを指す行があり、EDGAR で 404 になる。表示は発行会社のフォルダに直す
+    from data_quality import accession_from_url
+
+    rows = sqlite3.connect("insider.db").execute("SELECT filing_url, cik FROM insider_trades").fetchall()
+    issuer = {}
+    for url, cik in rows:
+        acc = accession_from_url(url)
+        if acc and cik:
+            issuer.setdefault(acc, set()).add(int(cik))
+    at = _start(page, data_mode="edgar_only")
+    assert not at.exception
+    links = [v for df in at.dataframe for col in df.value.columns for v in df.value[col].astype(str)
+             if "sec.gov/Archives/edgar/data/" in v and accession_from_url(v) in issuer]
+    assert links, "Form 4 の原典リンクが表示されていない"
+    for v in links:
+        folder = int(v.split("/edgar/data/")[1].split("/")[0])
+        assert folder in issuer[accession_from_url(v)], v

@@ -152,3 +152,46 @@ def test_real_db_screener_has_no_known_errors():
     out, rep = dq.clean_trades(raw)
     assert out.groupby("filing_url").ngroups == out["filing_url"].map(dq.accession_from_url).nunique()
     assert rep.kept_rows + rep.excluded_rows == rep.total_rows
+
+
+# ---------------------------------------------------------------- 原典リンク（発行会社の CIK のフォルダ）
+OWNER = "https://www.sec.gov/Archives/edgar/data/1579179/000119312526473131/0001193125-26-473131-index.html"
+ISSUER = "https://www.sec.gov/Archives/edgar/data/1341235/000119312526473131/0001193125-26-473131-index.htm"
+
+
+def test_issuer_filing_url():
+    assert dq.issuer_filing_url(OWNER, "0001341235") == ISSUER
+    assert dq.issuer_filing_url(ISSUER, 1341235) == ISSUER                  # 既に正しければ同じ
+    assert dq.issuer_filing_url(U1, "0000320193") == (                      # 受付番号のフォルダが無い形も直す
+        "https://www.sec.gov/Archives/edgar/data/320193/000173112226000579/0001731122-26-000579-index.htm")
+    same = "https://www.sec.gov/Archives/edgar/data/1287032/000129435726000018/0001294357-26-000018-index.html"
+    assert dq.issuer_filing_url(same, "0001287032") == same                  # 発行会社のフォルダなら書き方も変えない
+    assert dq.issuer_filing_url(U1, "1894693") == U1
+    assert dq.issuer_filing_url(OWNER, None) == OWNER                       # CIK が無ければそのまま
+    assert dq.issuer_filing_url(OWNER, "abc") == OWNER
+    assert dq.issuer_filing_url("https://www.sec.gov/", "1") == "https://www.sec.gov/"  # 受付番号が無ければそのまま
+
+
+def test_clean_trades_rewrites_links_to_issuer_folder_without_touching_input():
+    raw = pd.DataFrame([{"id": 1, "ticker": "ALDX", "cik": "0001341235", "avg_price": 0.81,
+                         "total_shares": 300_000, "total_value": 243_060.0, "filing_url": OWNER}])
+    out, _ = dq.clean_trades(raw)
+    assert out["filing_url"].tolist() == [ISSUER]
+    assert raw["filing_url"].tolist() == [OWNER]                             # 元の表（DB の値）は変えない
+    no_cik, _ = dq.clean_trades(raw.drop(columns="cik"))                     # cik 列が無ければ直さない
+    assert no_cik["filing_url"].tolist() == [OWNER]
+
+
+def test_load_trades_returns_issuer_links_and_db_is_unchanged(tmp_path):
+    db = tmp_path / "t.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE insider_trades (id INTEGER, filing_date TEXT, ticker TEXT, cik TEXT, avg_price REAL,"
+                 " total_shares REAL, total_value REAL, filing_url TEXT)")
+    conn.execute("INSERT INTO insider_trades VALUES (1, '2026-11-24', 'ALDX', '0001341235', 0.81, 300000, 243060, ?)",
+                 (OWNER,))
+    conn.commit()
+    conn.close()
+    df, _ = dq.load_trades(str(db))
+    assert df["filing_url"].tolist() == [ISSUER]
+    (stored,) = sqlite3.connect(db).execute("SELECT filing_url FROM insider_trades").fetchone()
+    assert stored == OWNER

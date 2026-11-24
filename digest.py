@@ -50,7 +50,7 @@ from typing import Callable
 
 import pandas as pd
 
-from data_quality import accession_from_url, clean_trades
+from data_quality import accession_from_url, clean_trades, issuer_filing_url
 from data_status import JST, US_EASTERN, _EDGAR_BDAY, last_updated_at
 
 TOP_N = 5
@@ -151,23 +151,6 @@ def purchases_only(df: pd.DataFrame) -> pd.DataFrame:
 
 def _accession(url) -> str:
     return accession_from_url(url) or str(url)
-
-
-def issuer_filing_url(url: str, cik) -> str:
-    """書類の索引ページを、発行会社の CIK のフォルダで組み直す。
-
-    insider.db の filing_url は、取り込み時の書類の提出者（内部者本人など）の CIK のフォルダを指すことがあり、
-    EDGAR ではそのフォルダに置かれず 404 になる書類がある。発行会社のフォルダには必ず置かれるため、そちらに直す。
-    CIK か受付番号が読めない時は元の URL のまま。
-    """
-    acc = accession_from_url(url)
-    try:
-        cik_num = int(str(cik).strip())
-    except (TypeError, ValueError):
-        return url
-    if not acc or cik_num <= 0:
-        return url
-    return f"https://www.sec.gov/Archives/edgar/data/{cik_num}/{acc.replace('-', '')}/{acc}-index.html"
 
 
 def select_top(raw: pd.DataFrame, target: date, n: int = TOP_N) -> list[CompanyPick]:
